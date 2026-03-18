@@ -4,6 +4,7 @@ import com.agenticrag.app.rag.embedding.EmbeddingModel;
 import com.agenticrag.app.rag.loader.DocumentLoader;
 import com.agenticrag.app.rag.model.Document;
 import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.retriever.ChunkIndexer;
 import com.agenticrag.app.rag.splitter.TextSplitter;
 import com.agenticrag.app.rag.store.InMemoryVectorStore;
 import java.util.Arrays;
@@ -30,7 +31,8 @@ class RagPipelineIngestDocumentsTest {
 
 		InMemoryVectorStore store = new InMemoryVectorStore();
 
-		RagPipeline pipeline = new RagPipeline(loader, splitter, embedding, store);
+		List<ChunkIndexer> indexers = Arrays.asList(store);
+		RagPipeline pipeline = new RagPipeline(loader, splitter, embedding, store, indexers);
 
 		Document doc = new Document("d1", "ignored", new HashMap<String, Object>());
 		RagPipeline.IngestResult res = pipeline.ingestDocuments(Collections.singletonList(doc));
@@ -40,4 +42,3 @@ class RagPipelineIngestDocumentsTest {
 		Assertions.assertEquals(2, store.size());
 	}
 }
-

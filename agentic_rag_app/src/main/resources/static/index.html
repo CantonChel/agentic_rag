@@ -81,6 +81,7 @@
           <button id="presetRag">默认问题：RAG</button>
           <button id="presetCalc">默认问题：6*7</button>
           <button id="presetTool">默认问题：强制工具</button>
+          <button id="presetKb">测试：Agent调用知识库</button>
         </div>
 
         <label class="col">
@@ -183,6 +184,7 @@
       const presetRag = document.getElementById("presetRag");
       const presetCalc = document.getElementById("presetCalc");
       const presetTool = document.getElementById("presetTool");
+      const presetKb = document.getElementById("presetKb");
       const loadHistoryBtn = document.getElementById("loadHistory");
       const clearHistoryBtn = document.getElementById("clearHistory");
       const historyOut = document.getElementById("historyOut");
@@ -486,6 +488,12 @@
         tools.checked = true;
         toolChoice.value = "REQUIRED";
         prompt.value = "请调用 calculator 工具，计算 6*7。只输出最终数字。";
+      });
+      presetKb.addEventListener("click", () => {
+        mode.value = "agent";
+        tools.checked = true;
+        toolChoice.value = "AUTO";
+        prompt.value = "请问我们公司最新采购的 Agent-X99 服务器的内存是多少？如果你不确定，请先调用 search_knowledge_base 检索“Agent-X99 服务器 内存”。回答时在末尾标注引用来源（如 [引用 1]）。如果没有资料，回答“知识库中暂无相关信息”。";
       });
       loadSystemPromptBtn.addEventListener("click", loadSystemPrompt);
       reloadToolsBtn.addEventListener("click", loadTools);
