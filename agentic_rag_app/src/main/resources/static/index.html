@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agentic RAG App</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; }
+      .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+      .col { display: flex; flex-direction: column; gap: 8px; }
+      .panel { border: 1px solid #ddd; border-radius: 10px; padding: 12px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+      textarea { width: 100%; min-height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace; }
+      pre { white-space: pre-wrap; word-break: break-word; border: 1px solid #ddd; padding: 12px; border-radius: 8px; min-height: 180px; margin: 0; }
+      button { padding: 8px 12px; }
+      select, input { padding: 6px 8px; }
+      .muted { color: #666; font-size: 12px; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace; }
+      .w-100 { width: 100%; }
+      .h-120 { min-height: 120px; }
+    </style>
+  </head>
+  <body>
+    <h2>Agentic RAG 测试台</h2>
+
+    <p class="muted">
+      OpenAI: OPENAI_API_KEY；MiniMax: MINIMAX_API_KEY。默认端口 8081。SSE 使用 EventSource。
+    </p>
+
+    <div class="grid">
+      <div class="panel col">
+        <div class="row">
+          <label class="col" style="min-width: 260px;">
+            API Base URL
+            <input id="apiBase" class="mono w-100" placeholder="例如：http://localhost:8081（留空表示同源）" />
+          </label>
+          <label class="col" style="min-width: 260px;">
+            Session
+            <div class="row" style="gap: 8px;">
+              <button id="newSession">New</button>
+              <input id="sessionId" class="mono w-100" readonly />
+              <button id="reloadSessions">Reload</button>
+            </div>
+            <div class="row" style="gap: 8px;">
+              <select id="sessionSelect" class="w-100"></select>
+            </div>
+          </label>
+          <label class="col">
+            Provider
+            <select id="provider">
+              <option value="openai">openai</option>
+              <option value="minimax">minimax</option>
+            </select>
+          </label>
+          <label class="col">
+            Mode
+            <select id="mode">
+              <option value="agent" selected>agent</option>
+              <option value="llm">llm</option>
+            </select>
+          </label>
+          <label class="col">
+            tools
+            <span class="row" style="gap: 8px;">
+              <input type="checkbox" id="tools" checked />
+              <span class="muted">inject tools</span>
+            </span>
+          </label>
+          <label class="col">
+            toolChoice
+            <select id="toolChoice">
+              <option value="AUTO" selected>AUTO</option>
+              <option value="REQUIRED">REQUIRED</option>
+              <option value="NONE">NONE</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="row">
+          <button id="presetRag">默认问题：RAG</button>
+          <button id="presetCalc">默认问题：6*7</button>
+          <button id="presetTool">默认问题：强制工具</button>
+        </div>
+
+        <label class="col">
+          Prompt
+          <textarea id="prompt">用两句话解释什么是RAG，并给一个简短例子。</textarea>
+        </label>
+
+        <div class="row">
+          <button id="start">Start Stream</button>
+          <button id="stop" disabled>Stop</button>
+          <button id="clear">Clear Output</button>
+        </div>
+
+        <h3 style="margin: 0;">Stream</h3>
+        <pre id="output"></pre>
+      </div>
+
+      <div class="panel col">
+        <div class="row">
+          <h3 style="margin: 0;">History</h3>
+          <button id="loadHistory">Load</button>
+          <button id="clearHistory">Clear</button>
+        </div>
+        <pre id="historyOut" class="muted" style="min-height: 120px;">Loading...</pre>
+
+        <div class="row">
+          <h3 style="margin: 0;">System Prompt</h3>
+          <button id="loadSystemPrompt">Load</button>
+        </div>
+        <pre id="systemPromptOut" class="muted" style="min-height: 120px;">Loading...</pre>
+
+        <div class="row">
+          <h3 style="margin: 0;">Registered Tools</h3>
+          <button id="reloadTools">Reload</button>
+        </div>
+        <pre id="toolsOut" class="muted">Loading...</pre>
+
+        <h3 style="margin: 0;">Execute Tool</h3>
+        <div class="row">
+          <label class="col" style="flex: 1;">
+            name
+            <select id="toolName" class="w-100"></select>
+          </label>
+          <button id="execTool">Execute</button>
+        </div>
+        <label class="col">
+          arguments (JSON)
+          <textarea id="toolArgs" class="h-120">{ "op": "mul", "a": 6, "b": 7 }</textarea>
+        </label>
+        <pre id="toolResultOut" class="muted" style="min-height: 80px;"></pre>
+      </div>
+    </div>
+
+    <script>
+      const output = document.getElementById("output");
+      const toolsOut = document.getElementById("toolsOut");
+      const systemPromptOut = document.getElementById("systemPromptOut");
+      const provider = document.getElementById("provider");
+      const mode = document.getElementById("mode");
+      const tools = document.getElementById("tools");
+      const prompt = document.getElementById("prompt");
+      const startBtn = document.getElementById("start");
+      const stopBtn = document.getElementById("stop");
+      const clearBtn = document.getElementById("clear");
+      const apiBase = document.getElementById("apiBase");
+      const newSessionBtn = document.getElementById("newSession");
+      const sessionIdEl = document.getElementById("sessionId");
+      const reloadSessionsBtn = document.getElementById("reloadSessions");
+      const sessionSelect = document.getElementById("sessionSelect");
+      const presetRag = document.getElementById("presetRag");
+      const presetCalc = document.getElementById("presetCalc");
+      const presetTool = document.getElementById("presetTool");
+      const loadHistoryBtn = document.getElementById("loadHistory");
+      const clearHistoryBtn = document.getElementById("clearHistory");
+      const historyOut = document.getElementById("historyOut");
+      const loadSystemPromptBtn = document.getElementById("loadSystemPrompt");
+      const reloadToolsBtn = document.getElementById("reloadTools");
+      const toolChoice = document.getElementById("toolChoice");
+      const toolName = document.getElementById("toolName");
+      const toolArgs = document.getElementById("toolArgs");
+      const execToolBtn = document.getElementById("execTool");
+      const toolResultOut = document.getElementById("toolResultOut");
+
+      let es = null;
+      let sessionId = "";
+
+      function baseUrl() {
+        const raw = (apiBase.value || "").trim();
+        if (!raw) return "";
+        return raw.endsWith("/") ? raw.slice(0, -1) : raw;
+      }
+
+      function apiUrl(path) {
+        return `${baseUrl()}${path}`;
+      }
+
+      async function createSession() {
+        try {
+          const res = await fetch(apiUrl("/api/sessions"), { method: "POST" });
+          const json = await res.json();
+          sessionId = json.sessionId || "";
+          sessionIdEl.value = sessionId;
+          await loadSessions();
+          output.textContent = "";
+          toolResultOut.textContent = "";
+          await loadHistory();
+        } catch (e) {
+          sessionId = "";
+          sessionIdEl.value = "";
+          historyOut.textContent = String(e);
+        }
+      }
+
+      async function loadSessions() {
+        try {
+          const res = await fetch(apiUrl("/api/sessions"));
+          const arr = await res.json();
+          sessionSelect.innerHTML = "";
+          for (const s of arr) {
+            const opt = document.createElement("option");
+            opt.value = s.sessionId;
+            opt.textContent = s.sessionId;
+            if (s.sessionId === sessionId) opt.selected = true;
+            sessionSelect.appendChild(opt);
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      async function loadHistory() {
+        if (!sessionId) {
+          historyOut.textContent = "No session";
+          return;
+        }
+        try {
+          const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/messages`));
+          const json = await res.json();
+          historyOut.textContent = JSON.stringify(json, null, 2);
+        } catch (e) {
+          historyOut.textContent = String(e);
+        }
+      }
+
+      async function clearHistory() {
+        if (!sessionId) {
+          return;
+        }
+        try {
+          await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}`), { method: "DELETE" });
+          await createSession();
+        } catch (e) {
+          historyOut.textContent = String(e);
+        }
+      }
+
+      async function loadTools() {
+        try {
+          const res = await fetch(apiUrl("/api/tools"));
+          const json = await res.json();
+          toolsOut.textContent = JSON.stringify(json, null, 2);
+          toolName.innerHTML = "";
+          for (const t of json) {
+            const opt = document.createElement("option");
+            opt.value = t.name;
+            opt.textContent = t.name;
+            toolName.appendChild(opt);
+          }
+        } catch (e) {
+          toolsOut.textContent = String(e);
+        }
+      }
+
+      async function loadSystemPrompt() {
+        try {
+          const url = apiUrl(`/api/prompt/system?provider=${encodeURIComponent(provider.value.toUpperCase())}&tools=${tools.checked ? "true" : "false"}`);
+          const res = await fetch(url);
+          systemPromptOut.textContent = await res.text();
+        } catch (e) {
+          systemPromptOut.textContent = String(e);
+        }
+      }
+
+      async function executeTool() {
+        toolResultOut.textContent = "";
+        const name = toolName.value;
+        let args = null;
+        try {
+          args = JSON.parse(toolArgs.value);
+        } catch (e) {
+          toolResultOut.textContent = "arguments 不是合法 JSON";
+          return;
+        }
+        try {
+          const res = await fetch(apiUrl(`/api/tools/execute?sessionId=${encodeURIComponent(sessionId || "default")}`), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, arguments: args })
+          });
+          const json = await res.json();
+          toolResultOut.textContent = JSON.stringify(json, null, 2);
+          await loadHistory();
+        } catch (e) {
+          toolResultOut.textContent = String(e);
+        }
+      }
+
+      function setButtons(streaming) {
+        startBtn.disabled = streaming;
+        stopBtn.disabled = !streaming;
+      }
+
+      function stop() {
+        if (es) {
+          es.close();
+          es = null;
+        }
+        setButtons(false);
+      }
+
+      function start() {
+        stop();
+        output.textContent = "";
+        const basePath = mode.value === "agent" ? "/api/agent" : "/api/llm";
+        const url = apiUrl(`${basePath}/${provider.value}/stream?sessionId=${encodeURIComponent(sessionId || "default")}&prompt=${encodeURIComponent(prompt.value)}&tools=${tools.checked ? "true" : "false"}&toolChoice=${encodeURIComponent(toolChoice.value)}`);
+        es = new EventSource(url);
+        setButtons(true);
+
+        es.addEventListener("delta", (evt) => {
+          try {
+            const payload = JSON.parse(evt.data);
+            if (payload && payload.content) output.textContent += payload.content;
+          } catch (_) {
+            output.textContent += evt.data;
+          }
+        });
+
+        es.addEventListener("done", (evt) => {
+          try {
+            const payload = JSON.parse(evt.data);
+            output.textContent += `\n\n[done] finishReason=${payload.finishReason || ""}\n`;
+            if (payload.toolCalls) output.textContent += JSON.stringify(payload.toolCalls, null, 2) + "\n";
+          } catch (_) {
+            output.textContent += `\n\n[done] ${evt.data}\n`;
+          }
+          stop();
+          loadHistory();
+        });
+
+        es.addEventListener("error", (evt) => {
+          try {
+            const payload = JSON.parse(evt.data);
+            const msg = payload && payload.content ? payload.content : evt.data;
+            output.textContent += `\n\n[error] ${msg}\n`;
+          } catch (_) {
+            output.textContent += `\n\n[error] ${evt.data}\n`;
+          }
+          stop();
+        });
+
+        es.onerror = () => {
+          output.textContent += "\n\n[error] stream disconnected\n";
+          stop();
+        };
+      }
+
+      startBtn.addEventListener("click", start);
+      stopBtn.addEventListener("click", stop);
+      clearBtn.addEventListener("click", () => (output.textContent = ""));
+      newSessionBtn.addEventListener("click", createSession);
+      reloadSessionsBtn.addEventListener("click", loadSessions);
+      sessionSelect.addEventListener("change", async () => {
+        sessionId = sessionSelect.value || "";
+        sessionIdEl.value = sessionId;
+        await loadHistory();
+      });
+      loadHistoryBtn.addEventListener("click", loadHistory);
+      clearHistoryBtn.addEventListener("click", clearHistory);
+      presetRag.addEventListener("click", () => {
+        prompt.value = "用两句话解释什么是RAG，并给一个简短例子。";
+      });
+      presetCalc.addEventListener("click", () => {
+        tools.checked = true;
+        toolChoice.value = "AUTO";
+        prompt.value = "请计算 6*7，并只输出最终数字。";
+      });
+      presetTool.addEventListener("click", () => {
+        tools.checked = true;
+        toolChoice.value = "REQUIRED";
+        prompt.value = "请调用 calculator 工具，计算 6*7。只输出最终数字。";
+      });
+      loadSystemPromptBtn.addEventListener("click", loadSystemPrompt);
+      reloadToolsBtn.addEventListener("click", loadTools);
+      execToolBtn.addEventListener("click", executeTool);
+      provider.addEventListener("change", loadSystemPrompt);
+      mode.addEventListener("change", loadSystemPrompt);
+      tools.addEventListener("change", loadSystemPrompt);
+      toolChoice.addEventListener("change", loadSystemPrompt);
+      apiBase.addEventListener("change", () => { loadTools(); loadSystemPrompt(); });
+      loadTools();
+      loadSystemPrompt();
+      createSession();
+      loadSessions();
+      setButtons(false);
+    </script>
+  </body>
+</html>
