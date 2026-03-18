@@ -131,6 +131,36 @@
           <textarea id="toolArgs" class="h-120">{ "op": "mul", "a": 6, "b": 7 }</textarea>
         </label>
         <pre id="toolResultOut" class="muted" style="min-height: 80px;"></pre>
+
+        <div class="row">
+          <h3 style="margin: 0;">RAG</h3>
+          <button id="ragClear">Clear</button>
+        </div>
+        <div class="row">
+          <label class="col" style="flex: 1;">
+            query
+            <input id="ragQuery" class="mono w-100" placeholder="例如：Java集合 / RAG / 向量检索" />
+          </label>
+          <label class="col" style="width: 120px;">
+            topK
+            <input id="ragTopK" class="mono w-100" value="5" />
+          </label>
+          <button id="ragSearch">Search</button>
+        </div>
+        <label class="col">
+          上传文本（会立即切分+向量化+入库）
+          <input id="ragSource" class="mono w-100" value="upload.txt" />
+          <textarea id="ragContent" class="h-120">这是第一段。
+
+这是第二段，包含一些关于Java集合、JVM、Redis和MySQL的内容。
+第三段说：向量检索会根据相似度返回片段。</textarea>
+          <div class="row">
+            <button id="ragIngestText">Ingest Text</button>
+            <input id="ragFile" type="file" />
+            <button id="ragIngestFile">Ingest File</button>
+          </div>
+        </label>
+        <pre id="ragOut" class="muted" style="min-height: 120px;"></pre>
       </div>
     </div>
 
@@ -163,6 +193,16 @@
       const toolArgs = document.getElementById("toolArgs");
       const execToolBtn = document.getElementById("execTool");
       const toolResultOut = document.getElementById("toolResultOut");
+      const ragOut = document.getElementById("ragOut");
+      const ragQuery = document.getElementById("ragQuery");
+      const ragTopK = document.getElementById("ragTopK");
+      const ragSearchBtn = document.getElementById("ragSearch");
+      const ragSource = document.getElementById("ragSource");
+      const ragContent = document.getElementById("ragContent");
+      const ragIngestTextBtn = document.getElementById("ragIngestText");
+      const ragFile = document.getElementById("ragFile");
+      const ragIngestFileBtn = document.getElementById("ragIngestFile");
+      const ragClearBtn = document.getElementById("ragClear");
 
       let es = null;
       let sessionId = "";
@@ -288,6 +328,81 @@
         }
       }
 
+      async function readBody(res) {
+        try {
+          const ct = (res.headers.get("content-type") || "").toLowerCase();
+          if (ct.includes("application/json")) {
+            const json = await res.json();
+            return JSON.stringify(json, null, 2);
+          }
+          return await res.text();
+        } catch (e) {
+          return String(e);
+        }
+      }
+
+      async function ragIngestText() {
+        ragOut.textContent = "";
+        try {
+          const res = await fetch(apiUrl("/api/rag/ingest/text"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              source: (ragSource.value || "").trim(),
+              content: ragContent.value || "",
+              metadata: { author: "upload" }
+            })
+          });
+          const body = await readBody(res);
+          if (!res.ok) {
+            ragOut.textContent = body;
+            return;
+          }
+          ragOut.textContent = body;
+        } catch (e) {
+          ragOut.textContent = String(e);
+        }
+      }
+
+      async function ragIngestFile() {
+        ragOut.textContent = "";
+        if (!ragFile.files || !ragFile.files[0]) {
+          ragOut.textContent = "请选择文件";
+          return;
+        }
+        try {
+          const fd = new FormData();
+          fd.append("file", ragFile.files[0]);
+          const res = await fetch(apiUrl("/api/rag/ingest/file"), { method: "POST", body: fd });
+          const body = await readBody(res);
+          if (!res.ok) {
+            ragOut.textContent = body;
+            return;
+          }
+          ragOut.textContent = body;
+        } catch (e) {
+          ragOut.textContent = String(e);
+        }
+      }
+
+      async function ragSearch() {
+        ragOut.textContent = "";
+        const q = (ragQuery.value || "").trim();
+        const topK = parseInt((ragTopK.value || "5").trim(), 10);
+        if (!q) {
+          ragOut.textContent = "请输入 query";
+          return;
+        }
+        const k = Number.isFinite(topK) ? topK : 5;
+        try {
+          const res = await fetch(apiUrl(`/api/rag/search?q=${encodeURIComponent(q)}&topK=${encodeURIComponent(String(k))}`));
+          const body = await readBody(res);
+          ragOut.textContent = body;
+        } catch (e) {
+          ragOut.textContent = String(e);
+        }
+      }
+
       function setButtons(streaming) {
         startBtn.disabled = streaming;
         stopBtn.disabled = !streaming;
@@ -375,6 +490,10 @@
       loadSystemPromptBtn.addEventListener("click", loadSystemPrompt);
       reloadToolsBtn.addEventListener("click", loadTools);
       execToolBtn.addEventListener("click", executeTool);
+      ragIngestTextBtn.addEventListener("click", ragIngestText);
+      ragIngestFileBtn.addEventListener("click", ragIngestFile);
+      ragSearchBtn.addEventListener("click", ragSearch);
+      ragClearBtn.addEventListener("click", () => (ragOut.textContent = ""));
       provider.addEventListener("change", loadSystemPrompt);
       mode.addEventListener("change", loadSystemPrompt);
       tools.addEventListener("change", loadSystemPrompt);
