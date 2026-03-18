@@ -1,0 +1,3 @@
+org.springframework.boot.env.EnvironmentPostProcessor=\
+com.agenticrag.app.config.DotenvEnvironmentPostProcessor
+
