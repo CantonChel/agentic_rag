@@ -1,7 +1,9 @@
 package com.agenticrag.app.api;
 
-import com.agenticrag.app.chat.memory.ChatMemory;
+import com.agenticrag.app.chat.context.ContextManager;
 import com.agenticrag.app.chat.message.ToolResultMessage;
+import com.agenticrag.app.chat.store.PersistentMessageStore;
+import com.agenticrag.app.tool.ToolArgumentValidator;
 import com.agenticrag.app.tool.ToolExecutionContext;
 import com.agenticrag.app.tool.ToolDefinition;
 import com.agenticrag.app.tool.ToolResult;
@@ -23,11 +25,20 @@ import reactor.core.publisher.Mono;
 @RequestMapping("/api/tools")
 public class ToolController {
 	private final ToolRouter toolRouter;
-	private final ChatMemory chatMemory;
+	private final ContextManager contextManager;
+	private final PersistentMessageStore persistentMessageStore;
+	private final ToolArgumentValidator toolArgumentValidator;
 
-	public ToolController(ToolRouter toolRouter, ChatMemory chatMemory) {
+	public ToolController(
+		ToolRouter toolRouter,
+		ContextManager contextManager,
+		PersistentMessageStore persistentMessageStore,
+		ToolArgumentValidator toolArgumentValidator
+	) {
 		this.toolRouter = toolRouter;
-		this.chatMemory = chatMemory;
+		this.contextManager = contextManager;
+		this.persistentMessageStore = persistentMessageStore;
+		this.toolArgumentValidator = toolArgumentValidator;
 	}
 
 	@GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
@@ -43,17 +54,31 @@ public class ToolController {
 		ToolExecutionContext context = new ToolExecutionContext(UUID.randomUUID().toString());
 		String sid = sessionId == null || sessionId.trim().isEmpty() ? "default" : sessionId.trim();
 		return toolRouter.getTool(request.getName())
-			.map(t -> t.execute(request.getArguments(), context).doOnNext(result -> chatMemory.append(
-				sid,
-				new ToolResultMessage(
-					request.getName(),
-					request.getToolCallId(),
-					result.isSuccess(),
-					result.getOutput(),
-					result.getError()
-				)
-			)))
-			.orElseGet(() -> Mono.just(ToolResult.error("Tool not found: " + request.getName())));
+			.map(t -> {
+				ToolArgumentValidator.ValidationResult vr = toolArgumentValidator.validate(t.parametersSchema(), request.getArguments());
+				if (!vr.isOk()) {
+					String err = "Error: 参数解析失败。请检查并重新调用工具。细节: " + String.join("; ", vr.getErrors());
+					ToolResult tr = ToolResult.error(err);
+					ToolResultMessage msg = new ToolResultMessage(request.getName(), request.getToolCallId(), false, null, tr.getError());
+					persistentMessageStore.append(sid, msg);
+					contextManager.addMessage(sid, msg);
+					return Mono.just(tr);
+				}
+
+				return t.execute(request.getArguments(), context).doOnNext(result -> {
+					ToolResultMessage msg = new ToolResultMessage(
+						request.getName(),
+						request.getToolCallId(),
+						result.isSuccess(),
+						result.getOutput(),
+						result.getError()
+					);
+					persistentMessageStore.append(sid, msg);
+					contextManager.addMessage(sid, msg);
+				});
+			})
+			.orElseGet(() -> Mono.just(ToolResult.error("Tool not found: " + request.getName())))
+			;
 	}
 
 	public static class ExecuteToolRequest {

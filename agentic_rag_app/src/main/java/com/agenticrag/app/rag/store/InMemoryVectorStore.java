@@ -9,9 +9,10 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
+import com.agenticrag.app.rag.retriever.ChunkIndexer;
 
 @Service
-public class InMemoryVectorStore implements VectorStore {
+public class InMemoryVectorStore implements VectorStore, ChunkIndexer {
 	private final Map<String, TextChunk> chunksById = new ConcurrentHashMap<>();
 
 	@Override
@@ -79,4 +80,3 @@ public class InMemoryVectorStore implements VectorStore {
 		}
 	}
 }
-

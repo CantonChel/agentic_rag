@@ -4,6 +4,7 @@ import com.agenticrag.app.rag.embedding.EmbeddingModel;
 import com.agenticrag.app.rag.loader.DocumentLoader;
 import com.agenticrag.app.rag.model.Document;
 import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.retriever.ChunkIndexer;
 import com.agenticrag.app.rag.splitter.TextSplitter;
 import com.agenticrag.app.rag.store.VectorStore;
 import java.util.ArrayList;
@@ -17,17 +18,20 @@ public class RagPipeline {
 	private final TextSplitter textSplitter;
 	private final EmbeddingModel embeddingModel;
 	private final VectorStore vectorStore;
+	private final List<ChunkIndexer> chunkIndexers;
 
 	public RagPipeline(
 		DocumentLoader documentLoader,
 		TextSplitter textSplitter,
 		EmbeddingModel embeddingModel,
-		VectorStore vectorStore
+		VectorStore vectorStore,
+		List<ChunkIndexer> chunkIndexers
 	) {
 		this.documentLoader = documentLoader;
 		this.textSplitter = textSplitter;
 		this.embeddingModel = embeddingModel;
 		this.vectorStore = vectorStore;
+		this.chunkIndexers = chunkIndexers;
 	}
 
 	public IngestResult ingest() {
@@ -59,7 +63,13 @@ public class RagPipeline {
 			allChunks.get(i).setEmbedding(emb);
 		}
 
-		vectorStore.addChunks(allChunks);
+		if (chunkIndexers != null) {
+			for (ChunkIndexer idx : chunkIndexers) {
+				if (idx != null) {
+					idx.addChunks(allChunks);
+				}
+			}
+		}
 		return new IngestResult(docs.size(), allChunks.size());
 	}
 

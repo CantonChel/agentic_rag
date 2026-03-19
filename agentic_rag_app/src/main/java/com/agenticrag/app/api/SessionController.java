@@ -1,14 +1,15 @@
 package com.agenticrag.app.api;
 
-import com.agenticrag.app.chat.memory.ChatMemory;
+import com.agenticrag.app.chat.context.ContextManager;
 import com.agenticrag.app.chat.message.ChatMessage;
 import com.agenticrag.app.chat.message.ToolCallMessage;
 import com.agenticrag.app.chat.message.ToolResultMessage;
+import com.agenticrag.app.chat.store.PersistentMessageStore;
+import com.agenticrag.app.chat.store.StoredMessageEntity;
 import com.agenticrag.app.llm.LlmToolCall;
 import com.agenticrag.app.session.ChatSession;
 import com.agenticrag.app.session.SessionManager;
 import java.util.List;
-import java.util.stream.StreamSupport;
 import java.util.stream.Collectors;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -23,11 +24,13 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/sessions")
 public class SessionController {
 	private final SessionManager sessionManager;
-	private final ChatMemory chatMemory;
+	private final ContextManager contextManager;
+	private final PersistentMessageStore persistentMessageStore;
 
-	public SessionController(SessionManager sessionManager, ChatMemory chatMemory) {
+	public SessionController(SessionManager sessionManager, ContextManager contextManager, PersistentMessageStore persistentMessageStore) {
 		this.sessionManager = sessionManager;
-		this.chatMemory = chatMemory;
+		this.contextManager = contextManager;
+		this.persistentMessageStore = persistentMessageStore;
 	}
 
 	@PostMapping(produces = MediaType.APPLICATION_JSON_VALUE)
@@ -54,34 +57,37 @@ public class SessionController {
 		@RequestParam(value = "contentsOnly", defaultValue = "false") boolean contentsOnly
 	) {
 		if (contentsOnly) {
-			return chatMemory.getContents(sessionId).stream()
-				.map(c -> new ChatMessageView("CONTENT", c, null, null, null, null, null))
+			return contextManager.getContext(sessionId).stream()
+				.map(c -> new ChatMessageView(c.getType().name(), c.getContent(), null, null, null, null, null))
 				.collect(Collectors.toList());
 		}
 
-		return chatMemory.getMessages(sessionId).stream()
-			.map(SessionController::toView)
+		return persistentMessageStore.list(sessionId).stream()
+			.map(e -> toView(e, persistentMessageStore))
 			.collect(Collectors.toList());
 	}
 
-	private static ChatMessageView toView(ChatMessage msg) {
-		if (msg instanceof ToolCallMessage) {
-			List<LlmToolCall> calls = ((ToolCallMessage) msg).getToolCalls();
-			return new ChatMessageView(msg.getType().name(), null, calls, null, null, null, null);
+	private static ChatMessageView toView(StoredMessageEntity e, PersistentMessageStore store) {
+		if (e == null) {
+			return new ChatMessageView("UNKNOWN", null, null, null, null, null, null);
 		}
-		if (msg instanceof ToolResultMessage) {
-			ToolResultMessage tr = (ToolResultMessage) msg;
+
+		if ("TOOL_CALL".equals(e.getType())) {
+			List<LlmToolCall> calls = store.parseToolCalls(e.getContent());
+			return new ChatMessageView(e.getType(), null, calls, null, null, null, null);
+		}
+		if ("TOOL_RESULT".equals(e.getType())) {
 			return new ChatMessageView(
-				msg.getType().name(),
-				msg.getContent(),
+				e.getType(),
+				e.getContent(),
 				null,
-				tr.getToolName(),
-				tr.getToolCallId(),
-				tr.isSuccess(),
-				tr.isSuccess() ? tr.getOutput() : tr.getError()
+				e.getToolName(),
+				e.getToolCallId(),
+				e.getSuccess(),
+				e.getContent()
 			);
 		}
-		return new ChatMessageView(msg.getType().name(), msg.getContent(), null, null, null, null, null);
+		return new ChatMessageView(e.getType(), e.getContent(), null, null, null, null, null);
 	}
 
 	public static class CreateSessionResponse {
