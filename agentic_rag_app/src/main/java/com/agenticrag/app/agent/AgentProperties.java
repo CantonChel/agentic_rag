@@ -23,4 +23,3 @@ public class AgentProperties {
 		this.toolTimeoutSeconds = toolTimeoutSeconds;
 	}
 }
-

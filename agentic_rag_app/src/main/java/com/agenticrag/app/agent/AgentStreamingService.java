@@ -1,11 +1,13 @@
 package com.agenticrag.app.agent;
 
-import com.agenticrag.app.chat.memory.ChatMemory;
+import com.agenticrag.app.chat.context.ContextManager;
 import com.agenticrag.app.chat.message.AssistantMessage;
 import com.agenticrag.app.chat.message.ChatMessage;
+import com.agenticrag.app.chat.message.SystemMessage;
 import com.agenticrag.app.chat.message.ToolCallMessage;
 import com.agenticrag.app.chat.message.ToolResultMessage;
 import com.agenticrag.app.chat.message.UserMessage;
+import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.config.MinimaxClientProperties;
 import com.agenticrag.app.config.OpenAiClientProperties;
 import com.agenticrag.app.llm.LlmProvider;
@@ -15,6 +17,7 @@ import com.agenticrag.app.llm.LlmToolChoiceMode;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
 import com.agenticrag.app.tool.ToolDefinition;
+import com.agenticrag.app.tool.ToolArgumentValidator;
 import com.agenticrag.app.tool.ToolExecutionContext;
 import com.agenticrag.app.tool.ToolResult;
 import com.agenticrag.app.tool.ToolRouter;
@@ -55,8 +58,11 @@ public class AgentStreamingService {
 	private final ObjectMapper objectMapper;
 	private final ExecutorService streamExecutor;
 	private final SystemPromptManager systemPromptManager;
-	private final ChatMemory chatMemory;
+	private final ContextManager contextManager;
+	private final PersistentMessageStore persistentMessageStore;
+	private final com.agenticrag.app.chat.context.LocalExecutionContextRecorder localExecutionContextRecorder;
 	private final AgentProperties agentProperties;
+	private final ToolArgumentValidator toolArgumentValidator;
 
 	public AgentStreamingService(
 		OpenAIClient openAiClient,
@@ -66,8 +72,11 @@ public class AgentStreamingService {
 		ToolRouter toolRouter,
 		ObjectMapper objectMapper,
 		SystemPromptManager systemPromptManager,
-		ChatMemory chatMemory,
-		AgentProperties agentProperties
+		ContextManager contextManager,
+		PersistentMessageStore persistentMessageStore,
+		com.agenticrag.app.chat.context.LocalExecutionContextRecorder localExecutionContextRecorder,
+		AgentProperties agentProperties,
+		ToolArgumentValidator toolArgumentValidator
 	) {
 		this.openAiClient = openAiClient;
 		this.minimaxClient = minimaxClient;
@@ -77,8 +86,11 @@ public class AgentStreamingService {
 		this.objectMapper = objectMapper;
 		this.streamExecutor = Executors.newCachedThreadPool();
 		this.systemPromptManager = systemPromptManager;
-		this.chatMemory = chatMemory;
+		this.contextManager = contextManager;
+		this.persistentMessageStore = persistentMessageStore;
+		this.localExecutionContextRecorder = localExecutionContextRecorder;
 		this.agentProperties = agentProperties;
+		this.toolArgumentValidator = toolArgumentValidator;
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -97,35 +109,50 @@ public class AgentStreamingService {
 				try {
 					OpenAIClient client = provider == LlmProvider.MINIMAX ? minimaxClient : openAiClient;
 					String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
-					String systemPrompt = systemPromptManager.build(new SystemPromptContext(provider, includeTools));
+					String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, true));
 					OpenAiMessageAdapter adapter = new OpenAiMessageAdapter(objectMapper);
 
-					List<ChatMessage> working = new ArrayList<>();
-					List<ChatMessage> existing = chatMemory.getMessages(sid);
-					if (existing != null) {
-						working.addAll(existing);
+					contextManager.ensureSystemPrompt(sid, configuredSystemPrompt);
+					String systemPrompt = contextManager.getSystemPrompt(sid);
+					persistentMessageStore.ensureSystemPrompt(sid, systemPrompt);
+
+					List<ChatMessage> localContext = new ArrayList<>();
+					List<ChatMessage> sessionContext = contextManager.getContext(sid);
+					if (sessionContext != null && !sessionContext.isEmpty()) {
+						for (int i = 1; i < sessionContext.size(); i++) {
+							localContext.add(sessionContext.get(i));
+						}
 					}
 
 					ChatMessage userMsg = new UserMessage(prompt);
-					working.add(userMsg);
-					chatMemory.append(sid, userMsg);
+					localContext.add(userMsg);
+					persistentMessageStore.append(sid, userMsg);
+					contextManager.addMessage(sid, userMsg);
 
 					boolean finished = false;
 					int iteration = 0;
 
 					while (!finished && iteration < maxIterations) {
 						iteration++;
+						boolean isFinalIteration = iteration >= maxIterations;
+
+						localExecutionContextRecorder.record(sid, systemPrompt, localContext, iteration);
 
 						ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder()
 							.model(model)
 							.addSystemMessage(systemPrompt);
 
-						List<com.openai.models.chat.completions.ChatCompletionMessageParam> messageParams = adapter.toMessageParams(working);
+						if (isFinalIteration) {
+							paramsBuilder.addSystemMessage("系统警告：你已达到最大思考步数。请立即停止调用新工具，基于目前已有的观察结果，向用户输出最终总结回复。");
+						}
+
+						List<com.openai.models.chat.completions.ChatCompletionMessageParam> messageParams = adapter.toMessageParams(localContext);
 						for (com.openai.models.chat.completions.ChatCompletionMessageParam mp : messageParams) {
 							paramsBuilder.addMessage(mp);
 						}
 
-						if (includeTools) {
+						boolean allowTools = includeTools && !isFinalIteration;
+						if (allowTools) {
 							paramsBuilder.tools(buildChatCompletionTools(toolRouter.getToolDefinitions()));
 							paramsBuilder.toolChoice(toToolChoice(toolChoiceMode));
 						} else {
@@ -173,8 +200,15 @@ public class AgentStreamingService {
 
 						if (!assistantFinal.isEmpty()) {
 							AssistantMessage am = new AssistantMessage(assistantFinal);
-							working.add(am);
-							chatMemory.append(sid, am);
+							localContext.add(am);
+							persistentMessageStore.append(sid, am);
+							contextManager.addMessage(sid, am);
+						}
+
+						if (isFinalIteration) {
+							sink.next(LlmStreamEvent.done("max_iterations_fallback", null));
+							finished = true;
+							break;
 						}
 
 						if (toolCalls == null || toolCalls.isEmpty()) {
@@ -184,8 +218,9 @@ public class AgentStreamingService {
 						}
 
 						ToolCallMessage tcm = new ToolCallMessage(toolCalls);
-						working.add(tcm);
-						chatMemory.append(sid, tcm);
+						localContext.add(tcm);
+						persistentMessageStore.append(sid, tcm);
+						contextManager.addMessage(sid, tcm);
 
 						for (LlmToolCall call : toolCalls) {
 							if (call == null) {
@@ -199,9 +234,22 @@ public class AgentStreamingService {
 							final String toolCallId = callId;
 							final JsonNode toolArgs = call.getArguments();
 
-							ToolResult toolResult = toolRouter.getTool(toolName)
-								.map(t -> t.execute(toolArgs, new ToolExecutionContext(toolCallId)).block(Duration.ofSeconds(toolTimeoutSeconds)))
-								.orElse(ToolResult.error("Tool not found: " + toolName));
+							ToolResult toolResult = null;
+							try {
+								toolResult = toolRouter.getTool(toolName)
+									.map(t -> {
+										ToolArgumentValidator.ValidationResult vr = toolArgumentValidator.validate(t.parametersSchema(), toolArgs);
+										if (!vr.isOk()) {
+											String err = "Error: 参数解析失败。请检查并重新调用工具。细节: " + String.join("; ", vr.getErrors());
+											return ToolResult.error(err);
+										}
+										return t.execute(toolArgs, new ToolExecutionContext(toolCallId))
+											.block(Duration.ofSeconds(toolTimeoutSeconds));
+									})
+									.orElse(ToolResult.error("Tool not found: " + toolName));
+							} catch (Exception e) {
+								toolResult = ToolResult.error("Tool execution failed: " + toolName + ": " + e.getClass().getSimpleName() + ": " + e.getMessage());
+							}
 
 							if (toolResult == null) {
 								toolResult = ToolResult.error("Tool execution returned null: " + toolName);
@@ -214,8 +262,9 @@ public class AgentStreamingService {
 								toolResult.getOutput(),
 								toolResult.getError()
 							);
-							working.add(trm);
-							chatMemory.append(sid, trm);
+							localContext.add(trm);
+							persistentMessageStore.append(sid, trm);
+							contextManager.addMessage(sid, trm);
 						}
 					}
 

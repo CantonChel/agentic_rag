@@ -1,12 +1,14 @@
 package com.agenticrag.app.llm;
 
+import com.agenticrag.app.agent.OpenAiMessageAdapter;
+import com.agenticrag.app.chat.context.ContextManager;
 import com.agenticrag.app.config.MinimaxClientProperties;
 import com.agenticrag.app.config.OpenAiClientProperties;
-import com.agenticrag.app.chat.memory.ChatMemory;
 import com.agenticrag.app.chat.message.AssistantMessage;
-import com.agenticrag.app.chat.message.SystemMessage;
 import com.agenticrag.app.chat.message.ToolCallMessage;
 import com.agenticrag.app.chat.message.UserMessage;
+import com.agenticrag.app.chat.store.PersistentMessageStore;
+import com.agenticrag.app.chat.message.SystemMessage;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
 import com.agenticrag.app.tool.ToolDefinition;
@@ -45,7 +47,8 @@ public class StreamingChatService {
 	private final ObjectMapper objectMapper;
 	private final ExecutorService streamExecutor;
 	private final SystemPromptManager systemPromptManager;
-	private final ChatMemory chatMemory;
+	private final ContextManager contextManager;
+	private final PersistentMessageStore persistentMessageStore;
 
 	public StreamingChatService(
 		OpenAIClient openAiClient,
@@ -55,7 +58,8 @@ public class StreamingChatService {
 		ToolRouter toolRouter,
 		ObjectMapper objectMapper,
 		SystemPromptManager systemPromptManager,
-		ChatMemory chatMemory
+		ContextManager contextManager,
+		PersistentMessageStore persistentMessageStore
 	) {
 		this.openAiClient = openAiClient;
 		this.minimaxClient = minimaxClient;
@@ -65,7 +69,8 @@ public class StreamingChatService {
 		this.objectMapper = objectMapper;
 		this.streamExecutor = Executors.newCachedThreadPool();
 		this.systemPromptManager = systemPromptManager;
-		this.chatMemory = chatMemory;
+		this.contextManager = contextManager;
+		this.persistentMessageStore = persistentMessageStore;
 	}
 
 	public Flux<LlmStreamEvent> stream(LlmProvider provider, String prompt, boolean includeTools) {
@@ -92,14 +97,32 @@ public class StreamingChatService {
 				String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
 
 				String sid = sessionId == null || sessionId.trim().isEmpty() ? "default" : sessionId.trim();
-				String systemPrompt = systemPromptManager.build(new SystemPromptContext(provider, includeTools));
-				chatMemory.append(sid, new SystemMessage(systemPrompt));
-				chatMemory.append(sid, new UserMessage(prompt));
+				String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, true));
+				contextManager.ensureSystemPrompt(sid, configuredSystemPrompt);
+				String systemPrompt = contextManager.getSystemPrompt(sid);
+				persistentMessageStore.ensureSystemPrompt(sid, systemPrompt);
+				OpenAiMessageAdapter adapter = new OpenAiMessageAdapter(objectMapper);
+
+				List<com.agenticrag.app.chat.message.ChatMessage> local = new ArrayList<>();
+				List<com.agenticrag.app.chat.message.ChatMessage> sessionContext = contextManager.getContext(sid);
+				if (sessionContext != null && !sessionContext.isEmpty()) {
+					for (int i = 1; i < sessionContext.size(); i++) {
+						local.add(sessionContext.get(i));
+					}
+				}
+				UserMessage user = new UserMessage(prompt);
+				local.add(user);
+				persistentMessageStore.append(sid, user);
+				contextManager.addMessage(sid, user);
 
 				ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder()
 					.model(model)
-					.addSystemMessage(systemPrompt)
-					.addUserMessage(prompt);
+					.addSystemMessage(systemPrompt);
+
+				List<com.openai.models.chat.completions.ChatCompletionMessageParam> messageParams = adapter.toMessageParams(local);
+				for (com.openai.models.chat.completions.ChatCompletionMessageParam mp : messageParams) {
+					paramsBuilder.addMessage(mp);
+				}
 
 				if (includeTools) {
 					paramsBuilder.tools(buildChatCompletionTools(toolRouter.getToolDefinitions()));
@@ -136,10 +159,14 @@ public class StreamingChatService {
 								List<LlmToolCall> toolCalls = toolCallAccumulator.buildToolCalls();
 								String assistantFinal = assistantContent.toString().trim();
 								if (!assistantFinal.isEmpty()) {
-									chatMemory.append(sid, new AssistantMessage(assistantFinal));
+									AssistantMessage am = new AssistantMessage(assistantFinal);
+									persistentMessageStore.append(sid, am);
+									contextManager.addMessage(sid, am);
 								}
 								if (toolCalls != null && !toolCalls.isEmpty()) {
-									chatMemory.append(sid, new ToolCallMessage(toolCalls));
+									ToolCallMessage tcm = new ToolCallMessage(toolCalls);
+									persistentMessageStore.append(sid, tcm);
+									contextManager.addMessage(sid, tcm);
 								}
 								sink.next(LlmStreamEvent.done(finishReason, toolCalls));
 							}

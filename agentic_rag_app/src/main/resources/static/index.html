@@ -101,11 +101,35 @@
 
       <div class="panel col">
         <div class="row">
-          <h3 style="margin: 0;">History</h3>
+          <h3 style="margin: 0;">Persistent Messages (Layer 3)</h3>
           <button id="loadHistory">Load</button>
           <button id="clearHistory">Clear</button>
         </div>
         <pre id="historyOut" class="muted" style="min-height: 120px;">Loading...</pre>
+
+        <div class="row">
+          <h3 style="margin: 0;">Contexts</h3>
+          <button id="loadContexts">Refresh</button>
+          <label class="col" style="width: 140px;">
+            seedCount
+            <input id="seedCount" class="mono w-100" value="120" />
+          </label>
+          <label class="col" style="width: 140px;">
+            seedChars
+            <input id="seedChars" class="mono w-100" value="200" />
+          </label>
+          <button id="seedOverflow">Seed Overflow</button>
+        </div>
+        <div class="row" style="align-items: stretch;">
+          <div class="col" style="flex: 1;">
+            <div class="muted">Local Execution Context (Layer 1, last recorded)</div>
+            <pre id="localCtxOut" class="muted" style="min-height: 120px;"></pre>
+          </div>
+          <div class="col" style="flex: 1;">
+            <div class="muted">Session Context (Layer 2, compressed)</div>
+            <pre id="sessionCtxOut" class="muted" style="min-height: 120px;"></pre>
+          </div>
+        </div>
 
         <div class="row">
           <h3 style="margin: 0;">System Prompt</h3>
@@ -188,6 +212,12 @@
       const loadHistoryBtn = document.getElementById("loadHistory");
       const clearHistoryBtn = document.getElementById("clearHistory");
       const historyOut = document.getElementById("historyOut");
+      const loadContextsBtn = document.getElementById("loadContexts");
+      const localCtxOut = document.getElementById("localCtxOut");
+      const sessionCtxOut = document.getElementById("sessionCtxOut");
+      const seedCount = document.getElementById("seedCount");
+      const seedChars = document.getElementById("seedChars");
+      const seedOverflowBtn = document.getElementById("seedOverflow");
       const loadSystemPromptBtn = document.getElementById("loadSystemPrompt");
       const reloadToolsBtn = document.getElementById("reloadTools");
       const toolChoice = document.getElementById("toolChoice");
@@ -229,6 +259,7 @@
           output.textContent = "";
           toolResultOut.textContent = "";
           await loadHistory();
+          await loadContexts();
         } catch (e) {
           sessionId = "";
           sessionIdEl.value = "";
@@ -262,6 +293,46 @@
           const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/messages`));
           const json = await res.json();
           historyOut.textContent = JSON.stringify(json, null, 2);
+        } catch (e) {
+          historyOut.textContent = String(e);
+        }
+      }
+
+      async function loadContexts() {
+        if (!sessionId) {
+          localCtxOut.textContent = "No session";
+          sessionCtxOut.textContent = "No session";
+          return;
+        }
+        try {
+          const [localRes, sessionRes] = await Promise.all([
+            fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/contexts/local`)),
+            fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/contexts/session`))
+          ]);
+          const localJson = await localRes.json();
+          const sessionJson = await sessionRes.json();
+          localCtxOut.textContent = JSON.stringify(localJson, null, 2);
+          sessionCtxOut.textContent = JSON.stringify(sessionJson, null, 2);
+        } catch (e) {
+          localCtxOut.textContent = String(e);
+          sessionCtxOut.textContent = String(e);
+        }
+      }
+
+      async function seedOverflow() {
+        if (!sessionId) {
+          return;
+        }
+        const c = parseInt((seedCount.value || "120").trim(), 10);
+        const n = parseInt((seedChars.value || "200").trim(), 10);
+        const count = Number.isFinite(c) ? c : 120;
+        const chars = Number.isFinite(n) ? n : 200;
+        try {
+          await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/contexts/seed?count=${encodeURIComponent(String(count))}&chars=${encodeURIComponent(String(chars))}`), {
+            method: "POST"
+          });
+          await loadHistory();
+          await loadContexts();
         } catch (e) {
           historyOut.textContent = String(e);
         }
@@ -445,6 +516,7 @@
           }
           stop();
           loadHistory();
+          loadContexts();
         });
 
         es.addEventListener("error", (evt) => {
@@ -473,9 +545,12 @@
         sessionId = sessionSelect.value || "";
         sessionIdEl.value = sessionId;
         await loadHistory();
+        await loadContexts();
       });
       loadHistoryBtn.addEventListener("click", loadHistory);
       clearHistoryBtn.addEventListener("click", clearHistory);
+      loadContextsBtn.addEventListener("click", loadContexts);
+      seedOverflowBtn.addEventListener("click", seedOverflow);
       presetRag.addEventListener("click", () => {
         prompt.value = "用两句话解释什么是RAG，并给一个简短例子。";
       });

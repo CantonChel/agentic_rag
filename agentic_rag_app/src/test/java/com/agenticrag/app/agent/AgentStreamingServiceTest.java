@@ -1,15 +1,18 @@
 package com.agenticrag.app.agent;
 
-import com.agenticrag.app.chat.memory.InMemoryWindowMemory;
-import com.agenticrag.app.chat.memory.WindowMemoryProperties;
+import com.agenticrag.app.chat.context.InMemorySessionContextManager;
+import com.agenticrag.app.chat.context.LocalExecutionContextRecorder;
+import com.agenticrag.app.chat.context.SessionContextProperties;
 import com.agenticrag.app.chat.message.ChatMessage;
-import com.agenticrag.app.chat.message.ToolResultMessage;
+import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.config.MinimaxClientProperties;
 import com.agenticrag.app.config.OpenAiClientProperties;
 import com.agenticrag.app.llm.LlmProvider;
 import com.agenticrag.app.llm.LlmStreamEvent;
 import com.agenticrag.app.llm.LlmToolChoiceMode;
 import com.agenticrag.app.prompt.SystemPromptManager;
+import com.agenticrag.app.rag.splitter.TokenCounter;
+import com.agenticrag.app.tool.ToolArgumentValidator;
 import com.agenticrag.app.tool.ToolRouter;
 import com.agenticrag.app.tool.impl.CalculatorTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -28,7 +31,7 @@ import org.mockito.Mockito;
 
 class AgentStreamingServiceTest {
 	@Test
-	void executesToolCallsAndWritesToolResultsToMemory() {
+	void executesToolCallsAndWritesFinalAnswerToMemory() {
 		ObjectMapper objectMapper = new ObjectMapper();
 
 		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
@@ -51,13 +54,19 @@ class AgentStreamingServiceTest {
 		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
 		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
 
-		WindowMemoryProperties wmProps = new WindowMemoryProperties();
-		wmProps.setMaxMessages(100);
-		InMemoryWindowMemory memory = new InMemoryWindowMemory(wmProps);
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
 
 		AgentProperties agentProps = new AgentProperties();
 		agentProps.setMaxIterations(4);
 		agentProps.setToolTimeoutSeconds(5);
+
+		ToolArgumentValidator validator = new ToolArgumentValidator();
 
 		AgentStreamingService service = new AgentStreamingService(
 			openAiClient,
@@ -67,8 +76,11 @@ class AgentStreamingServiceTest {
 			toolRouter,
 			objectMapper,
 			systemPromptManager,
-			memory,
-			agentProps
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			validator
 		);
 
 		List<LlmStreamEvent> events = service.stream(LlmProvider.OPENAI, "s1", "calc", true, LlmToolChoiceMode.AUTO)
@@ -80,18 +92,76 @@ class AgentStreamingServiceTest {
 		Assertions.assertEquals("delta", events.get(0).getType());
 		Assertions.assertEquals("done", events.get(events.size() - 1).getType());
 
-		boolean hasToolResult = false;
-		for (ChatMessage msg : memory.getMessages("s1")) {
-			if (msg instanceof ToolResultMessage) {
-				ToolResultMessage tr = (ToolResultMessage) msg;
-				hasToolResult = true;
-				Assertions.assertEquals("calculator", tr.getToolName());
-				Assertions.assertEquals("call_1", tr.getToolCallId());
-				Assertions.assertTrue(tr.isSuccess());
-				Assertions.assertEquals("42", tr.getOutput());
+		boolean hasFinalAnswer = false;
+		for (ChatMessage msg : contextManager.getContext("s1")) {
+			if (msg instanceof com.agenticrag.app.chat.message.AssistantMessage) {
+				com.agenticrag.app.chat.message.AssistantMessage am = (com.agenticrag.app.chat.message.AssistantMessage) msg;
+				if ("42".equals(am.getContent())) {
+					hasFinalAnswer = true;
+				}
 			}
 		}
-		Assertions.assertTrue(hasToolResult);
+		Assertions.assertTrue(hasFinalAnswer);
+	}
+
+	@Test
+	void maxIterationsFallbackStopsToolCalls() {
+		ObjectMapper objectMapper = new ObjectMapper();
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+
+		StreamResponse<ChatCompletionChunk> r1 = new FakeStreamResponse(Stream.of(toolCallsChunk()));
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(r1);
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		ToolRouter toolRouter = new ToolRouter();
+		toolRouter.register(new CalculatorTool(objectMapper));
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(1);
+		agentProps.setToolTimeoutSeconds(5);
+
+		ToolArgumentValidator validator = new ToolArgumentValidator();
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			validator
+		);
+
+		List<LlmStreamEvent> events = service.stream(LlmProvider.OPENAI, "s1", "calc", true, LlmToolChoiceMode.AUTO)
+			.collectList()
+			.block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		Assertions.assertEquals("done", events.get(events.size() - 1).getType());
+		Assertions.assertEquals("max_iterations_fallback", events.get(events.size() - 1).getFinishReason());
 	}
 
 	private static ChatCompletionChunk toolCallsChunk() {
@@ -162,4 +232,3 @@ class AgentStreamingServiceTest {
 		}
 	}
 }
-

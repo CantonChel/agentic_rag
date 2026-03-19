@@ -1,6 +1,7 @@
 package com.agenticrag.app.session;
 
-import com.agenticrag.app.chat.memory.ChatMemory;
+import com.agenticrag.app.chat.context.ContextManager;
+import com.agenticrag.app.chat.store.PersistentMessageStore;
 import java.util.Map;
 import java.util.Collection;
 import java.util.ArrayList;
@@ -10,11 +11,13 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class SessionManager {
-	private final ChatMemory chatMemory;
+	private final ContextManager contextManager;
+	private final PersistentMessageStore persistentMessageStore;
 	private final Map<String, ChatSession> sessions = new ConcurrentHashMap<>();
 
-	public SessionManager(ChatMemory chatMemory) {
-		this.chatMemory = chatMemory;
+	public SessionManager(ContextManager contextManager, PersistentMessageStore persistentMessageStore) {
+		this.contextManager = contextManager;
+		this.persistentMessageStore = persistentMessageStore;
 	}
 
 	public ChatSession create() {
@@ -37,7 +40,8 @@ public class SessionManager {
 		}
 		String key = sessionId.trim();
 		sessions.remove(key);
-		chatMemory.clear(key);
+		contextManager.clear(key);
+		persistentMessageStore.clear(key);
 	}
 
 	public Collection<ChatSession> list() {
