@@ -2,6 +2,7 @@ package com.agenticrag.app.config;
 
 import io.github.cdimascio.dotenv.Dotenv;
 import io.github.cdimascio.dotenv.DotenvEntry;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -51,25 +52,24 @@ public class DotenvEnvironmentPostProcessor implements EnvironmentPostProcessor,
 			}
 			if (configuredDir != null && !configuredDir.trim().isEmpty()) {
 				Path dir = Paths.get(configuredDir).toAbsolutePath().normalize();
-				Path env = dir.resolve(".env");
-				if (Files.exists(env) && Files.isRegularFile(env)) {
-					return new DotenvLoadResult(true, env, Dotenv.configure()
-						.directory(dir.toString())
-						.ignoreIfMissing()
-						.load());
+				DotenvLoadResult fromConfigured = loadFromDir(dir);
+				if (fromConfigured.loaded) {
+					return fromConfigured;
 				}
 			}
 
-			Path dir = Paths.get(System.getProperty("user.dir", ".")).toAbsolutePath().normalize();
-			for (int i = 0; i < MAX_SEARCH_DEPTH && dir != null; i++) {
-				Path env = dir.resolve(".env");
-				if (Files.exists(env) && Files.isRegularFile(env)) {
-					return new DotenvLoadResult(true, env, Dotenv.configure()
-						.directory(dir.toString())
-						.ignoreIfMissing()
-						.load());
+			Path userDir = Paths.get(System.getProperty("user.dir", ".")).toAbsolutePath().normalize();
+			DotenvLoadResult fromUserDir = findAndLoad(userDir);
+			if (fromUserDir.loaded) {
+				return fromUserDir;
+			}
+
+			Path codeSourceDir = resolveCodeSourceDir();
+			if (codeSourceDir != null) {
+				DotenvLoadResult fromCodeSource = findAndLoad(codeSourceDir);
+				if (fromCodeSource.loaded) {
+					return fromCodeSource;
 				}
-				dir = dir.getParent();
 			}
 		} catch (Exception ignored) {
 		}
@@ -77,6 +77,48 @@ public class DotenvEnvironmentPostProcessor implements EnvironmentPostProcessor,
 		return new DotenvLoadResult(false, null, Dotenv.configure()
 			.ignoreIfMissing()
 			.load());
+	}
+
+	private DotenvLoadResult findAndLoad(Path start) {
+		Path dir = start;
+		for (int i = 0; i < MAX_SEARCH_DEPTH && dir != null; i++) {
+			DotenvLoadResult result = loadFromDir(dir);
+			if (result.loaded) {
+				return result;
+			}
+			dir = dir.getParent();
+		}
+		return new DotenvLoadResult(false, null, Dotenv.configure().ignoreIfMissing().load());
+	}
+
+	private DotenvLoadResult loadFromDir(Path dir) {
+		if (dir == null) {
+			return new DotenvLoadResult(false, null, Dotenv.configure().ignoreIfMissing().load());
+		}
+		Path env = dir.resolve(".env");
+		if (Files.exists(env) && Files.isRegularFile(env)) {
+			return new DotenvLoadResult(true, env, Dotenv.configure()
+				.directory(dir.toString())
+				.ignoreIfMissing()
+				.load());
+		}
+		return new DotenvLoadResult(false, null, Dotenv.configure().ignoreIfMissing().load());
+	}
+
+	private Path resolveCodeSourceDir() {
+		try {
+			URI uri = DotenvEnvironmentPostProcessor.class.getProtectionDomain()
+				.getCodeSource()
+				.getLocation()
+				.toURI();
+			Path path = Paths.get(uri).toAbsolutePath().normalize();
+			if (Files.isDirectory(path)) {
+				return path;
+			}
+			return path.getParent();
+		} catch (Exception ignored) {
+			return null;
+		}
 	}
 
 	@Override
