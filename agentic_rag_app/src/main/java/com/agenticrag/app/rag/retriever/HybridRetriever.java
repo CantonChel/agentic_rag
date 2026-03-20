@@ -8,17 +8,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 @Service
 public class HybridRetriever {
 	private final DenseVectorRetriever denseRetriever;
 	private final LuceneBm25Retriever bm25Retriever;
+	private final ObjectProvider<PostgresBm25Retriever> postgresBm25Retriever;
 	private final Reranker reranker;
 
-	public HybridRetriever(DenseVectorRetriever denseRetriever, LuceneBm25Retriever bm25Retriever, Reranker reranker) {
+	public HybridRetriever(
+		DenseVectorRetriever denseRetriever,
+		LuceneBm25Retriever bm25Retriever,
+		ObjectProvider<PostgresBm25Retriever> postgresBm25Retriever,
+		Reranker reranker
+	) {
 		this.denseRetriever = denseRetriever;
 		this.bm25Retriever = bm25Retriever;
+		this.postgresBm25Retriever = postgresBm25Retriever;
 		this.reranker = reranker;
 	}
 
@@ -30,8 +38,13 @@ public class HybridRetriever {
 		int recall = recallTopK > 0 ? recallTopK : 20;
 		int rerank = rerankTopK > 0 ? rerankTopK : 5;
 
+		Retriever bm25 = postgresBm25Retriever.getIfAvailable();
+		if (bm25 == null) {
+			bm25 = bm25Retriever;
+		}
+
 		CompletableFuture<List<TextChunk>> denseF = CompletableFuture.supplyAsync(() -> denseRetriever.retrieve(query, recall));
-		CompletableFuture<List<TextChunk>> bm25F = CompletableFuture.supplyAsync(() -> bm25Retriever.retrieve(query, recall));
+		CompletableFuture<List<TextChunk>> bm25F = CompletableFuture.supplyAsync(() -> bm25.retrieve(query, recall));
 
 		List<TextChunk> dense = denseF.join();
 		List<TextChunk> bm25 = bm25F.join();
@@ -92,4 +105,3 @@ public class HybridRetriever {
 		}
 	}
 }
-
