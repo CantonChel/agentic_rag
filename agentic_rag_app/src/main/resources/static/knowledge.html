@@ -60,8 +60,16 @@
           </label>
           <label>
             Knowledge Base ID
-            <input id="kbId" class="mono" value="kb-demo" style="width: 220px;" />
+            <select id="kbIdSelect" style="width: 220px; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 8px;">
+              <option value="kb-demo">kb-demo</option>
+              <option value="__custom__">手动输入</option>
+            </select>
           </label>
+          <label>
+            自定义 Knowledge Base ID
+            <input id="kbIdCustom" class="mono" placeholder="仅当选择手动输入时生效" style="width: 220px;" />
+          </label>
+          <span class="muted" id="kbLoadTip">知识库列表加载中...</span>
         </div>
       </div>
 
@@ -119,7 +127,9 @@
 
     <script>
       const apiBaseInput = document.getElementById('apiBase');
-      const kbIdInput = document.getElementById('kbId');
+      const kbIdSelect = document.getElementById('kbIdSelect');
+      const kbIdCustom = document.getElementById('kbIdCustom');
+      const kbLoadTip = document.getElementById('kbLoadTip');
       const metadataInput = document.getElementById('metadata');
       const fileInput = document.getElementById('fileInput');
       const uploadBtn = document.getElementById('uploadBtn');
@@ -144,6 +154,43 @@
         return base ? base + path : path;
       }
 
+      function getSelectedKbId() {
+        const selected = (kbIdSelect.value || '').trim();
+        if (selected && selected !== '__custom__') return selected;
+        return (kbIdCustom.value || '').trim();
+      }
+
+      function setKbOptions(bases) {
+        const current = getSelectedKbId();
+        kbIdSelect.innerHTML = '';
+        if (Array.isArray(bases) && bases.length > 0) {
+          for (const kb of bases) {
+            const id = (kb.knowledgeBaseId || '').trim();
+            if (!id) continue;
+            const option = document.createElement('option');
+            option.value = id;
+            option.textContent = id;
+            kbIdSelect.appendChild(option);
+          }
+        }
+        const custom = document.createElement('option');
+        custom.value = '__custom__';
+        custom.textContent = '手动输入';
+        kbIdSelect.appendChild(custom);
+
+        if (current) {
+          const exists = Array.from(kbIdSelect.options).some(opt => opt.value === current);
+          if (exists) {
+            kbIdSelect.value = current;
+          } else {
+            kbIdSelect.value = '__custom__';
+            kbIdCustom.value = current;
+          }
+        } else {
+          kbIdSelect.value = kbIdSelect.options[0]?.value || '__custom__';
+        }
+      }
+
       function setStatusBadge(status) {
         const s = (status || 'unknown').toLowerCase();
         statusBadge.className = 'status-badge';
@@ -154,7 +201,7 @@
       }
 
       async function uploadFile() {
-        const kbId = (kbIdInput.value || '').trim();
+        const kbId = getSelectedKbId();
         const file = fileInput.files && fileInput.files[0];
         if (!kbId) {
           uploadOut.textContent = 'kbId 不能为空';
@@ -279,9 +326,11 @@
 
       async function refreshKnowledgeBases() {
         kbTree.textContent = '加载中...';
+        kbLoadTip.textContent = '知识库列表加载中...';
         const res = await fetch(apiUrl('/api/knowledge-bases'));
         const text = await res.text();
         if (!res.ok) {
+          kbLoadTip.textContent = '知识库列表加载失败：' + text;
           kbTree.textContent = '加载失败: ' + text;
           return;
         }
@@ -290,12 +339,16 @@
         try {
           bases = JSON.parse(text) || [];
         } catch (_) {
+          kbLoadTip.textContent = '知识库列表解析失败';
           kbTree.textContent = '返回不是合法 JSON';
           return;
         }
 
         kbTree.innerHTML = '';
+        setKbOptions(bases);
+        kbLoadTip.textContent = bases.length ? '已加载知识库列表' : '暂无知识库';
         if (!bases.length) {
+          kbLoadTip.textContent = '暂无知识库';
           kbTree.textContent = '暂无知识库';
           return;
         }
