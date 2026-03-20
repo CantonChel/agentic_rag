@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -17,6 +18,15 @@ public class ApiExceptionHandler {
 		body.put("status", e.getRawStatusCode());
 		body.put("message", truncate(e.getResponseBodyAsString(), 800));
 		return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(body);
+	}
+
+	@ExceptionHandler(ResponseStatusException.class)
+	public ResponseEntity<Map<String, Object>> handleStatus(ResponseStatusException e) {
+		Map<String, Object> body = new HashMap<>();
+		body.put("error", "request_rejected");
+		body.put("status", e.getStatus().value());
+		body.put("message", truncate(e.getReason(), 800));
+		return ResponseEntity.status(e.getStatus()).body(body);
 	}
 
 	@ExceptionHandler(Exception.class)
@@ -41,4 +51,3 @@ public class ApiExceptionHandler {
 		return s.substring(0, maxLen);
 	}
 }
-
