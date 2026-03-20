@@ -9,6 +9,7 @@ JAVA_PORT="${JAVA_PORT:-8081}"
 DOCREADER_PORT="${DOCREADER_PORT:-8090}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 REDIS_DOCKER_NAME="${REDIS_DOCKER_NAME:-rag-redis}"
+DOTENV_PATH="${ROOT_DIR}/.env"
 
 docker_ready() {
   command -v docker >/dev/null 2>&1 || return 1
@@ -80,6 +81,13 @@ echo "Starting docreader_service (port ${DOCREADER_PORT})"
 echo "Starting agentic_rag_app (port ${JAVA_PORT})"
 (
   cd "${ROOT_DIR}/agentic_rag_app"
+  if [[ -f "${DOTENV_PATH}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "${DOTENV_PATH}"
+    set +a
+  fi
+  export DOTENV_DIR="${ROOT_DIR}"
   export JAVA_HOME="${JAVA_HOME:-/Library/Java/JavaVirtualMachines/jdk-17.jdk/Contents/Home}"
   export SERVER_PORT="${JAVA_PORT}"
   export REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
