@@ -103,7 +103,13 @@ public class DocreaderCallbackService {
 		try {
 			parseJobService.markIndexing(job.getId());
 			Assembly assembly = assembleChunks(job.getKnowledgeId(), request.getChunks());
-			List<EmbeddingEntity> embeddings = buildEmbeddings(job.getKnowledgeId(), assembly.getChunkEntities(), assembly.getIndexChunks());
+			List<EmbeddingEntity> embeddings;
+			try {
+				embeddings = buildEmbeddings(job.getKnowledgeId(), assembly.getChunkEntities(), assembly.getIndexChunks());
+			} catch (Exception e) {
+				log.warn("embedding failed, fallback to chunk-only indexing: jobId={}, error={}", job.getId(), e.getMessage());
+				embeddings = new ArrayList<>();
+			}
 			chunkPersistenceService.replaceKnowledgeData(job.getKnowledgeId(), assembly.getChunkEntities(), embeddings, assembly.getIndexChunks());
 			parseJobService.markSuccess(job.getId());
 			return CallbackProcessResult.success(assembly.getChunkEntities().size(), embeddings.size());
