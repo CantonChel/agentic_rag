@@ -23,6 +23,9 @@
       .input-row { margin-top: 12px; display: flex; gap: 8px; }
       .input-row textarea { flex: 1; min-height: 72px; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; }
       .muted { margin-top: 8px; color: #6b7280; font-size: 12px; }
+      .tool-box { margin-top: 10px; padding: 8px; border: 1px dashed #d1d5db; border-radius: 10px; background: #fff; }
+      .tool-list { margin: 6px 0 0; padding: 0; list-style: none; }
+      .tool-item { padding: 6px 8px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 6px; background: #f9fafb; font-size: 12px; }
       @media (max-width: 760px) { .chat-box { height: 420px; } .msg { max-width: 92%; } }
     </style>
   </head>
@@ -54,6 +57,13 @@
             </select>
           </label>
           <label>
+            Tools
+            <select id="toolsEnabled">
+              <option value="true">开启</option>
+              <option value="false">关闭</option>
+            </select>
+          </label>
+          <label>
             Session ID
             <input id="sessionId" readonly style="width: 260px;" />
           </label>
@@ -62,6 +72,15 @@
         </div>
 
         <div id="chatBox" class="chat-box"></div>
+
+        <div class="tool-box" id="toolBox" style="display: none;">
+          <div class="row" style="justify-content: space-between;">
+            <strong>当前可用工具</strong>
+            <button class="secondary" id="refreshToolsBtn" style="padding: 6px 10px;">刷新</button>
+          </div>
+          <div class="muted" id="toolHint">仅在 agent + tools 开启时展示</div>
+          <ul class="tool-list" id="toolList"></ul>
+        </div>
 
         <div class="input-row">
           <textarea id="promptInput" placeholder="输入问题，例如：用两句话解释 RAG"></textarea>
@@ -75,12 +94,17 @@
       const apiBaseInput = document.getElementById('apiBase');
       const providerSel = document.getElementById('provider');
       const modeSel = document.getElementById('mode');
+      const toolsSel = document.getElementById('toolsEnabled');
       const sessionIdInput = document.getElementById('sessionId');
       const newSessionBtn = document.getElementById('newSessionBtn');
       const clearBtn = document.getElementById('clearBtn');
       const chatBox = document.getElementById('chatBox');
       const promptInput = document.getElementById('promptInput');
       const sendBtn = document.getElementById('sendBtn');
+      const toolBox = document.getElementById('toolBox');
+      const toolList = document.getElementById('toolList');
+      const toolHint = document.getElementById('toolHint');
+      const refreshToolsBtn = document.getElementById('refreshToolsBtn');
 
       let es = null;
       let currentAssistantEl = null;
@@ -121,6 +145,39 @@
         }
       }
 
+      async function refreshTools() {
+        const mode = modeSel.value;
+        const toolsEnabled = toolsSel.value === 'true';
+        if (mode !== 'agent' || !toolsEnabled) {
+          toolBox.style.display = 'none';
+          toolList.innerHTML = '';
+          toolHint.textContent = '仅在 agent + tools 开启时展示';
+          return;
+        }
+        toolBox.style.display = 'block';
+        toolHint.textContent = '加载中...';
+        toolList.innerHTML = '';
+        try {
+          const res = await fetch(apiUrl('/api/tools'));
+          const data = await res.json();
+          if (!Array.isArray(data) || data.length === 0) {
+            toolHint.textContent = '当前没有可用工具';
+            return;
+          }
+          toolHint.textContent = '已加载 ' + data.length + ' 个工具';
+          for (const tool of data) {
+            const li = document.createElement('li');
+            li.className = 'tool-item';
+            const name = tool.name || tool.getName || 'unknown';
+            const desc = tool.description || '';
+            li.textContent = name + (desc ? ' - ' + desc : '');
+            toolList.appendChild(li);
+          }
+        } catch (e) {
+          toolHint.textContent = '工具加载失败';
+        }
+      }
+
       function send() {
         const prompt = (promptInput.value || '').trim();
         if (!prompt) return;
@@ -133,10 +190,11 @@
         const mode = modeSel.value;
         const sessionId = sessionIdInput.value || newSessionId();
         sessionIdInput.value = sessionId;
+        const toolsEnabled = toolsSel.value === 'true';
 
         const basePath = mode === 'agent' ? '/api/agent/' : '/api/llm/';
         const path = basePath + provider + '/stream';
-        const query = new URLSearchParams({ sessionId, prompt });
+        const query = new URLSearchParams({ sessionId, prompt, tools: String(toolsEnabled) });
         const url = apiUrl(path) + '?' + query.toString();
 
         es = new EventSource(url);
@@ -170,11 +228,15 @@
       newSessionBtn.addEventListener('click', createSession);
       clearBtn.addEventListener('click', () => { chatBox.innerHTML = ''; });
       sendBtn.addEventListener('click', send);
+      refreshToolsBtn.addEventListener('click', refreshTools);
+      modeSel.addEventListener('change', refreshTools);
+      toolsSel.addEventListener('change', refreshTools);
       promptInput.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send();
       });
 
       createSession();
+      refreshTools();
     </script>
   </body>
 </html>
