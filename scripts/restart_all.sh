@@ -8,6 +8,7 @@ mkdir -p "${LOG_DIR}"
 JAVA_PORT="${JAVA_PORT:-8081}"
 DOCREADER_PORT="${DOCREADER_PORT:-8090}"
 REDIS_PORT="${REDIS_PORT:-6379}"
+REDIS_DOCKER_NAME="${REDIS_DOCKER_NAME:-rag-redis}"
 
 echo "==> Stopping services on ports ${JAVA_PORT}, ${DOCREADER_PORT}, ${REDIS_PORT}"
 
@@ -29,6 +30,14 @@ kill_by_port() {
   fi
 }
 
+if command -v docker >/dev/null 2>&1; then
+  if docker ps -a --format '{{.Names}}' | grep -q "^${REDIS_DOCKER_NAME}\$"; then
+    echo "Stopping docker redis container: ${REDIS_DOCKER_NAME}"
+    docker stop "${REDIS_DOCKER_NAME}" >/dev/null 2>&1 || true
+    docker rm "${REDIS_DOCKER_NAME}" >/dev/null 2>&1 || true
+  fi
+fi
+
 if command -v redis-cli >/dev/null 2>&1; then
   echo "Trying redis-cli shutdown on port ${REDIS_PORT}"
   redis-cli -h 127.0.0.1 -p "${REDIS_PORT}" shutdown || true
@@ -40,16 +49,21 @@ kill_by_port "${REDIS_PORT}"
 
 echo "==> Starting services"
 
-if command -v redis-server >/dev/null 2>&1; then
-  if command -v brew >/dev/null 2>&1; then
-    echo "Starting redis via brew services"
-    brew services start redis || true
-  else
-    echo "Starting redis-server directly"
-    nohup redis-server --port "${REDIS_PORT}" > "${LOG_DIR}/redis.log" 2>&1 &
-  fi
+if command -v docker >/dev/null 2>&1; then
+  echo "Starting redis via docker: ${REDIS_DOCKER_NAME}"
+  docker run -d --name "${REDIS_DOCKER_NAME}" -p "${REDIS_PORT}:6379" redis:7 >/dev/null 2>&1 || true
 else
-  echo "redis-server not found; skipping redis start"
+  if command -v redis-server >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+      echo "Starting redis via brew services"
+      brew services start redis || true
+    else
+      echo "Starting redis-server directly"
+      nohup redis-server --port "${REDIS_PORT}" > "${LOG_DIR}/redis.log" 2>&1 &
+    fi
+  else
+    echo "redis-server not found; skipping redis start"
+  fi
 fi
 
 echo "Starting docreader_service (port ${DOCREADER_PORT})"
