@@ -10,6 +10,11 @@ DOCREADER_PORT="${DOCREADER_PORT:-8090}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 REDIS_DOCKER_NAME="${REDIS_DOCKER_NAME:-rag-redis}"
 
+docker_ready() {
+  command -v docker >/dev/null 2>&1 || return 1
+  docker info >/dev/null 2>&1
+}
+
 echo "==> Stopping services on ports ${JAVA_PORT}, ${DOCREADER_PORT}, ${REDIS_PORT}"
 
 kill_by_port() {
@@ -49,7 +54,7 @@ kill_by_port "${REDIS_PORT}"
 
 echo "==> Starting services"
 
-if command -v docker >/dev/null 2>&1; then
+if docker_ready; then
   echo "Starting redis via docker: ${REDIS_DOCKER_NAME}"
   docker run -d --name "${REDIS_DOCKER_NAME}" -p "${REDIS_PORT}:6379" redis:7 >/dev/null 2>&1 || true
 else
