@@ -69,6 +69,7 @@
           </label>
           <button class="secondary" id="newSessionBtn">新建会话</button>
           <button class="secondary" id="clearBtn">清空聊天</button>
+          <button class="secondary" id="debugBtn">查看配置</button>
         </div>
 
         <div id="chatBox" class="chat-box"></div>
@@ -105,6 +106,7 @@
       const toolList = document.getElementById('toolList');
       const toolHint = document.getElementById('toolHint');
       const refreshToolsBtn = document.getElementById('refreshToolsBtn');
+      const debugBtn = document.getElementById('debugBtn');
 
       let es = null;
       let currentAssistantEl = null;
@@ -231,6 +233,10 @@
       refreshToolsBtn.addEventListener('click', refreshTools);
       modeSel.addEventListener('change', refreshTools);
       toolsSel.addEventListener('change', refreshTools);
+      debugBtn.addEventListener('click', () => {
+        const url = apiUrl('/api/debug/llm');
+        window.open(url, '_blank');
+      });
       promptInput.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send();
       });
