@@ -89,6 +89,11 @@ echo "Starting agentic_rag_app (port ${JAVA_PORT})"
   fi
   export DOTENV_DIR="${ROOT_DIR}"
   export JAVA_HOME="${JAVA_HOME:-/Library/Java/JavaVirtualMachines/jdk-17.jdk/Contents/Home}"
+  if [[ ! -x "${JAVA_HOME}/bin/java" ]]; then
+    echo "JAVA_HOME invalid: ${JAVA_HOME}"
+    echo "Please export JAVA_HOME to a valid JDK path before running this script."
+    exit 1
+  fi
   export SERVER_PORT="${JAVA_PORT}"
   export REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
   export REDIS_PORT="${REDIS_PORT}"
