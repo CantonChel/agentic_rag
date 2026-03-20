@@ -6,11 +6,12 @@
     <title>知识库与上传页面</title>
     <style>
       body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f4f6f9; color: #111827; }
-      .container { max-width: 980px; margin: 0 auto; padding: 16px; }
+      .container { max-width: 1100px; margin: 0 auto; padding: 16px; }
       .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
       .topbar a { color: #2563eb; text-decoration: none; }
       .panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
       .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      .col { display: flex; flex-direction: column; gap: 6px; }
       label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #4b5563; }
       input, textarea, button { font: inherit; }
       input, textarea { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 8px; }
@@ -23,6 +24,24 @@
       .status-success { background: #dcfce7; color: #166534; }
       .status-failed, .status-dead_letter { background: #fee2e2; color: #991b1b; }
       .status-running { background: #dbeafe; color: #1e40af; }
+      .layout { display: grid; grid-template-columns: 340px 1fr; gap: 12px; }
+      .kb-tree { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; max-height: 560px; overflow: auto; background: #fafafa; }
+      .kb-item { border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px 8px; margin-bottom: 8px; background: #fff; }
+      .kb-item summary { cursor: pointer; font-weight: 600; }
+      .doc-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+      .doc-btn { text-align: left; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; color: #111827; padding: 8px; cursor: pointer; }
+      .doc-btn:hover { border-color: #93c5fd; background: #eff6ff; }
+      .doc-name { font-weight: 600; }
+      .doc-meta { font-size: 12px; color: #6b7280; margin-top: 4px; }
+      .chunk-list { display: flex; flex-direction: column; gap: 10px; }
+      .chunk-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; background: #fff; }
+      .chunk-header { font-size: 12px; color: #4b5563; margin-bottom: 8px; }
+      .chunk-content { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; white-space: pre-wrap; }
+      .images { margin-top: 10px; border-top: 1px dashed #d1d5db; padding-top: 8px; }
+      .image-item { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; margin-top: 6px; background: #fafafa; }
+      .image-item img { max-width: 220px; max-height: 160px; border: 1px solid #d1d5db; border-radius: 6px; display: block; margin-top: 6px; }
+      .muted { color: #6b7280; font-size: 12px; }
+      @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .kb-tree { max-height: none; } }
     </style>
   </head>
   <body>
@@ -33,7 +52,7 @@
       </div>
 
       <div class="panel">
-        <h3 style="margin-top: 0;">1) 知识库标识</h3>
+        <h3 style="margin-top: 0;">基础配置</h3>
         <div class="row">
           <label>
             API Base URL
@@ -47,7 +66,7 @@
       </div>
 
       <div class="panel">
-        <h3 style="margin-top: 0;">2) 上传文档</h3>
+        <h3 style="margin-top: 0;">上传文档（创建异步任务）</h3>
         <div class="row">
           <label style="flex: 1; min-width: 280px;">
             metadata (JSON)
@@ -65,18 +84,36 @@
           </label>
           <span id="statusBadge" class="status-badge">unknown</span>
         </div>
-        <pre id="uploadOut" class="mono"></pre>
-      </div>
-
-      <div class="panel">
-        <h3 style="margin-top: 0;">3) 查询任务状态</h3>
         <div class="row">
           <button class="secondary" id="queryBtn">查询一次</button>
           <button class="secondary" id="startPollBtn">开始轮询</button>
           <button class="secondary" id="stopPollBtn">停止轮询</button>
           <button class="secondary" id="retryBtn">手动重试</button>
         </div>
+        <pre id="uploadOut" class="mono"></pre>
         <pre id="jobOut" class="mono"></pre>
+      </div>
+
+      <div class="panel">
+        <h3 style="margin-top: 0;">知识库 / 折叠 / 文档 / 分块</h3>
+        <div class="row" style="margin-bottom: 8px;">
+          <button class="secondary" id="refreshKbBtn">刷新知识库树</button>
+          <span class="muted">展开知识库可查看文档，点击文档可查看分块和图片信息。</span>
+        </div>
+
+        <div class="layout">
+          <div>
+            <div class="kb-tree" id="kbTree"></div>
+          </div>
+
+          <div>
+            <div class="col" style="margin-bottom: 8px;">
+              <strong id="selectedDocTitle">未选择文档</strong>
+              <span class="muted" id="selectedDocMeta">请在左侧点击一个文档查看分块。</span>
+            </div>
+            <div class="chunk-list" id="chunkList"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -94,6 +131,11 @@
       const startPollBtn = document.getElementById('startPollBtn');
       const stopPollBtn = document.getElementById('stopPollBtn');
       const retryBtn = document.getElementById('retryBtn');
+      const refreshKbBtn = document.getElementById('refreshKbBtn');
+      const kbTree = document.getElementById('kbTree');
+      const selectedDocTitle = document.getElementById('selectedDocTitle');
+      const selectedDocMeta = document.getElementById('selectedDocMeta');
+      const chunkList = document.getElementById('chunkList');
 
       let pollTimer = null;
 
@@ -107,7 +149,7 @@
         statusBadge.className = 'status-badge';
         if (s === 'success') statusBadge.classList.add('status-success');
         else if (s === 'failed' || s === 'dead_letter') statusBadge.classList.add('status-failed');
-        else if (['queued','dispatched','parsing','indexing','retry_wait'].includes(s)) statusBadge.classList.add('status-running');
+        else if (['queued', 'dispatched', 'parsing', 'indexing', 'retry_wait'].includes(s)) statusBadge.classList.add('status-running');
         statusBadge.textContent = s;
       }
 
@@ -144,6 +186,8 @@
         } catch (_) {
           setStatusBadge('unknown');
         }
+
+        refreshKnowledgeBases();
       }
 
       async function queryJob() {
@@ -169,6 +213,7 @@
           const terminal = ['success', 'failed', 'dead_letter'];
           if (terminal.includes((data.status || '').toLowerCase())) {
             stopPolling();
+            refreshKnowledgeBases();
           }
         } catch (_) {}
       }
@@ -198,12 +243,224 @@
         jobOut.textContent = text;
       }
 
+      function formatBytes(bytes) {
+        if (bytes == null || Number.isNaN(Number(bytes))) return '-';
+        const n = Number(bytes);
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+        return (n / (1024 * 1024)).toFixed(1) + ' MB';
+      }
+
+      function isPreviewable(url) {
+        if (!url) return false;
+        return /^https?:\/\//i.test(url) || /^data:image\//i.test(url);
+      }
+
+      function addLinkLine(root, title, url) {
+        const div = document.createElement('div');
+        if (!url) {
+          div.textContent = title + ': -';
+          root.appendChild(div);
+          return;
+        }
+
+        const span = document.createElement('span');
+        span.textContent = title + ': ';
+        div.appendChild(span);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = url;
+        div.appendChild(a);
+        root.appendChild(div);
+      }
+
+      async function refreshKnowledgeBases() {
+        kbTree.textContent = '加载中...';
+        const res = await fetch(apiUrl('/api/knowledge-bases'));
+        const text = await res.text();
+        if (!res.ok) {
+          kbTree.textContent = '加载失败: ' + text;
+          return;
+        }
+
+        let bases = [];
+        try {
+          bases = JSON.parse(text) || [];
+        } catch (_) {
+          kbTree.textContent = '返回不是合法 JSON';
+          return;
+        }
+
+        kbTree.innerHTML = '';
+        if (!bases.length) {
+          kbTree.textContent = '暂无知识库';
+          return;
+        }
+
+        for (const kb of bases) {
+          const details = document.createElement('details');
+          details.className = 'kb-item';
+
+          const summary = document.createElement('summary');
+          summary.textContent = (kb.knowledgeBaseId || 'unknown') + ' (' + (kb.documentCount || 0) + ')';
+          details.appendChild(summary);
+
+          const docList = document.createElement('div');
+          docList.className = 'doc-list';
+          docList.textContent = '展开后加载文档...';
+          details.appendChild(docList);
+
+          details.addEventListener('toggle', async () => {
+            if (!details.open || details.dataset.loaded === '1') return;
+            details.dataset.loaded = '1';
+            docList.textContent = '文档加载中...';
+            await loadDocuments(kb.knowledgeBaseId, docList);
+          });
+
+          kbTree.appendChild(details);
+        }
+      }
+
+      async function loadDocuments(kbId, docListEl) {
+        const url = apiUrl('/api/knowledge-bases/' + encodeURIComponent(kbId) + '/knowledge');
+        const res = await fetch(url);
+        const text = await res.text();
+        if (!res.ok) {
+          docListEl.textContent = '加载失败: ' + text;
+          return;
+        }
+
+        let docs = [];
+        try {
+          docs = JSON.parse(text) || [];
+        } catch (_) {
+          docListEl.textContent = '返回不是合法 JSON';
+          return;
+        }
+
+        docListEl.innerHTML = '';
+        if (!docs.length) {
+          docListEl.textContent = '暂无文档';
+          return;
+        }
+
+        for (const doc of docs) {
+          const btn = document.createElement('button');
+          btn.className = 'doc-btn';
+
+          const name = document.createElement('div');
+          name.className = 'doc-name';
+          name.textContent = doc.fileName || doc.knowledgeId;
+          btn.appendChild(name);
+
+          const meta = document.createElement('div');
+          meta.className = 'doc-meta';
+          meta.textContent = 'status=' + (doc.parseStatus || '-') + ', size=' + formatBytes(doc.fileSize) + ', id=' + (doc.knowledgeId || '-');
+          btn.appendChild(meta);
+
+          btn.addEventListener('click', () => loadChunks(doc));
+          docListEl.appendChild(btn);
+        }
+      }
+
+      async function loadChunks(doc) {
+        const knowledgeId = doc && doc.knowledgeId ? String(doc.knowledgeId) : '';
+        if (!knowledgeId) return;
+
+        selectedDocTitle.textContent = (doc.fileName || 'unknown') + ' (' + knowledgeId + ')';
+        selectedDocMeta.textContent = 'parseStatus=' + (doc.parseStatus || '-') + ', updatedAt=' + (doc.updatedAt || '-');
+        chunkList.textContent = '分块加载中...';
+
+        const url = apiUrl('/api/knowledge/' + encodeURIComponent(knowledgeId) + '/chunks');
+        const res = await fetch(url);
+        const text = await res.text();
+        if (!res.ok) {
+          chunkList.textContent = '加载失败: ' + text;
+          return;
+        }
+
+        let chunks = [];
+        try {
+          chunks = JSON.parse(text) || [];
+        } catch (_) {
+          chunkList.textContent = '返回不是合法 JSON';
+          return;
+        }
+
+        chunkList.innerHTML = '';
+        if (!chunks.length) {
+          chunkList.textContent = '该文档暂无分块';
+          return;
+        }
+
+        for (const chunk of chunks) {
+          const card = document.createElement('div');
+          card.className = 'chunk-card';
+
+          const header = document.createElement('div');
+          header.className = 'chunk-header mono';
+          header.textContent = 'chunkId=' + (chunk.chunkId || '-') + ' | type=' + (chunk.chunkType || '-') + ' | index=' + (chunk.chunkIndex ?? '-') + ' | range=[' + (chunk.startAt ?? '-') + ',' + (chunk.endAt ?? '-') + ']';
+          card.appendChild(header);
+
+          const content = document.createElement('div');
+          content.className = 'chunk-content';
+          content.textContent = chunk.content || '';
+          card.appendChild(content);
+
+          const images = Array.isArray(chunk.imageInfos) ? chunk.imageInfos : [];
+          if (images.length > 0) {
+            const imagesWrap = document.createElement('div');
+            imagesWrap.className = 'images';
+
+            const imagesTitle = document.createElement('div');
+            imagesTitle.innerHTML = '<strong>图片信息</strong>';
+            imagesWrap.appendChild(imagesTitle);
+
+            for (const info of images) {
+              const item = document.createElement('div');
+              item.className = 'image-item mono';
+
+              addLinkLine(item, 'url', info.url);
+              addLinkLine(item, 'originalUrl', info.originalUrl);
+
+              const caption = document.createElement('div');
+              caption.textContent = 'caption: ' + (info.caption || '-');
+              item.appendChild(caption);
+
+              const ocr = document.createElement('div');
+              ocr.textContent = 'ocrText: ' + (info.ocrText || '-');
+              item.appendChild(ocr);
+
+              const previewUrl = isPreviewable(info.url) ? info.url : (isPreviewable(info.originalUrl) ? info.originalUrl : '');
+              if (previewUrl) {
+                const img = document.createElement('img');
+                img.src = previewUrl;
+                img.alt = 'image preview';
+                item.appendChild(img);
+              }
+
+              imagesWrap.appendChild(item);
+            }
+
+            card.appendChild(imagesWrap);
+          }
+
+          chunkList.appendChild(card);
+        }
+      }
+
       uploadBtn.addEventListener('click', uploadFile);
       queryBtn.addEventListener('click', queryJob);
       startPollBtn.addEventListener('click', startPolling);
       stopPollBtn.addEventListener('click', stopPolling);
       retryBtn.addEventListener('click', retryJob);
+      refreshKbBtn.addEventListener('click', refreshKnowledgeBases);
       window.addEventListener('beforeunload', stopPolling);
+
+      refreshKnowledgeBases();
     </script>
   </body>
 </html>
