@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>知识库与上传页面</title>
+    <style>
+      body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f4f6f9; color: #111827; }
+      .container { max-width: 980px; margin: 0 auto; padding: 16px; }
+      .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+      .topbar a { color: #2563eb; text-decoration: none; }
+      .panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #4b5563; }
+      input, textarea, button { font: inherit; }
+      input, textarea { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 8px; }
+      textarea { min-height: 88px; }
+      button { padding: 8px 12px; border: 1px solid #2563eb; background: #2563eb; color: #fff; border-radius: 8px; cursor: pointer; }
+      button.secondary { background: #fff; color: #2563eb; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+      pre { background: #0b1020; color: #c8d1ff; padding: 10px; border-radius: 8px; overflow: auto; min-height: 96px; white-space: pre-wrap; word-break: break-word; }
+      .status-badge { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 12px; background: #e5e7eb; color: #111827; }
+      .status-success { background: #dcfce7; color: #166534; }
+      .status-failed, .status-dead_letter { background: #fee2e2; color: #991b1b; }
+      .status-running { background: #dbeafe; color: #1e40af; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="topbar">
+        <h2 style="margin: 0;">知识库与文档上传页面</h2>
+        <a href="/chat.html">去聊天页面</a>
+      </div>
+
+      <div class="panel">
+        <h3 style="margin-top: 0;">1) 知识库标识</h3>
+        <div class="row">
+          <label>
+            API Base URL
+            <input id="apiBase" class="mono" placeholder="留空表示同源" style="width: 240px;" />
+          </label>
+          <label>
+            Knowledge Base ID
+            <input id="kbId" class="mono" value="kb-demo" style="width: 220px;" />
+          </label>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3 style="margin-top: 0;">2) 上传文档</h3>
+        <div class="row">
+          <label style="flex: 1; min-width: 280px;">
+            metadata (JSON)
+            <textarea id="metadata" class="mono">{"source":"web-ui","tags":["demo"]}</textarea>
+          </label>
+        </div>
+        <div class="row">
+          <input id="fileInput" type="file" />
+          <button id="uploadBtn">上传并创建任务</button>
+        </div>
+        <div class="row" style="margin-top: 8px;">
+          <label>
+            最新 jobId
+            <input id="jobId" class="mono" style="width: 360px;" />
+          </label>
+          <span id="statusBadge" class="status-badge">unknown</span>
+        </div>
+        <pre id="uploadOut" class="mono"></pre>
+      </div>
+
+      <div class="panel">
+        <h3 style="margin-top: 0;">3) 查询任务状态</h3>
+        <div class="row">
+          <button class="secondary" id="queryBtn">查询一次</button>
+          <button class="secondary" id="startPollBtn">开始轮询</button>
+          <button class="secondary" id="stopPollBtn">停止轮询</button>
+          <button class="secondary" id="retryBtn">手动重试</button>
+        </div>
+        <pre id="jobOut" class="mono"></pre>
+      </div>
+    </div>
+
+    <script>
+      const apiBaseInput = document.getElementById('apiBase');
+      const kbIdInput = document.getElementById('kbId');
+      const metadataInput = document.getElementById('metadata');
+      const fileInput = document.getElementById('fileInput');
+      const uploadBtn = document.getElementById('uploadBtn');
+      const jobIdInput = document.getElementById('jobId');
+      const statusBadge = document.getElementById('statusBadge');
+      const uploadOut = document.getElementById('uploadOut');
+      const jobOut = document.getElementById('jobOut');
+      const queryBtn = document.getElementById('queryBtn');
+      const startPollBtn = document.getElementById('startPollBtn');
+      const stopPollBtn = document.getElementById('stopPollBtn');
+      const retryBtn = document.getElementById('retryBtn');
+
+      let pollTimer = null;
+
+      function apiUrl(path) {
+        const base = (apiBaseInput.value || '').trim();
+        return base ? base + path : path;
+      }
+
+      function setStatusBadge(status) {
+        const s = (status || 'unknown').toLowerCase();
+        statusBadge.className = 'status-badge';
+        if (s === 'success') statusBadge.classList.add('status-success');
+        else if (s === 'failed' || s === 'dead_letter') statusBadge.classList.add('status-failed');
+        else if (['queued','dispatched','parsing','indexing','retry_wait'].includes(s)) statusBadge.classList.add('status-running');
+        statusBadge.textContent = s;
+      }
+
+      async function uploadFile() {
+        const kbId = (kbIdInput.value || '').trim();
+        const file = fileInput.files && fileInput.files[0];
+        if (!kbId) {
+          uploadOut.textContent = 'kbId 不能为空';
+          return;
+        }
+        if (!file) {
+          uploadOut.textContent = '请先选择文件';
+          return;
+        }
+
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('metadata', metadataInput.value || '{}');
+
+        const url = apiUrl('/api/knowledge-bases/' + encodeURIComponent(kbId) + '/knowledge/file');
+        const res = await fetch(url, { method: 'POST', body: fd });
+        const text = await res.text();
+        uploadOut.textContent = text;
+
+        if (!res.ok) {
+          setStatusBadge('failed');
+          return;
+        }
+
+        try {
+          const data = JSON.parse(text);
+          if (data.jobId) jobIdInput.value = data.jobId;
+          setStatusBadge(data.status || 'queued');
+        } catch (_) {
+          setStatusBadge('unknown');
+        }
+      }
+
+      async function queryJob() {
+        const jobId = (jobIdInput.value || '').trim();
+        if (!jobId) {
+          jobOut.textContent = 'jobId 不能为空';
+          return;
+        }
+
+        const url = apiUrl('/api/jobs/' + encodeURIComponent(jobId));
+        const res = await fetch(url);
+        const text = await res.text();
+        jobOut.textContent = text;
+
+        if (!res.ok) {
+          setStatusBadge('failed');
+          return;
+        }
+
+        try {
+          const data = JSON.parse(text);
+          setStatusBadge(data.status || 'unknown');
+          const terminal = ['success', 'failed', 'dead_letter'];
+          if (terminal.includes((data.status || '').toLowerCase())) {
+            stopPolling();
+          }
+        } catch (_) {}
+      }
+
+      function startPolling() {
+        stopPolling();
+        queryJob();
+        pollTimer = setInterval(queryJob, 2000);
+      }
+
+      function stopPolling() {
+        if (pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+      }
+
+      async function retryJob() {
+        const jobId = (jobIdInput.value || '').trim();
+        if (!jobId) {
+          jobOut.textContent = 'jobId 不能为空';
+          return;
+        }
+        const url = apiUrl('/api/jobs/' + encodeURIComponent(jobId) + '/retry');
+        const res = await fetch(url, { method: 'POST' });
+        const text = await res.text();
+        jobOut.textContent = text;
+      }
+
+      uploadBtn.addEventListener('click', uploadFile);
+      queryBtn.addEventListener('click', queryJob);
+      startPollBtn.addEventListener('click', startPolling);
+      stopPollBtn.addEventListener('click', stopPolling);
+      retryBtn.addEventListener('click', retryJob);
+      window.addEventListener('beforeunload', stopPolling);
+    </script>
+  </body>
+</html>

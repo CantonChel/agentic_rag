@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>聊天页面</title>
+    <style>
+      body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f4f6f9; color: #111827; }
+      .container { max-width: 920px; margin: 0 auto; padding: 16px; }
+      .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+      .topbar a { color: #2563eb; text-decoration: none; }
+      .panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #4b5563; }
+      select, input, button, textarea { font: inherit; }
+      select, input { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 8px; }
+      button { padding: 8px 12px; border: 1px solid #2563eb; background: #2563eb; color: #fff; border-radius: 8px; cursor: pointer; }
+      button.secondary { background: #fff; color: #2563eb; }
+      .chat-box { margin-top: 12px; border: 1px solid #e5e7eb; border-radius: 12px; height: 480px; overflow-y: auto; background: #f9fafb; padding: 12px; }
+      .msg { max-width: 80%; padding: 10px 12px; border-radius: 12px; margin: 8px 0; white-space: pre-wrap; line-height: 1.45; }
+      .user { margin-left: auto; background: #2563eb; color: #fff; }
+      .assistant { margin-right: auto; background: #fff; border: 1px solid #e5e7eb; }
+      .input-row { margin-top: 12px; display: flex; gap: 8px; }
+      .input-row textarea { flex: 1; min-height: 72px; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; }
+      .muted { margin-top: 8px; color: #6b7280; font-size: 12px; }
+      @media (max-width: 760px) { .chat-box { height: 420px; } .msg { max-width: 92%; } }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="topbar">
+        <h2 style="margin: 0;">聊天页面</h2>
+        <a href="/knowledge.html">去知识库上传页面</a>
+      </div>
+
+      <div class="panel">
+        <div class="row">
+          <label>
+            API Base URL
+            <input id="apiBase" placeholder="留空表示同源" style="width: 220px;" />
+          </label>
+          <label>
+            Provider
+            <select id="provider">
+              <option value="openai">openai</option>
+              <option value="minimax">minimax</option>
+            </select>
+          </label>
+          <label>
+            Mode
+            <select id="mode">
+              <option value="agent">agent</option>
+              <option value="llm">llm</option>
+            </select>
+          </label>
+          <label>
+            Session ID
+            <input id="sessionId" readonly style="width: 260px;" />
+          </label>
+          <button class="secondary" id="newSessionBtn">新建会话</button>
+          <button class="secondary" id="clearBtn">清空聊天</button>
+        </div>
+
+        <div id="chatBox" class="chat-box"></div>
+
+        <div class="input-row">
+          <textarea id="promptInput" placeholder="输入问题，例如：用两句话解释 RAG"></textarea>
+          <button id="sendBtn">发送</button>
+        </div>
+        <div class="muted">说明：发送后会调用 SSE 接口并按 delta 拼接回复，done 结束。</div>
+      </div>
+    </div>
+
+    <script>
+      const apiBaseInput = document.getElementById('apiBase');
+      const providerSel = document.getElementById('provider');
+      const modeSel = document.getElementById('mode');
+      const sessionIdInput = document.getElementById('sessionId');
+      const newSessionBtn = document.getElementById('newSessionBtn');
+      const clearBtn = document.getElementById('clearBtn');
+      const chatBox = document.getElementById('chatBox');
+      const promptInput = document.getElementById('promptInput');
+      const sendBtn = document.getElementById('sendBtn');
+
+      let es = null;
+      let currentAssistantEl = null;
+
+      function apiUrl(path) {
+        const base = (apiBaseInput.value || '').trim();
+        return base ? base + path : path;
+      }
+
+      function newSessionId() {
+        return 'web-' + Date.now();
+      }
+
+      function appendMessage(role, text) {
+        const div = document.createElement('div');
+        div.className = 'msg ' + (role === 'user' ? 'user' : 'assistant');
+        div.textContent = text || '';
+        chatBox.appendChild(div);
+        chatBox.scrollTop = chatBox.scrollHeight;
+        return div;
+      }
+
+      async function createSession() {
+        try {
+          const res = await fetch(apiUrl('/api/sessions'), { method: 'POST' });
+          if (!res.ok) throw new Error('create session failed: ' + res.status);
+          const data = await res.json();
+          sessionIdInput.value = data.sessionId || newSessionId();
+        } catch (_) {
+          sessionIdInput.value = newSessionId();
+        }
+      }
+
+      function stopStream() {
+        if (es) {
+          es.close();
+          es = null;
+        }
+      }
+
+      function send() {
+        const prompt = (promptInput.value || '').trim();
+        if (!prompt) return;
+
+        stopStream();
+        appendMessage('user', prompt);
+        currentAssistantEl = appendMessage('assistant', '');
+
+        const provider = providerSel.value;
+        const mode = modeSel.value;
+        const sessionId = sessionIdInput.value || newSessionId();
+        sessionIdInput.value = sessionId;
+
+        const basePath = mode === 'agent' ? '/api/agent/' : '/api/llm/';
+        const path = basePath + provider + '/stream';
+        const query = new URLSearchParams({ sessionId, prompt });
+        const url = apiUrl(path) + '?' + query.toString();
+
+        es = new EventSource(url);
+
+        es.addEventListener('delta', (evt) => {
+          try {
+            const data = JSON.parse(evt.data);
+            if (data && data.content) {
+              currentAssistantEl.textContent += data.content;
+              chatBox.scrollTop = chatBox.scrollHeight;
+            }
+          } catch (_) {}
+        });
+
+        es.addEventListener('done', () => {
+          stopStream();
+        });
+
+        es.addEventListener('error', (evt) => {
+          try {
+            const data = JSON.parse(evt.data);
+            const msg = data && data.content ? data.content : 'stream error';
+            currentAssistantEl.textContent += '\n[error] ' + msg;
+          } catch (_) {
+            currentAssistantEl.textContent += '\n[error] stream closed';
+          }
+          stopStream();
+        });
+      }
+
+      newSessionBtn.addEventListener('click', createSession);
+      clearBtn.addEventListener('click', () => { chatBox.innerHTML = ''; });
+      sendBtn.addEventListener('click', send);
+      promptInput.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send();
+      });
+
+      createSession();
+    </script>
+  </body>
+</html>
