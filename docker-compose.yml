@@ -1,0 +1,55 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: agentic-rag-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  docreader:
+    build:
+      context: ./docreader_service
+    container_name: docreader-service
+    environment:
+      DOCREADER_PORT: 8090
+      DOCREADER_WORKER_COUNT: 2
+      DOCREADER_CALLBACK_SECRET: ${DOCREADER_CALLBACK_SECRET:-}
+      DOCREADER_SIGNATURE_HEADER: X-Docreader-Signature
+      DOCREADER_TIMESTAMP_HEADER: X-Docreader-Timestamp
+    volumes:
+      - knowledge-files:/shared/knowledge-files
+    ports:
+      - "8090:8090"
+
+  agentic-rag-app:
+    build:
+      context: ./agentic_rag_app
+    container_name: agentic-rag-app
+    environment:
+      SERVER_PORT: 8081
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      INGEST_ASYNC_ENABLED: true
+      INGEST_FILE_ROOT: /shared/knowledge-files
+      DOCREADER_BASE_URL: http://docreader:8090
+      DOCREADER_CALLBACK_BASE_URL: http://agentic-rag-app:8081
+      DOCREADER_CALLBACK_SECRET: ${DOCREADER_CALLBACK_SECRET:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+    volumes:
+      - knowledge-files:/shared/knowledge-files
+    ports:
+      - "8081:8081"
+    depends_on:
+      redis:
+        condition: service_healthy
+      docreader:
+        condition: service_started
+
+volumes:
+  knowledge-files:
