@@ -26,14 +26,9 @@ public class ParseJobController {
 
 	@GetMapping(value = "/{jobId}", produces = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<ResponseEntity<JobStatusResponse>> getJob(@PathVariable("jobId") String jobId) {
-		return Mono.fromCallable(() -> {
-			Optional<ParseJobEntity> opt = knowledgeIngestService.getJob(jobId);
-			if (!opt.isPresent()) {
-				return ResponseEntity.<JobStatusResponse>notFound().build();
-			}
-			ParseJobEntity job = opt.get();
-			return ResponseEntity.ok(JobStatusResponse.from(job));
-		}).subscribeOn(Schedulers.boundedElastic());
+		return Mono.fromCallable(() -> ResponseEntity.of(
+			knowledgeIngestService.getJob(jobId).map(JobStatusResponse::from)
+		)).subscribeOn(Schedulers.boundedElastic());
 	}
 
 	@PostMapping(value = "/{jobId}/retry", produces = MediaType.APPLICATION_JSON_VALUE)

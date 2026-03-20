@@ -12,7 +12,7 @@ import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -31,8 +31,8 @@ public class KnowledgeIngestController {
 	@PostMapping(value = "/{kbId}/knowledge/file", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<UploadResponse> upload(
 		@PathVariable("kbId") String knowledgeBaseId,
-		@RequestParam("file") FilePart file,
-		@RequestParam(value = "metadata", required = false) String metadataJson
+		@RequestPart("file") FilePart file,
+		@RequestPart(value = "metadata", required = false) String metadataJson
 	) {
 		if (file == null) {
 			return Mono.just(new UploadResponse(null, null, "invalid_request"));
