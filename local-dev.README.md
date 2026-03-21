@@ -33,6 +33,21 @@ DOCREADER_CALLBACK_BASE_URL=http://127.0.0.1:8081 \
 ./mvnw -q spring-boot:run
 ```
 
+## 3.1) Postgres indexes (pgvector + BM25)
+If you enable `SPRING_PROFILES_ACTIVE=postgres`, run:
+```sql
+-- scripts/postgres_init.sql
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE INDEX IF NOT EXISTS idx_chunk_fts
+ON chunk
+USING GIN (to_tsvector('simple', content));
+CREATE INDEX IF NOT EXISTS idx_embedding_vector_l2
+ON embedding
+USING ivfflat (vector_json::vector);
+ANALYZE chunk;
+ANALYZE embedding;
+```
+
 ## 4) Run E2E smoke test
 In a new terminal from project root:
 ```bash
