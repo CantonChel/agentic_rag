@@ -1,9 +1,7 @@
 package com.agenticrag.app.rag.store;
 
-import com.agenticrag.app.ingest.entity.EmbeddingEntity;
 import com.agenticrag.app.ingest.repo.EmbeddingRepository;
 import com.agenticrag.app.rag.model.TextChunk;
-import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -40,30 +38,11 @@ class PostgresVectorStoreTest {
 		Mockito.when(jdbcTemplate.queryForList(Mockito.anyString(), Mockito.<Object[]>any()))
 			.thenReturn(Arrays.asList(r1, r2));
 
-		EmbeddingEntity e1 = new EmbeddingEntity();
-		e1.setChunkId("c1");
-		e1.setKnowledgeId("k1");
-		e1.setContent("hello");
-		e1.setModelName("m");
-		e1.setDimension(2);
-		e1.setVectorJson("[0.1,0.2]");
-		e1.setEnabled(true);
-		e1.setCreatedAt(Instant.now());
-		e1.setUpdatedAt(Instant.now());
-
-		EmbeddingEntity e2 = new EmbeddingEntity();
-		e2.setChunkId("c2");
-		e2.setKnowledgeId("k1");
-		e2.setContent("world");
-		e2.setModelName("m");
-		e2.setDimension(2);
-		e2.setVectorJson("[0.2,0.3]");
-		e2.setEnabled(true);
-		e2.setCreatedAt(Instant.now());
-		e2.setUpdatedAt(Instant.now());
-
-		Mockito.when(embeddingRepository.findByChunkIdIn(Mockito.anyList()))
-			.thenReturn(Arrays.asList(e1, e2));
+		Mockito.when(embeddingRepository.listChunkContentByChunkIds(Mockito.anyList()))
+			.thenReturn(Arrays.asList(
+				new Object[] {"c1", "k1", "hello"},
+				new Object[] {"c2", "k1", "world"}
+			));
 
 		PostgresVectorStore store = new PostgresVectorStore(jdbcTemplate, embeddingRepository);
 		List<TextChunk> out = store.similaritySearch(Arrays.asList(0.1, 0.2), 2);
