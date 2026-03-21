@@ -38,20 +38,20 @@ public class HybridRetriever {
 		int recall = recallTopK > 0 ? recallTopK : 20;
 		int rerank = rerankTopK > 0 ? rerankTopK : 5;
 
-		Retriever bm25 = postgresBm25Retriever.getIfAvailable();
-		if (bm25 == null) {
-			bm25 = bm25Retriever;
+		Retriever bm25Candidate = postgresBm25Retriever.getIfAvailable();
+		if (bm25Candidate == null) {
+			bm25Candidate = bm25Retriever;
 		}
 
-		final Retriever bm25RetrieverResolved = bm25;
+		final Retriever bm25RetrieverResolved = bm25Candidate;
 
 		CompletableFuture<List<TextChunk>> denseF = CompletableFuture.supplyAsync(() -> denseRetriever.retrieve(query, recall));
 		CompletableFuture<List<TextChunk>> bm25F = CompletableFuture.supplyAsync(() -> bm25RetrieverResolved.retrieve(query, recall));
 
 		List<TextChunk> dense = denseF.join();
-		List<TextChunk> bm25 = bm25F.join();
+		List<TextChunk> bm25Chunks = bm25F.join();
 
-		List<TextChunk> fused = fuseRrf(dense, bm25, recall, 60);
+		List<TextChunk> fused = fuseRrf(dense, bm25Chunks, recall, 60);
 		return reranker.rerank(query, fused, rerank);
 	}
 
