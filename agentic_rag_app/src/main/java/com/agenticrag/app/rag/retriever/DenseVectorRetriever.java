@@ -2,6 +2,7 @@ package com.agenticrag.app.rag.retriever;
 
 import com.agenticrag.app.rag.embedding.EmbeddingModel;
 import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.store.PostgresVectorStore;
 import com.agenticrag.app.rag.store.VectorStore;
 import java.util.ArrayList;
 import java.util.List;

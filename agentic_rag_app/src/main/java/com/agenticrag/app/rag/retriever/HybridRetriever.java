@@ -43,8 +43,10 @@ public class HybridRetriever {
 			bm25 = bm25Retriever;
 		}
 
+		final Retriever bm25RetrieverResolved = bm25;
+
 		CompletableFuture<List<TextChunk>> denseF = CompletableFuture.supplyAsync(() -> denseRetriever.retrieve(query, recall));
-		CompletableFuture<List<TextChunk>> bm25F = CompletableFuture.supplyAsync(() -> bm25.retrieve(query, recall));
+		CompletableFuture<List<TextChunk>> bm25F = CompletableFuture.supplyAsync(() -> bm25RetrieverResolved.retrieve(query, recall));
 
 		List<TextChunk> dense = denseF.join();
 		List<TextChunk> bm25 = bm25F.join();
