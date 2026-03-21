@@ -7,7 +7,6 @@ import javax.persistence.GeneratedValue;
 import javax.persistence.GenerationType;
 import javax.persistence.Id;
 import javax.persistence.Index;
-import javax.persistence.Lob;
 import javax.persistence.Table;
 import javax.persistence.UniqueConstraint;
 
@@ -39,11 +38,9 @@ public class EmbeddingEntity {
 	@Column(nullable = false)
 	private int dimension;
 
-	@Lob
 	@Column(nullable = false)
 	private String vectorJson;
 
-	@Lob
 	@Column(nullable = false)
 	private String content;
 

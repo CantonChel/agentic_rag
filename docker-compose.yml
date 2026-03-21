@@ -1,4 +1,21 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: agentic-rag-postgres
+    environment:
+      POSTGRES_DB: agentic_rag
+      POSTGRES_USER: agentic
+      POSTGRES_PASSWORD: agentic
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentic -d agentic_rag"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+
   redis:
     image: redis:7-alpine
     container_name: agentic-rag-redis
@@ -31,6 +48,9 @@ services:
       SERVER_PORT: 8081
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      DB_URL: jdbc:postgresql://postgres:5432/agentic_rag
+      DB_USER: agentic
+      DB_PASSWORD: agentic
       INGEST_ASYNC_ENABLED: true
       INGEST_FILE_ROOT: /shared/knowledge-files
       DOCREADER_BASE_URL: http://docreader:8090
@@ -41,13 +61,18 @@ services:
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
     volumes:
       - knowledge-files:/shared/knowledge-files
+      - app-data:/app/data
     ports:
       - "8081:8081"
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       docreader:
         condition: service_started
 
 volumes:
+  pg-data:
   knowledge-files:
+  app-data:

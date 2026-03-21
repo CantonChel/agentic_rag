@@ -25,15 +25,26 @@ public class EmbeddingCosineReranker implements Reranker {
 		List<List<Double>> q = embeddingModel.embedTexts(java.util.Collections.singletonList(query));
 		List<Double> qe = q != null && !q.isEmpty() ? q.get(0) : null;
 		if (qe == null || qe.isEmpty()) {
-			return new ArrayList<>();
+			return fallback(candidates, topK);
 		}
 
-		return candidates.stream()
+		List<TextChunk> ranked = candidates.stream()
 			.filter(c -> c != null && c.getEmbedding() != null && !c.getEmbedding().isEmpty())
 			.map(c -> new ScoredChunk(c, CosineSimilarity.cosine(qe, c.getEmbedding())))
 			.sorted(Comparator.comparingDouble(ScoredChunk::getScore).reversed())
 			.limit(topK)
 			.map(ScoredChunk::getChunk)
+			.collect(Collectors.toList());
+		if (ranked.isEmpty()) {
+			return fallback(candidates, topK);
+		}
+		return ranked;
+	}
+
+	private List<TextChunk> fallback(List<TextChunk> candidates, int topK) {
+		return candidates.stream()
+			.filter(c -> c != null && c.getText() != null && !c.getText().trim().isEmpty())
+			.limit(topK)
 			.collect(Collectors.toList());
 	}
 
@@ -55,4 +66,3 @@ public class EmbeddingCosineReranker implements Reranker {
 		}
 	}
 }
-

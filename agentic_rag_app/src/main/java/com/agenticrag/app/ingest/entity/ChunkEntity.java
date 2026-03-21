@@ -10,7 +10,6 @@ import javax.persistence.GeneratedValue;
 import javax.persistence.GenerationType;
 import javax.persistence.Id;
 import javax.persistence.Index;
-import javax.persistence.Lob;
 import javax.persistence.Table;
 import javax.persistence.UniqueConstraint;
 
@@ -58,15 +57,12 @@ public class ChunkEntity {
 	@Column(length = 64)
 	private String nextChunkId;
 
-	@Lob
 	@Column(nullable = false)
 	private String content;
 
-	@Lob
 	@Column
 	private String imageInfoJson;
 
-	@Lob
 	@Column
 	private String metadataJson;
 

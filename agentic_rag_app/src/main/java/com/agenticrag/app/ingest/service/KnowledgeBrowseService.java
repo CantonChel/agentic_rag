@@ -1,11 +1,13 @@
 package com.agenticrag.app.ingest.service;
 
 import com.agenticrag.app.ingest.entity.ChunkEntity;
-import com.agenticrag.app.ingest.entity.KnowledgeEntity;
+import com.agenticrag.app.ingest.model.KnowledgeEnableStatus;
+import com.agenticrag.app.ingest.model.KnowledgeParseStatus;
 import com.agenticrag.app.ingest.repo.ChunkRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -31,17 +33,17 @@ public class KnowledgeBrowseService {
 	}
 
 	public List<KnowledgeBaseSummary> listKnowledgeBases() {
-		List<KnowledgeEntity> all = knowledgeRepository.findAllByOrderByKnowledgeBaseIdAscCreatedAtDesc();
 		Map<String, Integer> counts = new LinkedHashMap<>();
-		for (KnowledgeEntity item : all) {
-			if (item == null) {
+		List<Object[]> rows = knowledgeRepository.summarizeByKnowledgeBase();
+		for (Object[] row : rows) {
+			if (row == null || row.length < 2) {
 				continue;
 			}
-			String kbId = safe(item.getKnowledgeBaseId());
+			String kbId = safe(asString(row[0]));
 			if (kbId.isEmpty()) {
 				continue;
 			}
-			counts.put(kbId, counts.getOrDefault(kbId, 0) + 1);
+			counts.put(kbId, asInt(row[1], 0));
 		}
 
 		List<KnowledgeBaseSummary> out = new ArrayList<>();
@@ -57,22 +59,26 @@ public class KnowledgeBrowseService {
 		if (kbId.isEmpty()) {
 			return new ArrayList<>();
 		}
-		List<KnowledgeEntity> docs = knowledgeRepository.findByKnowledgeBaseIdOrderByCreatedAtDesc(kbId);
+		List<Object[]> docs = knowledgeRepository.listDocumentRows(kbId);
 		List<KnowledgeDocumentView> out = new ArrayList<>();
-		for (KnowledgeEntity doc : docs) {
-			if (doc == null) {
+		for (Object[] row : docs) {
+			if (row == null || row.length < 9) {
 				continue;
 			}
+			KnowledgeParseStatus parseStatus = asEnum(row[5], KnowledgeParseStatus.class);
+			KnowledgeEnableStatus enableStatus = asEnum(row[6], KnowledgeEnableStatus.class);
+			Instant createdAt = asInstant(row[7]);
+			Instant updatedAt = asInstant(row[8]);
 			out.add(new KnowledgeDocumentView(
-				doc.getId(),
-				doc.getKnowledgeBaseId(),
-				doc.getFileName(),
-				doc.getFileType(),
-				doc.getFileSize(),
-				doc.getParseStatus() != null ? doc.getParseStatus().name().toLowerCase(Locale.ROOT) : "unknown",
-				doc.getEnableStatus() != null ? doc.getEnableStatus().name().toLowerCase(Locale.ROOT) : "unknown",
-				doc.getCreatedAt() != null ? doc.getCreatedAt().toString() : null,
-				doc.getUpdatedAt() != null ? doc.getUpdatedAt().toString() : null
+				asString(row[0]),
+				asString(row[1]),
+				asString(row[2]),
+				asString(row[3]),
+				asLong(row[4], 0L),
+				parseStatus != null ? parseStatus.name().toLowerCase(Locale.ROOT) : "unknown",
+				enableStatus != null ? enableStatus.name().toLowerCase(Locale.ROOT) : "unknown",
+				createdAt != null ? createdAt.toString() : null,
+				updatedAt != null ? updatedAt.toString() : null
 			));
 		}
 		return out;
@@ -178,6 +184,57 @@ public class KnowledgeBrowseService {
 
 	private String safe(String value) {
 		return value != null ? value.trim() : "";
+	}
+
+	private String asString(Object value) {
+		return value == null ? null : String.valueOf(value);
+	}
+
+	private int asInt(Object value, int fallback) {
+		if (value instanceof Number) {
+			return ((Number) value).intValue();
+		}
+		try {
+			return value != null ? Integer.parseInt(String.valueOf(value)) : fallback;
+		} catch (Exception ignored) {
+			return fallback;
+		}
+	}
+
+	private long asLong(Object value, long fallback) {
+		if (value instanceof Number) {
+			return ((Number) value).longValue();
+		}
+		try {
+			return value != null ? Long.parseLong(String.valueOf(value)) : fallback;
+		} catch (Exception ignored) {
+			return fallback;
+		}
+	}
+
+	private Instant asInstant(Object value) {
+		if (value instanceof Instant) {
+			return (Instant) value;
+		}
+		try {
+			return value != null ? Instant.parse(String.valueOf(value)) : null;
+		} catch (Exception ignored) {
+			return null;
+		}
+	}
+
+	private <T extends Enum<T>> T asEnum(Object value, Class<T> enumType) {
+		if (value == null || enumType == null) {
+			return null;
+		}
+		if (enumType.isInstance(value)) {
+			return enumType.cast(value);
+		}
+		try {
+			return Enum.valueOf(enumType, String.valueOf(value));
+		} catch (Exception ignored) {
+			return null;
+		}
 	}
 
 	public static class KnowledgeBaseSummary {

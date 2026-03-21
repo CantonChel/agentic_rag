@@ -8,7 +8,6 @@ import javax.persistence.Entity;
 import javax.persistence.EnumType;
 import javax.persistence.Enumerated;
 import javax.persistence.Id;
-import javax.persistence.Lob;
 import javax.persistence.Table;
 
 @Entity
@@ -44,7 +43,6 @@ public class KnowledgeEntity {
 	@Column(nullable = false, length = 32)
 	private KnowledgeEnableStatus enableStatus;
 
-	@Lob
 	@Column
 	private String metadataJson;
 

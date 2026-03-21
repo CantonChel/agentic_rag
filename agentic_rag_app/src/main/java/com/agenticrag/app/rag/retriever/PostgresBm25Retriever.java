@@ -7,8 +7,10 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.dao.DataAccessException;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -34,22 +36,35 @@ public class PostgresBm25Retriever implements Retriever {
 			+ "where to_tsvector('simple', content) @@ plainto_tsquery('simple', ?) "
 			+ "order by ts_rank(to_tsvector('simple', content), plainto_tsquery('simple', ?)) desc "
 			+ "limit ?";
+		String fuzzySql = ""
+			+ "select chunk_id, knowledge_id, content, metadata_json "
+			+ "from chunk "
+			+ "where word_similarity(?, content) > 0.3 "
+			+ "order by word_similarity(?, content) desc "
+			+ "limit ?";
 
 		try {
-			return jdbcTemplate.query(sql, rs -> {
-				List<TextChunk> out = new ArrayList<>();
-				while (rs.next()) {
-					String chunkId = rs.getString("chunk_id");
-					String knowledgeId = rs.getString("knowledge_id");
-					String content = rs.getString("content");
-					String metadataJson = rs.getString("metadata_json");
-					out.add(new TextChunk(chunkId, knowledgeId, content, null, parseMetadata(metadataJson)));
-				}
-				return out;
-			}, query, query, topK);
+			ResultSetExtractor<List<TextChunk>> extractor = rs -> mapRows(rs);
+			List<TextChunk> primary = jdbcTemplate.query(sql, extractor, query, query, topK);
+			if (!primary.isEmpty()) {
+				return primary;
+			}
+			return jdbcTemplate.query(fuzzySql, extractor, query, query, topK);
 		} catch (Exception e) {
 			return new ArrayList<>();
 		}
+	}
+
+	private List<TextChunk> mapRows(java.sql.ResultSet rs) throws java.sql.SQLException {
+		List<TextChunk> out = new ArrayList<>();
+		while (rs.next()) {
+			String chunkId = rs.getString("chunk_id");
+			String knowledgeId = rs.getString("knowledge_id");
+			String content = rs.getString("content");
+			String metadataJson = rs.getString("metadata_json");
+			out.add(new TextChunk(chunkId, knowledgeId, content, null, parseMetadata(metadataJson)));
+		}
+		return out;
 	}
 
 	private Map<String, Object> parseMetadata(String json) {

@@ -9,10 +9,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 @Service
+@Primary
 @ConditionalOnProperty(name = "rag.vector-store.postgres.enabled", havingValue = "true")
 public class PostgresVectorStore implements VectorStore {
 	private final JdbcTemplate jdbcTemplate;

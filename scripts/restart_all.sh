@@ -9,13 +9,21 @@ JAVA_PORT="${JAVA_PORT:-8081}"
 DOCREADER_PORT="${DOCREADER_PORT:-8090}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 REDIS_DOCKER_NAME="${REDIS_DOCKER_NAME:-rag-redis}"
+REDIS_MODE_RAW="${REDIS_MODE:-docker}"
 DOTENV_PATH="${ROOT_DIR}/.env"
+REDIS_MODE="$(printf '%s' "${REDIS_MODE_RAW}" | tr '[:upper:]' '[:lower:]')"
 
 docker_ready() {
   command -v docker >/dev/null 2>&1 || return 1
   docker info >/dev/null 2>&1
 }
 
+if [[ "${REDIS_MODE}" != "docker" && "${REDIS_MODE}" != "local" ]]; then
+  echo "Invalid REDIS_MODE=${REDIS_MODE_RAW}. Use docker or local."
+  exit 1
+fi
+
+echo "==> Redis mode: ${REDIS_MODE}"
 echo "==> Stopping services on ports ${JAVA_PORT}, ${DOCREADER_PORT}, ${REDIS_PORT}"
 
 kill_by_port() {
@@ -36,17 +44,19 @@ kill_by_port() {
   fi
 }
 
-if command -v docker >/dev/null 2>&1; then
-  if docker ps -a --format '{{.Names}}' | grep -q "^${REDIS_DOCKER_NAME}\$"; then
-    echo "Stopping docker redis container: ${REDIS_DOCKER_NAME}"
-    docker stop "${REDIS_DOCKER_NAME}" >/dev/null 2>&1 || true
-    docker rm "${REDIS_DOCKER_NAME}" >/dev/null 2>&1 || true
+if [[ "${REDIS_MODE}" == "docker" ]]; then
+  if command -v docker >/dev/null 2>&1; then
+    if docker ps -a --format '{{.Names}}' | grep -q "^${REDIS_DOCKER_NAME}\$"; then
+      echo "Stopping docker redis container: ${REDIS_DOCKER_NAME}"
+      docker stop "${REDIS_DOCKER_NAME}" >/dev/null 2>&1 || true
+      docker rm "${REDIS_DOCKER_NAME}" >/dev/null 2>&1 || true
+    fi
   fi
-fi
-
-if command -v redis-cli >/dev/null 2>&1; then
-  echo "Trying redis-cli shutdown on port ${REDIS_PORT}"
-  redis-cli -h 127.0.0.1 -p "${REDIS_PORT}" shutdown || true
+else
+  if command -v redis-cli >/dev/null 2>&1; then
+    echo "Trying redis-cli shutdown on port ${REDIS_PORT}"
+    redis-cli -h 127.0.0.1 -p "${REDIS_PORT}" shutdown || true
+  fi
 fi
 
 kill_by_port "${JAVA_PORT}"
@@ -56,10 +66,28 @@ kill_by_port "${REDIS_PORT}"
 echo "==> Starting services"
 
 if docker_ready; then
-  echo "Starting redis via docker: ${REDIS_DOCKER_NAME}"
-  docker run -d --name "${REDIS_DOCKER_NAME}" -p "${REDIS_PORT}:6379" redis:7 >/dev/null 2>&1 || true
+  if [[ "${REDIS_MODE}" == "docker" ]]; then
+    echo "Pulling redis image: redis:7"
+    docker pull redis:7 >/dev/null
+    echo "Starting redis via docker: ${REDIS_DOCKER_NAME}"
+    docker run -d --name "${REDIS_DOCKER_NAME}" -p "${REDIS_PORT}:6379" redis:7 >/dev/null
+  elif command -v redis-server >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+      echo "Starting redis via brew services"
+      brew services start redis || true
+    else
+      echo "Starting redis-server directly"
+      nohup redis-server --port "${REDIS_PORT}" > "${LOG_DIR}/redis.log" 2>&1 &
+    fi
+  else
+    echo "redis-server not found; skipping redis start"
+  fi
 else
-  if command -v redis-server >/dev/null 2>&1; then
+  if [[ "${REDIS_MODE}" == "docker" ]]; then
+    echo "Docker is required for REDIS_MODE=docker."
+    echo "Set REDIS_MODE=local if you want to use local redis service."
+    exit 1
+  elif command -v redis-server >/dev/null 2>&1; then
     if command -v brew >/dev/null 2>&1; then
       echo "Starting redis via brew services"
       brew services start redis || true

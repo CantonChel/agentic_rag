@@ -12,7 +12,7 @@ USING GIN (to_tsvector('simple', content));
 -- NOTE: ivfflat requires ANALYZE after bulk load to build optimal lists.
 CREATE INDEX IF NOT EXISTS idx_embedding_vector_l2
 ON embedding
-USING ivfflat (vector_json::vector);
+USING ivfflat ((vector_json::vector));
 
 ANALYZE chunk;
 ANALYZE embedding;
