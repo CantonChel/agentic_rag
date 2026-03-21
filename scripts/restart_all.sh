@@ -105,6 +105,9 @@ echo "Starting agentic_rag_app (port ${JAVA_PORT})"
   export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
   export MINIMAX_API_KEY="${MINIMAX_API_KEY:-}"
   export SILICONFLOW_API_KEY="${SILICONFLOW_API_KEY:-}"
+  if [[ -z "${SPRING_PROFILES_ACTIVE:-}" && -n "${DB_URL:-}${DB_USER:-}${DB_PASSWORD:-}" ]]; then
+    export SPRING_PROFILES_ACTIVE="postgres"
+  fi
   nohup ./mvnw -q spring-boot:run > "${LOG_DIR}/app.log" 2>&1 &
 )
 
