@@ -25,12 +25,14 @@ public class PostgresIndexInitializer {
 		normalizeLobTextColumn("knowledge", "metadata_json");
 		normalizeLobTextColumn("embedding", "content");
 		normalizeLobTextColumn("embedding", "vector_json");
+		normalizeLobTextColumn("stored_messages", "content");
 		recoverTextifiedLargeObjectRows("chunk", "content");
 		recoverTextifiedLargeObjectRows("chunk", "image_info_json");
 		recoverTextifiedLargeObjectRows("chunk", "metadata_json");
 		recoverTextifiedLargeObjectRows("knowledge", "metadata_json");
 		recoverTextifiedLargeObjectRows("embedding", "content");
 		recoverTextifiedLargeObjectRows("embedding", "vector_json");
+		recoverTextifiedLargeObjectRows("stored_messages", "content");
 		executeIgnore("CREATE INDEX IF NOT EXISTS idx_chunk_fts ON chunk USING GIN (to_tsvector('simple', content))");
 		executeIgnore("CREATE INDEX IF NOT EXISTS idx_embedding_vector_l2 ON embedding USING ivfflat ((vector_json::vector))");
 		jdbcTemplate.execute("ANALYZE chunk");

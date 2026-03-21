@@ -1,6 +1,5 @@
 package com.agenticrag.app.rag.store;
 
-import com.agenticrag.app.ingest.entity.EmbeddingEntity;
 import com.agenticrag.app.ingest.repo.EmbeddingRepository;
 import com.agenticrag.app.rag.model.TextChunk;
 import java.util.ArrayList;
@@ -67,21 +66,26 @@ public class PostgresVectorStore implements VectorStore {
 			if (chunkIds.isEmpty()) {
 				return new ArrayList<>();
 			}
-			List<EmbeddingEntity> embeddings = embeddingRepository.findByChunkIdIn(chunkIds);
-			Map<String, EmbeddingEntity> byChunk = new HashMap<>();
-			for (EmbeddingEntity emb : embeddings) {
-				if (emb != null && emb.getChunkId() != null) {
-					byChunk.put(emb.getChunkId(), emb);
+			List<Object[]> embeddings = embeddingRepository.listChunkContentByChunkIds(chunkIds);
+			Map<String, String> contentByChunk = new HashMap<>();
+			Map<String, String> fallbackKnowledgeByChunk = new HashMap<>();
+			for (Object[] row : embeddings) {
+				if (row == null || row.length < 3 || row[0] == null) {
+					continue;
+				}
+				String chunkId = String.valueOf(row[0]);
+				contentByChunk.put(chunkId, row[2] != null ? String.valueOf(row[2]) : "");
+				if (row[1] != null) {
+					fallbackKnowledgeByChunk.put(chunkId, String.valueOf(row[1]));
 				}
 			}
 			List<TextChunk> out = new ArrayList<>();
 			for (String chunkId : chunkIds) {
-				EmbeddingEntity emb = byChunk.get(chunkId);
-				if (emb == null) {
+				if (!contentByChunk.containsKey(chunkId)) {
 					continue;
 				}
-				String knowledgeId = knowledgeByChunk.getOrDefault(chunkId, emb.getKnowledgeId());
-				out.add(new TextChunk(chunkId, knowledgeId, emb.getContent(), null, Collections.emptyMap()));
+				String knowledgeId = knowledgeByChunk.getOrDefault(chunkId, fallbackKnowledgeByChunk.get(chunkId));
+				out.add(new TextChunk(chunkId, knowledgeId, contentByChunk.get(chunkId), null, Collections.emptyMap()));
 			}
 			return out;
 		} catch (Exception e) {

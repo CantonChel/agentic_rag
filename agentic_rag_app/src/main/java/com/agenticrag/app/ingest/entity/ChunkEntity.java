@@ -57,13 +57,13 @@ public class ChunkEntity {
 	@Column(length = 64)
 	private String nextChunkId;
 
-	@Column(nullable = false)
+	@Column(nullable = false, columnDefinition = "text")
 	private String content;
 
-	@Column
+	@Column(columnDefinition = "text")
 	private String imageInfoJson;
 
-	@Column
+	@Column(columnDefinition = "text")
 	private String metadataJson;
 
 	@Column(nullable = false)

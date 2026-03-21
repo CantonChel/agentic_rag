@@ -38,10 +38,10 @@ public class EmbeddingEntity {
 	@Column(nullable = false)
 	private int dimension;
 
-	@Column(nullable = false)
+	@Column(nullable = false, columnDefinition = "text")
 	private String vectorJson;
 
-	@Column(nullable = false)
+	@Column(nullable = false, columnDefinition = "text")
 	private String content;
 
 	@Column(nullable = false)

@@ -43,7 +43,7 @@ public class KnowledgeEntity {
 	@Column(nullable = false, length = 32)
 	private KnowledgeEnableStatus enableStatus;
 
-	@Column
+	@Column(columnDefinition = "text")
 	private String metadataJson;
 
 	@Column(nullable = false)
