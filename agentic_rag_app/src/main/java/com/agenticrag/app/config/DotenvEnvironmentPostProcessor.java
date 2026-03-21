@@ -32,6 +32,17 @@ public class DotenvEnvironmentPostProcessor implements EnvironmentPostProcessor,
 				}
 				props.put(e.getKey(), e.getValue());
 			}
+			for (Map.Entry<String, Object> entry : new HashMap<>(props).entrySet()) {
+				String key = entry.getKey();
+				Object value = entry.getValue();
+				if (key == null || value == null) {
+					continue;
+				}
+				String envKey = toEnvKey(key);
+				if (!envKey.equals(key) && !props.containsKey(envKey)) {
+					props.put(envKey, value);
+				}
+			}
 			if (!props.isEmpty()) {
 				environment.getPropertySources().addFirst(new MapPropertySource("dotenv", props));
 			}
@@ -136,5 +147,10 @@ public class DotenvEnvironmentPostProcessor implements EnvironmentPostProcessor,
 			this.path = path;
 			this.dotenv = dotenv;
 		}
+	}
+
+	private String toEnvKey(String key) {
+		String out = key.trim().replace('.', '_').replace('-', '_').toUpperCase();
+		return out.isEmpty() ? key : out;
 	}
 }
