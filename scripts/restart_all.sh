@@ -13,6 +13,7 @@ REDIS_MODE_RAW="${REDIS_MODE:-docker}"
 PG_PORT="${PG_PORT:-5432}"
 PG_DOCKER_NAME="${PG_DOCKER_NAME:-rag-postgres}"
 PG_DOCKER_IMAGE="${PG_DOCKER_IMAGE:-pgvector/pgvector:pg16}"
+PG_DOCKER_VOLUME="${PG_DOCKER_VOLUME:-rag-postgres-data}"
 PG_MODE_RAW="${PG_MODE:-docker}"
 PG_DB="${PG_DB:-agentic_rag}"
 PG_USER="${PG_USER:-agentic}"
@@ -24,6 +25,16 @@ PG_MODE="$(printf '%s' "${PG_MODE_RAW}" | tr '[:upper:]' '[:lower:]')"
 docker_ready() {
   command -v docker >/dev/null 2>&1 || return 1
   docker info >/dev/null 2>&1
+}
+
+docker_container_exists() {
+  local name="$1"
+  docker ps -a --format '{{.Names}}' | grep -q "^${name}\$"
+}
+
+docker_container_running() {
+  local name="$1"
+  docker ps --format '{{.Names}}' | grep -q "^${name}\$"
 }
 
 java_major() {
@@ -74,10 +85,9 @@ kill_by_port() {
 
 if [[ "${REDIS_MODE}" == "docker" ]]; then
   if command -v docker >/dev/null 2>&1; then
-    if docker ps -a --format '{{.Names}}' | grep -q "^${REDIS_DOCKER_NAME}\$"; then
+    if docker_container_exists "${REDIS_DOCKER_NAME}"; then
       echo "Stopping docker redis container: ${REDIS_DOCKER_NAME}"
       docker stop "${REDIS_DOCKER_NAME}" >/dev/null 2>&1 || true
-      docker rm "${REDIS_DOCKER_NAME}" >/dev/null 2>&1 || true
     fi
   fi
 else
@@ -89,18 +99,19 @@ fi
 
 if [[ "${PG_MODE}" == "docker" ]]; then
   if command -v docker >/dev/null 2>&1; then
-    if docker ps -a --format '{{.Names}}' | grep -q "^${PG_DOCKER_NAME}\$"; then
+    if docker_container_exists "${PG_DOCKER_NAME}"; then
       echo "Stopping docker postgres container: ${PG_DOCKER_NAME}"
       docker stop "${PG_DOCKER_NAME}" >/dev/null 2>&1 || true
-      docker rm "${PG_DOCKER_NAME}" >/dev/null 2>&1 || true
     fi
   fi
 fi
 
 kill_by_port "${JAVA_PORT}"
 kill_by_port "${DOCREADER_PORT}"
-kill_by_port "${REDIS_PORT}"
-if [[ "${PG_MODE}" == "docker" ]]; then
+if [[ "${REDIS_MODE}" != "docker" ]]; then
+  kill_by_port "${REDIS_PORT}"
+fi
+if [[ "${PG_MODE}" != "docker" ]]; then
   kill_by_port "${PG_PORT}"
 fi
 
@@ -108,10 +119,15 @@ echo "==> Starting services"
 
 if docker_ready; then
   if [[ "${REDIS_MODE}" == "docker" ]]; then
-    echo "Pulling redis image: redis:7"
-    docker pull redis:7 >/dev/null
-    echo "Starting redis via docker: ${REDIS_DOCKER_NAME}"
-    docker run -d --name "${REDIS_DOCKER_NAME}" -p "${REDIS_PORT}:6379" redis:7 >/dev/null
+    if docker_container_exists "${REDIS_DOCKER_NAME}"; then
+      echo "Starting existing redis container: ${REDIS_DOCKER_NAME}"
+      docker start "${REDIS_DOCKER_NAME}" >/dev/null || docker restart "${REDIS_DOCKER_NAME}" >/dev/null
+    else
+      echo "Pulling redis image: redis:7"
+      docker pull redis:7 >/dev/null
+      echo "Creating redis container: ${REDIS_DOCKER_NAME}"
+      docker run -d --name "${REDIS_DOCKER_NAME}" --restart unless-stopped -p "${REDIS_PORT}:6379" redis:7 >/dev/null
+    fi
   elif command -v redis-server >/dev/null 2>&1; then
     if command -v brew >/dev/null 2>&1; then
       echo "Starting redis via brew services"
@@ -147,15 +163,23 @@ if [[ "${PG_MODE}" == "docker" ]]; then
     echo "Set PG_MODE=local and provide DB_URL/DB_USER/DB_PASSWORD for local postgres."
     exit 1
   fi
-  echo "Pulling postgres image: ${PG_DOCKER_IMAGE}"
-  docker pull "${PG_DOCKER_IMAGE}" >/dev/null
-  echo "Starting postgres via docker: ${PG_DOCKER_NAME}"
-  docker run -d --name "${PG_DOCKER_NAME}" \
-    -e POSTGRES_DB="${PG_DB}" \
-    -e POSTGRES_USER="${PG_USER}" \
-    -e POSTGRES_PASSWORD="${PG_PASSWORD}" \
-    -p "${PG_PORT}:5432" \
-    "${PG_DOCKER_IMAGE}" >/dev/null
+  if docker_container_exists "${PG_DOCKER_NAME}"; then
+    echo "Starting existing postgres container: ${PG_DOCKER_NAME}"
+    docker start "${PG_DOCKER_NAME}" >/dev/null || docker restart "${PG_DOCKER_NAME}" >/dev/null
+  else
+    echo "Pulling postgres image: ${PG_DOCKER_IMAGE}"
+    docker pull "${PG_DOCKER_IMAGE}" >/dev/null
+    echo "Creating postgres container with volume ${PG_DOCKER_VOLUME}: ${PG_DOCKER_NAME}"
+    docker volume create "${PG_DOCKER_VOLUME}" >/dev/null
+    docker run -d --name "${PG_DOCKER_NAME}" \
+      --restart unless-stopped \
+      -e POSTGRES_DB="${PG_DB}" \
+      -e POSTGRES_USER="${PG_USER}" \
+      -e POSTGRES_PASSWORD="${PG_PASSWORD}" \
+      -p "${PG_PORT}:5432" \
+      -v "${PG_DOCKER_VOLUME}:/var/lib/postgresql/data" \
+      "${PG_DOCKER_IMAGE}" >/dev/null
+  fi
 elif [[ -z "${DB_URL:-}" || -z "${DB_USER:-}" || -z "${DB_PASSWORD:-}" ]]; then
   echo "PG_MODE=local requires DB_URL, DB_USER and DB_PASSWORD."
   echo "Example:"
