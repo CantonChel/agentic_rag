@@ -47,6 +47,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -140,6 +141,7 @@ public class AgentStreamingService {
 
 					while (!finished && iteration < maxIterations) {
 						iteration++;
+						final int iterationFinal = iteration;
 						boolean isFinalIteration = iteration >= maxIterations;
 
 						localExecutionContextRecorder.record(sid, systemPrompt, localContext, iteration);
@@ -173,7 +175,7 @@ public class AgentStreamingService {
 						String finishReason = null;
 						boolean hasToolThinking = false;
 						AtomicBoolean inlineThinkingEmitted = new AtomicBoolean(false);
-						String originModel = model;
+						AtomicReference<String> originModelRef = new AtomicReference<>(model);
 
 						try (StreamResponse<ChatCompletionChunk> streamResponse = client.chat().completions().createStreaming(paramsBuilder.build())) {
 							outer:
@@ -182,7 +184,7 @@ public class AgentStreamingService {
 									continue;
 								}
 								if (chunk.model() != null && !chunk.model().isEmpty()) {
-									originModel = chunk.model();
+									originModelRef.set(chunk.model());
 								}
 								for (ChatCompletionChunk.Choice choice : chunk.choices()) {
 									if (choice == null || choice.delta() == null) {
@@ -202,7 +204,12 @@ public class AgentStreamingService {
 												thinkPart -> {
 													inlineThinkBuffer.append(thinkPart);
 													inlineThinkingEmitted.set(true);
-													sink.next(LlmStreamEvent.thinking(thinkPart, "assistant_content", originModel, iteration));
+													sink.next(LlmStreamEvent.thinking(
+														thinkPart,
+														"assistant_content",
+														originModelRef.get(),
+														iterationFinal
+													));
 												}
 											);
 										}
@@ -243,8 +250,8 @@ public class AgentStreamingService {
 								reasoningBuffer,
 								inlineThinkBuffer,
 								assistantFinal,
-								originModel,
-								iteration,
+								originModelRef.get(),
+								iterationFinal,
 								sink,
 								sid,
 								inlineThinkingEmitted.get()
@@ -292,14 +299,19 @@ public class AgentStreamingService {
 								toolResult = ToolResult.error("Tool execution returned null: " + toolName);
 							}
 
-							if ("thinking".equals(toolName) && toolResult.isSuccess()) {
-								String thought = toolResult.getOutput();
-								if (thought != null && !thought.trim().isEmpty()) {
-									sink.next(LlmStreamEvent.thinking(thought, "thinking_tool", originModel, iteration));
-									recordThinkingMessage(sid, thought);
-									hasToolThinking = true;
+								if ("thinking".equals(toolName) && toolResult.isSuccess()) {
+									String thought = toolResult.getOutput();
+									if (thought != null && !thought.trim().isEmpty()) {
+										sink.next(LlmStreamEvent.thinking(
+											thought,
+											"thinking_tool",
+											originModelRef.get(),
+											iterationFinal
+										));
+										recordThinkingMessage(sid, thought);
+										hasToolThinking = true;
+									}
 								}
-							}
 
 							ToolResultMessage trm = new ToolResultMessage(
 								toolName,
@@ -319,8 +331,8 @@ public class AgentStreamingService {
 								reasoningBuffer,
 								inlineThinkBuffer,
 								assistantFinal,
-								originModel,
-								iteration,
+								originModelRef.get(),
+								iterationFinal,
 								sink,
 								sid,
 								inlineThinkingEmitted.get()

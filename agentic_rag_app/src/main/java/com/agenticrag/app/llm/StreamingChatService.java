@@ -35,6 +35,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -105,7 +106,7 @@ public class StreamingChatService {
 
 				OpenAIClient client = provider == LlmProvider.MINIMAX ? minimaxClient : openAiClient;
 				String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
-				String originModel = model;
+				AtomicReference<String> originModelRef = new AtomicReference<>(model);
 
 				String sid = sessionId == null || sessionId.trim().isEmpty() ? "default" : sessionId.trim();
 				String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, true));
@@ -148,7 +149,7 @@ public class StreamingChatService {
 							continue;
 						}
 						if (chunk.model() != null && !chunk.model().isEmpty()) {
-							originModel = chunk.model();
+							originModelRef.set(chunk.model());
 						}
 						for (ChatCompletionChunk.Choice choice : chunk.choices()) {
 							if (choice == null || choice.delta() == null) {
@@ -168,7 +169,12 @@ public class StreamingChatService {
 										thinkPart -> {
 											inlineThinkBuffer.append(thinkPart);
 											inlineThinkingEmitted.set(true);
-											sink.next(LlmStreamEvent.thinking(thinkPart, "assistant_content", originModel, 1));
+											sink.next(LlmStreamEvent.thinking(
+												thinkPart,
+												"assistant_content",
+												originModelRef.get(),
+												1
+											));
 										}
 									);
 								}
@@ -195,17 +201,17 @@ public class StreamingChatService {
 								}
 								String reasoning = reasoningBuffer.toString().trim();
 								if (!reasoning.isEmpty()) {
-									sink.next(LlmStreamEvent.thinking(reasoning, "reasoning_field", originModel, 1));
+									sink.next(LlmStreamEvent.thinking(reasoning, "reasoning_field", originModelRef.get(), 1));
 									recordThinkingMessage(sid, reasoning);
 								} else {
 									String inlineThinking = inlineThinkBuffer.toString().trim();
 									if (!inlineThinking.isEmpty()) {
 										if (!inlineThinkingEmitted.get()) {
-											sink.next(LlmStreamEvent.thinking(inlineThinking, "assistant_content", originModel, 1));
+											sink.next(LlmStreamEvent.thinking(inlineThinking, "assistant_content", originModelRef.get(), 1));
 										}
 										recordThinkingMessage(sid, inlineThinking);
 									} else if (looksLikeStepByStep(assistantFinal)) {
-										sink.next(LlmStreamEvent.thinking(assistantFinal, "assistant_content", originModel, 1));
+										sink.next(LlmStreamEvent.thinking(assistantFinal, "assistant_content", originModelRef.get(), 1));
 										recordThinkingMessage(sid, assistantFinal);
 									}
 								}
