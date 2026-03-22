@@ -20,6 +20,10 @@
       .msg { max-width: 80%; padding: 10px 12px; border-radius: 12px; margin: 8px 0; white-space: pre-wrap; line-height: 1.45; }
       .user { margin-left: auto; background: #2563eb; color: #fff; }
       .assistant { margin-right: auto; background: #fff; border: 1px solid #e5e7eb; }
+      .assistant-content { white-space: pre-wrap; }
+      .thinking-box { margin-bottom: 8px; padding: 8px 10px; border-radius: 10px; background: #f3f4f6; border: 1px dashed #d1d5db; color: #374151; font-size: 12px; }
+      .thinking-title { font-weight: 600; color: #6b7280; margin-bottom: 4px; }
+      .thinking-content { white-space: pre-wrap; }
       .input-row { margin-top: 12px; display: flex; gap: 8px; }
       .input-row textarea { flex: 1; min-height: 72px; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; }
       .muted { margin-top: 8px; color: #6b7280; font-size: 12px; }
@@ -109,7 +113,7 @@
       const debugBtn = document.getElementById('debugBtn');
 
       let es = null;
-      let currentAssistantEl = null;
+      let currentAssistant = null;
 
       function apiUrl(path) {
         const base = (apiBaseInput.value || '').trim();
@@ -123,10 +127,34 @@
       function appendMessage(role, text) {
         const div = document.createElement('div');
         div.className = 'msg ' + (role === 'user' ? 'user' : 'assistant');
-        div.textContent = text || '';
+        let contentEl = div;
+        let thinkingEl = null;
+        let thinkingContentEl = null;
+        let thinkingTitleEl = null;
+        if (role === 'assistant') {
+          thinkingEl = document.createElement('div');
+          thinkingEl.className = 'thinking-box';
+          thinkingEl.style.display = 'none';
+          thinkingTitleEl = document.createElement('div');
+          thinkingTitleEl.className = 'thinking-title';
+          thinkingTitleEl.textContent = '思考';
+          thinkingContentEl = document.createElement('div');
+          thinkingContentEl.className = 'thinking-content';
+          thinkingEl.appendChild(thinkingTitleEl);
+          thinkingEl.appendChild(thinkingContentEl);
+          div.appendChild(thinkingEl);
+
+          const content = document.createElement('div');
+          content.className = 'assistant-content';
+          content.textContent = text || '';
+          div.appendChild(content);
+          contentEl = content;
+        } else {
+          div.textContent = text || '';
+        }
         chatBox.appendChild(div);
         chatBox.scrollTop = chatBox.scrollHeight;
-        return div;
+        return { container: div, contentEl, thinkingEl, thinkingContentEl, thinkingTitleEl };
       }
 
       async function createSession() {
@@ -186,7 +214,7 @@
 
         stopStream();
         appendMessage('user', prompt);
-        currentAssistantEl = appendMessage('assistant', '');
+        currentAssistant = appendMessage('assistant', '');
 
         const provider = providerSel.value;
         const mode = modeSel.value;
@@ -204,10 +232,28 @@
         es.addEventListener('delta', (evt) => {
           try {
             const data = JSON.parse(evt.data);
-            if (data && data.content) {
-              currentAssistantEl.textContent += data.content;
+            if (data && data.content && currentAssistant && currentAssistant.contentEl) {
+              currentAssistant.contentEl.textContent += data.content;
               chatBox.scrollTop = chatBox.scrollHeight;
             }
+          } catch (_) {}
+        });
+
+        es.addEventListener('thinking', (evt) => {
+          try {
+            const data = JSON.parse(evt.data);
+            if (!currentAssistant || !currentAssistant.thinkingEl || !currentAssistant.thinkingContentEl) return;
+            const content = data && data.content ? data.content : '';
+            if (!content) return;
+            currentAssistant.thinkingEl.style.display = 'block';
+            if (data && data.source && currentAssistant.thinkingTitleEl) {
+              currentAssistant.thinkingTitleEl.textContent = '思考 · ' + data.source;
+            }
+            if (currentAssistant.thinkingContentEl.textContent) {
+              currentAssistant.thinkingContentEl.textContent += '\n';
+            }
+            currentAssistant.thinkingContentEl.textContent += content;
+            chatBox.scrollTop = chatBox.scrollHeight;
           } catch (_) {}
         });
 
@@ -219,9 +265,13 @@
           try {
             const data = JSON.parse(evt.data);
             const msg = data && data.content ? data.content : 'stream error';
-            currentAssistantEl.textContent += '\n[error] ' + msg;
+            if (currentAssistant && currentAssistant.contentEl) {
+              currentAssistant.contentEl.textContent += '\n[error] ' + msg;
+            }
           } catch (_) {
-            currentAssistantEl.textContent += '\n[error] stream closed';
+            if (currentAssistant && currentAssistant.contentEl) {
+              currentAssistant.contentEl.textContent += '\n[error] stream closed';
+            }
           }
           stopStream();
         });
