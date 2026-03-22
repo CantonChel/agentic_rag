@@ -66,6 +66,8 @@ public class AgentStreamingService {
 	private final AgentProperties agentProperties;
 	private final ToolArgumentValidator toolArgumentValidator;
 	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+\\.?|Step\\s*\\d+\\.?|\\d+\\.)\\s+)");
+	private static final String THINK_OPEN = "<think>";
+	private static final String THINK_CLOSE = "</think>";
 
 	public AgentStreamingService(
 		OpenAIClient openAiClient,
@@ -165,6 +167,8 @@ public class AgentStreamingService {
 						ToolCallAccumulator toolCallAccumulator = new ToolCallAccumulator(objectMapper);
 						StringBuilder assistantContent = new StringBuilder();
 						StringBuilder reasoningBuffer = new StringBuilder();
+						StringBuilder inlineThinkBuffer = new StringBuilder();
+						ThinkTagParser thinkTagParser = new ThinkTagParser();
 						String finishReason = null;
 						boolean hasToolThinking = false;
 						String originModel = model;
@@ -187,8 +191,14 @@ public class AgentStreamingService {
 									if (delta.content().isPresent()) {
 										String content = delta.content().get();
 										if (content != null && !content.isEmpty()) {
-											assistantContent.append(content);
-											sink.next(LlmStreamEvent.delta(content));
+											thinkTagParser.accept(
+												content,
+												answerPart -> {
+													assistantContent.append(answerPart);
+													sink.next(LlmStreamEvent.delta(answerPart));
+												},
+												thinkPart -> inlineThinkBuffer.append(thinkPart)
+											);
 										}
 									}
 
@@ -222,7 +232,7 @@ public class AgentStreamingService {
 						}
 
 						if (toolCalls == null || toolCalls.isEmpty()) {
-							emitThinkingIfNeeded(false, reasoningBuffer, assistantFinal, originModel, iteration, sink, sid);
+							emitThinkingIfNeeded(false, reasoningBuffer, inlineThinkBuffer, assistantFinal, originModel, iteration, sink, sid);
 							sink.next(LlmStreamEvent.done(finishReason != null ? finishReason : "stop", null));
 							finished = true;
 							break;
@@ -288,7 +298,7 @@ public class AgentStreamingService {
 						}
 
 						if (!hasToolThinking) {
-							emitThinkingIfNeeded(false, reasoningBuffer, assistantFinal, originModel, iteration, sink, sid);
+							emitThinkingIfNeeded(false, reasoningBuffer, inlineThinkBuffer, assistantFinal, originModel, iteration, sink, sid);
 						}
 					}
 
@@ -485,6 +495,7 @@ public class AgentStreamingService {
 	private void emitThinkingIfNeeded(
 		boolean hasToolThinking,
 		StringBuilder reasoningBuffer,
+		StringBuilder inlineThinkBuffer,
 		String assistantFinal,
 		String originModel,
 		int iteration,
@@ -500,9 +511,62 @@ public class AgentStreamingService {
 			recordThinkingMessage(sessionId, reasoning);
 			return;
 		}
+		String inlineThinking = inlineThinkBuffer == null ? "" : inlineThinkBuffer.toString().trim();
+		if (!inlineThinking.isEmpty()) {
+			sink.next(LlmStreamEvent.thinking(inlineThinking, "assistant_content", originModel, iteration));
+			recordThinkingMessage(sessionId, inlineThinking);
+			return;
+		}
 		if (looksLikeStepByStep(assistantFinal)) {
 			sink.next(LlmStreamEvent.thinking(assistantFinal, "assistant_content", originModel, iteration));
 			recordThinkingMessage(sessionId, assistantFinal);
+		}
+	}
+
+	private static final class ThinkTagParser {
+		private final StringBuilder buffer = new StringBuilder();
+		private boolean inThink = false;
+
+		private void accept(String chunk, java.util.function.Consumer<String> onAnswer, java.util.function.Consumer<String> onThink) {
+			if (chunk == null || chunk.isEmpty()) {
+				return;
+			}
+			buffer.append(chunk);
+			while (true) {
+				if (!inThink) {
+					int idx = buffer.indexOf(THINK_OPEN);
+					if (idx < 0) {
+						String out = buffer.toString();
+						buffer.setLength(0);
+						if (!out.isEmpty()) {
+							onAnswer.accept(out);
+						}
+						return;
+					}
+					String before = buffer.substring(0, idx);
+					if (!before.isEmpty()) {
+						onAnswer.accept(before);
+					}
+					buffer.delete(0, idx + THINK_OPEN.length());
+					inThink = true;
+				} else {
+					int idx = buffer.indexOf(THINK_CLOSE);
+					if (idx < 0) {
+						String out = buffer.toString();
+						buffer.setLength(0);
+						if (!out.isEmpty()) {
+							onThink.accept(out);
+						}
+						return;
+					}
+					String thinkPart = buffer.substring(0, idx);
+					if (!thinkPart.isEmpty()) {
+						onThink.accept(thinkPart);
+					}
+					buffer.delete(0, idx + THINK_CLOSE.length());
+					inThink = false;
+				}
+			}
 		}
 	}
 
