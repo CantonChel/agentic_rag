@@ -168,7 +168,8 @@
           thinkingContainer,
           thinkingTitleEl,
           currentThinkingEl: null,
-          lastEventType: null
+          lastEventType: null,
+          lastThinkingRoundId: null
         };
       }
 
@@ -270,6 +271,7 @@
         if (!currentAssistant || !currentAssistant.thinkingContainer) return;
         const content = data && data.content ? data.content : '';
         if (!content) return;
+        const roundId = data && data.roundId !== undefined && data.roundId !== null ? data.roundId : null;
         if (data && data.source && currentAssistant.thinkingTitleEl) {
           currentAssistant.thinkingTitleEl.textContent = '思考 · ' + data.source;
         }
@@ -277,7 +279,16 @@
           currentAssistant.thinkingTitleEl.style.display = 'block';
         }
 
-        if (currentAssistant.lastEventType !== 'thinking' || !currentAssistant.currentThinkingEl) {
+        const roundChanged =
+          roundId !== null &&
+          currentAssistant.lastThinkingRoundId !== undefined &&
+          currentAssistant.lastThinkingRoundId !== null &&
+          roundId !== currentAssistant.lastThinkingRoundId;
+        if (
+          currentAssistant.lastEventType !== 'thinking' ||
+          !currentAssistant.currentThinkingEl ||
+          roundChanged
+        ) {
           const box = document.createElement('div');
           box.className = 'thinking-box';
           const boxContent = document.createElement('div');
@@ -287,10 +298,10 @@
           currentAssistant.currentThinkingEl = boxContent;
         }
 
-        if (currentAssistant.currentThinkingEl.textContent) {
-          currentAssistant.currentThinkingEl.textContent += '\n';
-        }
         currentAssistant.currentThinkingEl.textContent += content;
+        if (roundId !== null) {
+          currentAssistant.lastThinkingRoundId = roundId;
+        }
         currentAssistant.lastEventType = 'thinking';
         chatBox.scrollTop = chatBox.scrollHeight;
       }
