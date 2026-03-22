@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import com.openai.errors.UnauthorizedException;
@@ -49,6 +50,7 @@ public class StreamingChatService {
 	private final SystemPromptManager systemPromptManager;
 	private final ContextManager contextManager;
 	private final PersistentMessageStore persistentMessageStore;
+	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+|Step\\s*\\d+|\\d+\\.)\\s+)");
 
 	public StreamingChatService(
 		OpenAIClient openAiClient,
@@ -92,9 +94,11 @@ public class StreamingChatService {
 			Future<?> future = streamExecutor.submit(() -> {
 				ToolCallAccumulator toolCallAccumulator = new ToolCallAccumulator(objectMapper);
 				StringBuilder assistantContent = new StringBuilder();
+				StringBuilder reasoningBuffer = new StringBuilder();
 
 				OpenAIClient client = provider == LlmProvider.MINIMAX ? minimaxClient : openAiClient;
 				String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
+				String originModel = model;
 
 				String sid = sessionId == null || sessionId.trim().isEmpty() ? "default" : sessionId.trim();
 				String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, true));
@@ -136,6 +140,9 @@ public class StreamingChatService {
 						if (chunk == null || chunk.choices() == null) {
 							continue;
 						}
+						if (chunk.model() != null && !chunk.model().isEmpty()) {
+							originModel = chunk.model();
+						}
 						for (ChatCompletionChunk.Choice choice : chunk.choices()) {
 							if (choice == null || choice.delta() == null) {
 								continue;
@@ -153,6 +160,7 @@ public class StreamingChatService {
 							if (delta.toolCalls().isPresent() && delta.toolCalls().get() != null) {
 								toolCallAccumulator.append(delta.toolCalls().get());
 							}
+							appendReasoningFromDelta(delta, reasoningBuffer);
 
 							if (choice.finishReason().isPresent() && choice.finishReason().get() != null) {
 								String finishReason = choice.finishReason().get().toString();
@@ -167,6 +175,12 @@ public class StreamingChatService {
 									ToolCallMessage tcm = new ToolCallMessage(toolCalls);
 									persistentMessageStore.append(sid, tcm);
 									contextManager.addMessage(sid, tcm);
+								}
+								String reasoning = reasoningBuffer.toString().trim();
+								if (!reasoning.isEmpty()) {
+									sink.next(LlmStreamEvent.thinking(reasoning, "reasoning_field", originModel, 1));
+								} else if (looksLikeStepByStep(assistantFinal)) {
+									sink.next(LlmStreamEvent.thinking(assistantFinal, "assistant_content", originModel, 1));
 								}
 								sink.next(LlmStreamEvent.done(finishReason, toolCalls));
 							}
@@ -298,5 +312,64 @@ public class StreamingChatService {
 		private final StringBuilder id = new StringBuilder();
 		private final StringBuilder name = new StringBuilder();
 		private final StringBuilder arguments = new StringBuilder();
+	}
+
+	private void appendReasoningFromDelta(ChatCompletionChunk.Choice.Delta delta, StringBuilder reasoningBuffer) {
+		if (delta == null || reasoningBuffer == null) {
+			return;
+		}
+		Map<String, JsonValue> extras = delta._additionalProperties();
+		if (extras == null || extras.isEmpty()) {
+			return;
+		}
+		String text = extractReasoningText(extras, "reasoning_content", "thinking", "reasoning");
+		if (text != null && !text.isEmpty()) {
+			reasoningBuffer.append(text);
+		}
+	}
+
+	private String extractReasoningText(Map<String, JsonValue> extras, String... keys) {
+		if (extras == null || keys == null) {
+			return null;
+		}
+		for (String key : keys) {
+			JsonValue value = extras.get(key);
+			if (value == null) {
+				continue;
+			}
+			try {
+				JsonNode node = value.convert(JsonNode.class);
+				if (node == null) {
+					continue;
+				}
+				if (node.isTextual()) {
+					return node.asText();
+				}
+				if (node.isArray()) {
+					StringBuilder sb = new StringBuilder();
+					for (JsonNode item : node) {
+						if (item != null && item.isTextual()) {
+							sb.append(item.asText());
+						}
+					}
+					if (sb.length() > 0) {
+						return sb.toString();
+					}
+				}
+			} catch (Exception ignored) {
+				// ignore malformed reasoning payloads
+			}
+		}
+		return null;
+	}
+
+	private boolean looksLikeStepByStep(String text) {
+		if (text == null || text.trim().isEmpty()) {
+			return false;
+		}
+		if (text.contains("<think>") || text.contains("</think>")) {
+			return false;
+		}
+		return STEP_PATTERN.matcher(text).find();
 	}
 }

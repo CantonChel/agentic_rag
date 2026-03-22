@@ -45,6 +45,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -63,6 +64,7 @@ public class AgentStreamingService {
 	private final com.agenticrag.app.chat.context.LocalExecutionContextRecorder localExecutionContextRecorder;
 	private final AgentProperties agentProperties;
 	private final ToolArgumentValidator toolArgumentValidator;
+	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+|Step\\s*\\d+|\\d+\\.)\\s+)");
 
 	public AgentStreamingService(
 		OpenAIClient openAiClient,
@@ -161,13 +163,19 @@ public class AgentStreamingService {
 
 						ToolCallAccumulator toolCallAccumulator = new ToolCallAccumulator(objectMapper);
 						StringBuilder assistantContent = new StringBuilder();
+						StringBuilder reasoningBuffer = new StringBuilder();
 						String finishReason = null;
+						boolean hasToolThinking = false;
+						String originModel = model;
 
 						try (StreamResponse<ChatCompletionChunk> streamResponse = client.chat().completions().createStreaming(paramsBuilder.build())) {
 							outer:
 							for (ChatCompletionChunk chunk : (Iterable<ChatCompletionChunk>) streamResponse.stream()::iterator) {
 								if (chunk == null || chunk.choices() == null) {
 									continue;
+								}
+								if (chunk.model() != null && !chunk.model().isEmpty()) {
+									originModel = chunk.model();
 								}
 								for (ChatCompletionChunk.Choice choice : chunk.choices()) {
 									if (choice == null || choice.delta() == null) {
@@ -186,6 +194,7 @@ public class AgentStreamingService {
 									if (delta.toolCalls().isPresent() && delta.toolCalls().get() != null) {
 										toolCallAccumulator.append(delta.toolCalls().get());
 									}
+									appendReasoningFromDelta(delta, reasoningBuffer);
 
 									if (choice.finishReason().isPresent() && choice.finishReason().get() != null) {
 										finishReason = choice.finishReason().get().toString();
@@ -255,6 +264,14 @@ public class AgentStreamingService {
 								toolResult = ToolResult.error("Tool execution returned null: " + toolName);
 							}
 
+							if ("thinking".equals(toolName) && toolResult.isSuccess()) {
+								String thought = toolResult.getOutput();
+								if (thought != null && !thought.trim().isEmpty()) {
+									sink.next(LlmStreamEvent.thinking(thought, "thinking_tool", originModel, iteration));
+									hasToolThinking = true;
+								}
+							}
+
 							ToolResultMessage trm = new ToolResultMessage(
 								toolName,
 								toolCallId,
@@ -265,6 +282,15 @@ public class AgentStreamingService {
 							localContext.add(trm);
 							persistentMessageStore.append(sid, trm);
 							contextManager.addMessage(sid, trm);
+						}
+
+						if (!hasToolThinking) {
+							String reasoning = reasoningBuffer.toString().trim();
+							if (!reasoning.isEmpty()) {
+								sink.next(LlmStreamEvent.thinking(reasoning, "reasoning_field", originModel, iteration));
+							} else if (looksLikeStepByStep(assistantFinal)) {
+								sink.next(LlmStreamEvent.thinking(assistantFinal, "assistant_content", originModel, iteration));
+							}
 						}
 					}
 
@@ -407,5 +433,64 @@ public class AgentStreamingService {
 		private final StringBuilder id = new StringBuilder();
 		private final StringBuilder name = new StringBuilder();
 		private final StringBuilder arguments = new StringBuilder();
+	}
+
+	private void appendReasoningFromDelta(ChatCompletionChunk.Choice.Delta delta, StringBuilder reasoningBuffer) {
+		if (delta == null || reasoningBuffer == null) {
+			return;
+		}
+		Map<String, JsonValue> extras = delta._additionalProperties();
+		if (extras == null || extras.isEmpty()) {
+			return;
+		}
+		String text = extractReasoningText(extras, "reasoning_content", "thinking", "reasoning");
+		if (text != null && !text.isEmpty()) {
+			reasoningBuffer.append(text);
+		}
+	}
+
+	private String extractReasoningText(Map<String, JsonValue> extras, String... keys) {
+		if (extras == null || keys == null) {
+			return null;
+		}
+		for (String key : keys) {
+			JsonValue value = extras.get(key);
+			if (value == null) {
+				continue;
+			}
+			try {
+				JsonNode node = value.convert(JsonNode.class);
+				if (node == null) {
+					continue;
+				}
+				if (node.isTextual()) {
+					return node.asText();
+				}
+				if (node.isArray()) {
+					StringBuilder sb = new StringBuilder();
+					for (JsonNode item : node) {
+						if (item != null && item.isTextual()) {
+							sb.append(item.asText());
+						}
+					}
+					if (sb.length() > 0) {
+						return sb.toString();
+					}
+				}
+			} catch (Exception ignored) {
+				// ignore malformed reasoning payloads
+			}
+		}
+		return null;
+	}
+
+	private boolean looksLikeStepByStep(String text) {
+		if (text == null || text.trim().isEmpty()) {
+			return false;
+		}
+		if (text.contains("<think>") || text.contains("</think>")) {
+			return false;
+		}
+		return STEP_PATTERN.matcher(text).find();
 	}
 }
