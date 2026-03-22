@@ -175,6 +175,40 @@
         }
       }
 
+      function handleThinkingEvent(data) {
+        if (!currentAssistant || !currentAssistant.thinkingEl || !currentAssistant.thinkingContentEl) return;
+        const content = data && data.content ? data.content : '';
+        if (!content) return;
+        currentAssistant.thinkingEl.style.display = 'block';
+        if (data && data.source && currentAssistant.thinkingTitleEl) {
+          currentAssistant.thinkingTitleEl.textContent = '思考 · ' + data.source;
+        }
+        if (currentAssistant.thinkingContentEl.textContent) {
+          currentAssistant.thinkingContentEl.textContent += '\n';
+        }
+        currentAssistant.thinkingContentEl.textContent += content;
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+
+      function handleDeltaEvent(data) {
+        if (data && data.content && currentAssistant && currentAssistant.contentEl) {
+          currentAssistant.contentEl.textContent += data.content;
+          chatBox.scrollTop = chatBox.scrollHeight;
+        }
+      }
+
+      function handleSseMessage(evt) {
+        try {
+          const data = JSON.parse(evt.data);
+          if (!data || !data.type) return;
+          if (data.type === 'thinking') {
+            handleThinkingEvent(data);
+          } else if (data.type === 'delta') {
+            handleDeltaEvent(data);
+          }
+        } catch (_) {}
+      }
+
       async function refreshTools() {
         const mode = modeSel.value;
         const toolsEnabled = toolsSel.value === 'true';
@@ -230,31 +264,15 @@
         es = new EventSource(url);
 
         es.addEventListener('delta', (evt) => {
-          try {
-            const data = JSON.parse(evt.data);
-            if (data && data.content && currentAssistant && currentAssistant.contentEl) {
-              currentAssistant.contentEl.textContent += data.content;
-              chatBox.scrollTop = chatBox.scrollHeight;
-            }
-          } catch (_) {}
+          handleSseMessage(evt);
         });
 
         es.addEventListener('thinking', (evt) => {
-          try {
-            const data = JSON.parse(evt.data);
-            if (!currentAssistant || !currentAssistant.thinkingEl || !currentAssistant.thinkingContentEl) return;
-            const content = data && data.content ? data.content : '';
-            if (!content) return;
-            currentAssistant.thinkingEl.style.display = 'block';
-            if (data && data.source && currentAssistant.thinkingTitleEl) {
-              currentAssistant.thinkingTitleEl.textContent = '思考 · ' + data.source;
-            }
-            if (currentAssistant.thinkingContentEl.textContent) {
-              currentAssistant.thinkingContentEl.textContent += '\n';
-            }
-            currentAssistant.thinkingContentEl.textContent += content;
-            chatBox.scrollTop = chatBox.scrollHeight;
-          } catch (_) {}
+          handleSseMessage(evt);
+        });
+
+        es.addEventListener('message', (evt) => {
+          handleSseMessage(evt);
         });
 
         es.addEventListener('done', () => {
