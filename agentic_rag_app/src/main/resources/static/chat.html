@@ -192,6 +192,17 @@
         chatBox.innerHTML = '';
       }
 
+      function appendThinkingOnly(text) {
+        const msg = appendMessage('assistant', '');
+        if (msg && msg.thinkingEl && msg.thinkingContentEl) {
+          msg.thinkingEl.style.display = 'block';
+          msg.thinkingContentEl.textContent = text || '';
+        }
+        if (msg && msg.contentEl) {
+          msg.contentEl.textContent = '';
+        }
+      }
+
       async function refreshSessions() {
         if (!historySessionSel) return;
         try {
@@ -227,6 +238,8 @@
                 appendMessage('user', msg.content || '');
               } else if (msg.type === 'ASSISTANT') {
                 appendMessage('assistant', msg.content || '');
+              } else if (msg.type === 'THINKING') {
+                appendThinkingOnly(msg.content || '');
               }
             }
           }

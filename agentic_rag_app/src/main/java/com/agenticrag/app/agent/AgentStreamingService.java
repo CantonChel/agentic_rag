@@ -4,6 +4,7 @@ import com.agenticrag.app.chat.context.ContextManager;
 import com.agenticrag.app.chat.message.AssistantMessage;
 import com.agenticrag.app.chat.message.ChatMessage;
 import com.agenticrag.app.chat.message.SystemMessage;
+import com.agenticrag.app.chat.message.ThinkingMessage;
 import com.agenticrag.app.chat.message.ToolCallMessage;
 import com.agenticrag.app.chat.message.ToolResultMessage;
 import com.agenticrag.app.chat.message.UserMessage;
@@ -221,7 +222,7 @@ public class AgentStreamingService {
 						}
 
 						if (toolCalls == null || toolCalls.isEmpty()) {
-							emitThinkingIfNeeded(false, reasoningBuffer, assistantFinal, originModel, iteration, sink);
+							emitThinkingIfNeeded(false, reasoningBuffer, assistantFinal, originModel, iteration, sink, sid);
 							sink.next(LlmStreamEvent.done(finishReason != null ? finishReason : "stop", null));
 							finished = true;
 							break;
@@ -269,6 +270,7 @@ public class AgentStreamingService {
 								String thought = toolResult.getOutput();
 								if (thought != null && !thought.trim().isEmpty()) {
 									sink.next(LlmStreamEvent.thinking(thought, "thinking_tool", originModel, iteration));
+									recordThinkingMessage(sid, thought);
 									hasToolThinking = true;
 								}
 							}
@@ -286,7 +288,7 @@ public class AgentStreamingService {
 						}
 
 						if (!hasToolThinking) {
-							emitThinkingIfNeeded(false, reasoningBuffer, assistantFinal, originModel, iteration, sink);
+							emitThinkingIfNeeded(false, reasoningBuffer, assistantFinal, originModel, iteration, sink, sid);
 						}
 					}
 
@@ -486,7 +488,8 @@ public class AgentStreamingService {
 		String assistantFinal,
 		String originModel,
 		int iteration,
-		reactor.core.publisher.FluxSink<LlmStreamEvent> sink
+		reactor.core.publisher.FluxSink<LlmStreamEvent> sink,
+		String sessionId
 	) {
 		if (hasToolThinking || sink == null) {
 			return;
@@ -494,11 +497,20 @@ public class AgentStreamingService {
 		String reasoning = reasoningBuffer == null ? "" : reasoningBuffer.toString().trim();
 		if (!reasoning.isEmpty()) {
 			sink.next(LlmStreamEvent.thinking(reasoning, "reasoning_field", originModel, iteration));
+			recordThinkingMessage(sessionId, reasoning);
 			return;
 		}
 		if (looksLikeStepByStep(assistantFinal)) {
 			sink.next(LlmStreamEvent.thinking(assistantFinal, "assistant_content", originModel, iteration));
+			recordThinkingMessage(sessionId, assistantFinal);
 		}
+	}
+
+	private void recordThinkingMessage(String sessionId, String content) {
+		if (content == null || content.trim().isEmpty()) {
+			return;
+		}
+		persistentMessageStore.append(sessionId, new ThinkingMessage(content));
 	}
 
 	private boolean looksLikeStepByStep(String text) {

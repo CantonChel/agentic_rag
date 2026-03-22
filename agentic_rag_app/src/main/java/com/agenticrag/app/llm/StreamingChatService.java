@@ -7,6 +7,7 @@ import com.agenticrag.app.config.OpenAiClientProperties;
 import com.agenticrag.app.chat.message.AssistantMessage;
 import com.agenticrag.app.chat.message.ToolCallMessage;
 import com.agenticrag.app.chat.message.UserMessage;
+import com.agenticrag.app.chat.message.ThinkingMessage;
 import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.chat.message.SystemMessage;
 import com.agenticrag.app.prompt.SystemPromptContext;
@@ -179,8 +180,10 @@ public class StreamingChatService {
 								String reasoning = reasoningBuffer.toString().trim();
 								if (!reasoning.isEmpty()) {
 									sink.next(LlmStreamEvent.thinking(reasoning, "reasoning_field", originModel, 1));
+									recordThinkingMessage(sid, reasoning);
 								} else if (looksLikeStepByStep(assistantFinal)) {
 									sink.next(LlmStreamEvent.thinking(assistantFinal, "assistant_content", originModel, 1));
+									recordThinkingMessage(sid, assistantFinal);
 								}
 								sink.next(LlmStreamEvent.done(finishReason, toolCalls));
 							}
@@ -371,5 +374,12 @@ public class StreamingChatService {
 			return false;
 		}
 		return STEP_PATTERN.matcher(text).find();
+	}
+
+	private void recordThinkingMessage(String sessionId, String content) {
+		if (content == null || content.trim().isEmpty()) {
+			return;
+		}
+		persistentMessageStore.append(sessionId, new ThinkingMessage(content));
 	}
 }
