@@ -71,6 +71,12 @@
             Session ID
             <input id="sessionId" readonly style="width: 260px;" />
           </label>
+          <label>
+            历史会话
+            <select id="historySession" style="width: 220px;"></select>
+          </label>
+          <button class="secondary" id="loadSessionBtn">加载会话</button>
+          <button class="secondary" id="refreshSessionsBtn">刷新会话</button>
           <button class="secondary" id="newSessionBtn">新建会话</button>
           <button class="secondary" id="clearBtn">清空聊天</button>
           <button class="secondary" id="debugBtn">查看配置</button>
@@ -101,6 +107,9 @@
       const modeSel = document.getElementById('mode');
       const toolsSel = document.getElementById('toolsEnabled');
       const sessionIdInput = document.getElementById('sessionId');
+      const historySessionSel = document.getElementById('historySession');
+      const loadSessionBtn = document.getElementById('loadSessionBtn');
+      const refreshSessionsBtn = document.getElementById('refreshSessionsBtn');
       const newSessionBtn = document.getElementById('newSessionBtn');
       const clearBtn = document.getElementById('clearBtn');
       const chatBox = document.getElementById('chatBox');
@@ -163,6 +172,10 @@
           if (!res.ok) throw new Error('create session failed: ' + res.status);
           const data = await res.json();
           sessionIdInput.value = data.sessionId || newSessionId();
+          await refreshSessions();
+          if (historySessionSel) {
+            historySessionSel.value = sessionIdInput.value;
+          }
         } catch (_) {
           sessionIdInput.value = newSessionId();
         }
@@ -172,6 +185,54 @@
         if (es) {
           es.close();
           es = null;
+        }
+      }
+
+      function clearChatBox() {
+        chatBox.innerHTML = '';
+      }
+
+      async function refreshSessions() {
+        if (!historySessionSel) return;
+        try {
+          const res = await fetch(apiUrl('/api/sessions'));
+          if (!res.ok) throw new Error('list sessions failed: ' + res.status);
+          const data = await res.json();
+          historySessionSel.innerHTML = '';
+          if (Array.isArray(data)) {
+            for (const item of data) {
+              const opt = document.createElement('option');
+              opt.value = item.sessionId || item.id || '';
+              opt.textContent = opt.value || 'unknown';
+              historySessionSel.appendChild(opt);
+            }
+          }
+        } catch (_) {
+          historySessionSel.innerHTML = '';
+        }
+      }
+
+      async function loadSessionHistory() {
+        const sid = historySessionSel && historySessionSel.value ? historySessionSel.value : '';
+        if (!sid) return;
+        try {
+          const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sid)}/messages`));
+          if (!res.ok) throw new Error('load messages failed: ' + res.status);
+          const data = await res.json();
+          clearChatBox();
+          if (Array.isArray(data)) {
+            for (const msg of data) {
+              if (!msg || !msg.type) continue;
+              if (msg.type === 'USER') {
+                appendMessage('user', msg.content || '');
+              } else if (msg.type === 'ASSISTANT') {
+                appendMessage('assistant', msg.content || '');
+              }
+            }
+          }
+          sessionIdInput.value = sid;
+        } catch (_) {
+          // ignore load errors
         }
       }
 
@@ -297,6 +358,8 @@
 
       newSessionBtn.addEventListener('click', createSession);
       clearBtn.addEventListener('click', () => { chatBox.innerHTML = ''; });
+      refreshSessionsBtn.addEventListener('click', refreshSessions);
+      loadSessionBtn.addEventListener('click', loadSessionHistory);
       sendBtn.addEventListener('click', send);
       refreshToolsBtn.addEventListener('click', refreshTools);
       modeSel.addEventListener('change', refreshTools);
