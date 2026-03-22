@@ -46,6 +46,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -171,7 +172,7 @@ public class AgentStreamingService {
 						ThinkTagParser thinkTagParser = new ThinkTagParser();
 						String finishReason = null;
 						boolean hasToolThinking = false;
-						boolean inlineThinkingEmitted = false;
+						AtomicBoolean inlineThinkingEmitted = new AtomicBoolean(false);
 						String originModel = model;
 
 						try (StreamResponse<ChatCompletionChunk> streamResponse = client.chat().completions().createStreaming(paramsBuilder.build())) {
@@ -200,7 +201,7 @@ public class AgentStreamingService {
 												},
 												thinkPart -> {
 													inlineThinkBuffer.append(thinkPart);
-													inlineThinkingEmitted = true;
+													inlineThinkingEmitted.set(true);
 													sink.next(LlmStreamEvent.thinking(thinkPart, "assistant_content", originModel, iteration));
 												}
 											);
@@ -246,7 +247,7 @@ public class AgentStreamingService {
 								iteration,
 								sink,
 								sid,
-								inlineThinkingEmitted
+								inlineThinkingEmitted.get()
 							);
 							sink.next(LlmStreamEvent.done(finishReason != null ? finishReason : "stop", null));
 							finished = true;
@@ -322,7 +323,7 @@ public class AgentStreamingService {
 								iteration,
 								sink,
 								sid,
-								inlineThinkingEmitted
+								inlineThinkingEmitted.get()
 							);
 						}
 					}

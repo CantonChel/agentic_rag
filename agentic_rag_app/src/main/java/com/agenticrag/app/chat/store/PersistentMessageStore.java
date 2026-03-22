@@ -60,6 +60,10 @@ public class PersistentMessageStore {
 		return repo.findBySessionIdOrderByIdAsc(normalize(sessionId));
 	}
 
+	public List<String> listSessionIds() {
+		return repo.findDistinctSessionIds();
+	}
+
 	public void clear(String sessionId) {
 		repo.deleteBySessionId(normalize(sessionId));
 	}

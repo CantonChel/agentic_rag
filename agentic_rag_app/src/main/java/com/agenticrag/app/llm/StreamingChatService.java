@@ -34,6 +34,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -100,7 +101,7 @@ public class StreamingChatService {
 				StringBuilder reasoningBuffer = new StringBuilder();
 				StringBuilder inlineThinkBuffer = new StringBuilder();
 				ThinkTagParser thinkTagParser = new ThinkTagParser();
-				boolean inlineThinkingEmitted = false;
+				AtomicBoolean inlineThinkingEmitted = new AtomicBoolean(false);
 
 				OpenAIClient client = provider == LlmProvider.MINIMAX ? minimaxClient : openAiClient;
 				String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
@@ -166,7 +167,7 @@ public class StreamingChatService {
 										},
 										thinkPart -> {
 											inlineThinkBuffer.append(thinkPart);
-											inlineThinkingEmitted = true;
+											inlineThinkingEmitted.set(true);
 											sink.next(LlmStreamEvent.thinking(thinkPart, "assistant_content", originModel, 1));
 										}
 									);
@@ -199,7 +200,7 @@ public class StreamingChatService {
 								} else {
 									String inlineThinking = inlineThinkBuffer.toString().trim();
 									if (!inlineThinking.isEmpty()) {
-										if (!inlineThinkingEmitted) {
+										if (!inlineThinkingEmitted.get()) {
 											sink.next(LlmStreamEvent.thinking(inlineThinking, "assistant_content", originModel, 1));
 										}
 										recordThinkingMessage(sid, inlineThinking);

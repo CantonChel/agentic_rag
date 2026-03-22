@@ -41,8 +41,11 @@ public class SessionController {
 
 	@GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
 	public List<CreateSessionResponse> list() {
-		return sessionManager.list().stream()
-			.map(s -> new CreateSessionResponse(s.getId()))
+		java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>();
+		sessionManager.list().forEach(s -> ids.add(s.getId()));
+		persistentMessageStore.listSessionIds().forEach(ids::add);
+		return ids.stream()
+			.map(CreateSessionResponse::new)
 			.collect(Collectors.toList());
 	}
 
