@@ -21,6 +21,7 @@
       .user { margin-left: auto; background: #2563eb; color: #fff; }
       .assistant { margin-right: auto; background: #fff; border: 1px solid #e5e7eb; }
       .assistant-content { white-space: pre-wrap; }
+      .thinking-list { margin-bottom: 8px; }
       .thinking-box { margin-bottom: 8px; padding: 8px 10px; border-radius: 10px; background: #f3f4f6; border: 1px dashed #d1d5db; color: #374151; font-size: 12px; }
       .thinking-title { font-weight: 600; color: #6b7280; margin-bottom: 4px; }
       .thinking-content { white-space: pre-wrap; }
@@ -137,21 +138,19 @@
         const div = document.createElement('div');
         div.className = 'msg ' + (role === 'user' ? 'user' : 'assistant');
         let contentEl = div;
-        let thinkingEl = null;
-        let thinkingContentEl = null;
+        let thinkingContainer = null;
+        let thinkingList = null;
         let thinkingTitleEl = null;
         if (role === 'assistant') {
-          thinkingEl = document.createElement('div');
-          thinkingEl.className = 'thinking-box';
-          thinkingEl.style.display = 'none';
           thinkingTitleEl = document.createElement('div');
           thinkingTitleEl.className = 'thinking-title';
           thinkingTitleEl.textContent = '思考';
-          thinkingContentEl = document.createElement('div');
-          thinkingContentEl.className = 'thinking-content';
-          thinkingEl.appendChild(thinkingTitleEl);
-          thinkingEl.appendChild(thinkingContentEl);
-          div.appendChild(thinkingEl);
+          thinkingTitleEl.style.display = 'none';
+          div.appendChild(thinkingTitleEl);
+
+          thinkingContainer = document.createElement('div');
+          thinkingContainer.className = 'thinking-list';
+          div.appendChild(thinkingContainer);
 
           const content = document.createElement('div');
           content.className = 'assistant-content';
@@ -163,7 +162,14 @@
         }
         chatBox.appendChild(div);
         chatBox.scrollTop = chatBox.scrollHeight;
-        return { container: div, contentEl, thinkingEl, thinkingContentEl, thinkingTitleEl };
+        return {
+          container: div,
+          contentEl,
+          thinkingContainer,
+          thinkingTitleEl,
+          currentThinkingEl: null,
+          lastEventType: null
+        };
       }
 
       async function createSession() {
@@ -194,11 +200,22 @@
 
       function appendThinkingOnly(text) {
         const msg = appendMessage('assistant', '');
-        if (msg && msg.thinkingEl && msg.thinkingContentEl) {
-          msg.thinkingEl.style.display = 'block';
-          msg.thinkingContentEl.textContent = text || '';
+        if (!msg) return;
+        if (msg.thinkingTitleEl) {
+          msg.thinkingTitleEl.style.display = 'block';
         }
-        if (msg && msg.contentEl) {
+        if (msg.thinkingContainer) {
+          const box = document.createElement('div');
+          box.className = 'thinking-box';
+          const boxContent = document.createElement('div');
+          boxContent.className = 'thinking-content';
+          boxContent.textContent = text || '';
+          box.appendChild(boxContent);
+          msg.thinkingContainer.appendChild(box);
+          msg.currentThinkingEl = boxContent;
+          msg.lastEventType = 'thinking';
+        }
+        if (msg.contentEl) {
           msg.contentEl.textContent = '';
         }
       }
@@ -250,23 +267,38 @@
       }
 
       function handleThinkingEvent(data) {
-        if (!currentAssistant || !currentAssistant.thinkingEl || !currentAssistant.thinkingContentEl) return;
+        if (!currentAssistant || !currentAssistant.thinkingContainer) return;
         const content = data && data.content ? data.content : '';
         if (!content) return;
-        currentAssistant.thinkingEl.style.display = 'block';
         if (data && data.source && currentAssistant.thinkingTitleEl) {
           currentAssistant.thinkingTitleEl.textContent = '思考 · ' + data.source;
         }
-        if (currentAssistant.thinkingContentEl.textContent) {
-          currentAssistant.thinkingContentEl.textContent += '\n';
+        if (currentAssistant.thinkingTitleEl) {
+          currentAssistant.thinkingTitleEl.style.display = 'block';
         }
-        currentAssistant.thinkingContentEl.textContent += content;
+
+        if (currentAssistant.lastEventType !== 'thinking' || !currentAssistant.currentThinkingEl) {
+          const box = document.createElement('div');
+          box.className = 'thinking-box';
+          const boxContent = document.createElement('div');
+          boxContent.className = 'thinking-content';
+          box.appendChild(boxContent);
+          currentAssistant.thinkingContainer.appendChild(box);
+          currentAssistant.currentThinkingEl = boxContent;
+        }
+
+        if (currentAssistant.currentThinkingEl.textContent) {
+          currentAssistant.currentThinkingEl.textContent += '\n';
+        }
+        currentAssistant.currentThinkingEl.textContent += content;
+        currentAssistant.lastEventType = 'thinking';
         chatBox.scrollTop = chatBox.scrollHeight;
       }
 
       function handleDeltaEvent(data) {
         if (data && data.content && currentAssistant && currentAssistant.contentEl) {
           currentAssistant.contentEl.textContent += data.content;
+          currentAssistant.lastEventType = 'delta';
           chatBox.scrollTop = chatBox.scrollHeight;
         }
       }
