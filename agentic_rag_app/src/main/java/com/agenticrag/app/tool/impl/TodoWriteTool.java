@@ -15,6 +15,55 @@ import reactor.core.publisher.Mono;
 @Component
 public class TodoWriteTool implements Tool {
 	private final ObjectMapper objectMapper;
+	// todo_write 工具英文提示词（正文英文，注释中文；含正反示例与约束）
+	private static final String DESCRIPTION = """
+Use this tool to create and manage a structured task list for retrieval and research tasks. This helps you track progress, organize complex retrieval operations, and demonstrate thoroughness.
+
+CRITICAL - Focus on Retrieval Tasks Only:
+- This tool is for RETRIEVAL and RESEARCH tasks only.
+- DO NOT include summary, synthesis, or final answer steps.
+- Examples to include: "Search KB for X", "Retrieve Y docs", "Collect A vs B specs"
+- Examples to EXCLUDE: "Summarize findings", "Generate final answer", "Synthesize results"
+
+## When to Use This Tool
+Use this tool proactively in these scenarios:
+1. Complex multi-step tasks (>=3 retrieval actions)
+2. Multi-topic or multi-source research
+3. User explicitly requests a plan or todo list
+4. User provides multiple parallel tasks
+
+## When NOT to Use This Tool
+Skip this tool when:
+1. The task is a single, straightforward action
+2. The task is trivial and does not require tracking
+3. The request is purely conversational or informational
+
+## Examples of When to Use the Todo List
+
+<example>
+User: Compare A and B based on documentation and provide differences.
+Assistant: I'll gather evidence for both A and B. Let me create a retrieval plan.
+*Creates todo list: 1) Search KB for A docs, 2) Search KB for B docs, 3) Retrieve authoritative specs, 4) Collect comparison data*
+Assistant: I'll start by searching A in the knowledge base.
+
+<reasoning>
+The assistant used todo_write correctly because:
+1. The task requires multiple retrieval steps.
+2. Each step is a retrieval action.
+3. Synthesis is deferred to the thinking tool after retrieval.
+</reasoning>
+</example>
+
+## Examples of When NOT to Use the Todo List
+
+<example>
+User: What does git status do?
+Assistant: It shows the current state of your working directory and staging area.
+<reasoning>
+This is a simple informational request with no need for a retrieval plan.
+</reasoning>
+</example>
+""";
 
 	public TodoWriteTool(ObjectMapper objectMapper) {
 		this.objectMapper = objectMapper;
@@ -27,7 +76,7 @@ public class TodoWriteTool implements Tool {
 
 	@Override
 	public String description() {
-		return "Create and manage a structured task list for retrieval and research tasks.";
+		return DESCRIPTION;
 	}
 
 	@Override
