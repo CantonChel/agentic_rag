@@ -50,7 +50,7 @@ public class StreamingChatService {
 	private final SystemPromptManager systemPromptManager;
 	private final ContextManager contextManager;
 	private final PersistentMessageStore persistentMessageStore;
-	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+|Step\\s*\\d+|\\d+\\.)\\s+)");
+	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+\\.?|Step\\s*\\d+\\.?|\\d+\\.)\\s+)");
 
 	public StreamingChatService(
 		OpenAIClient openAiClient,

@@ -64,7 +64,7 @@ public class AgentStreamingService {
 	private final com.agenticrag.app.chat.context.LocalExecutionContextRecorder localExecutionContextRecorder;
 	private final AgentProperties agentProperties;
 	private final ToolArgumentValidator toolArgumentValidator;
-	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+|Step\\s*\\d+|\\d+\\.)\\s+)");
+	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+\\.?|Step\\s*\\d+\\.?|\\d+\\.)\\s+)");
 
 	public AgentStreamingService(
 		OpenAIClient openAiClient,
