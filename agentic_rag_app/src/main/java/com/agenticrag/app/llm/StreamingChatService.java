@@ -100,6 +100,7 @@ public class StreamingChatService {
 				StringBuilder reasoningBuffer = new StringBuilder();
 				StringBuilder inlineThinkBuffer = new StringBuilder();
 				ThinkTagParser thinkTagParser = new ThinkTagParser();
+				boolean inlineThinkingEmitted = false;
 
 				OpenAIClient client = provider == LlmProvider.MINIMAX ? minimaxClient : openAiClient;
 				String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
@@ -163,7 +164,11 @@ public class StreamingChatService {
 											assistantContent.append(answerPart);
 											sink.next(LlmStreamEvent.delta(answerPart));
 										},
-										thinkPart -> inlineThinkBuffer.append(thinkPart)
+										thinkPart -> {
+											inlineThinkBuffer.append(thinkPart);
+											inlineThinkingEmitted = true;
+											sink.next(LlmStreamEvent.thinking(thinkPart, "assistant_content", originModel, 1));
+										}
 									);
 								}
 							}
@@ -194,7 +199,9 @@ public class StreamingChatService {
 								} else {
 									String inlineThinking = inlineThinkBuffer.toString().trim();
 									if (!inlineThinking.isEmpty()) {
-										sink.next(LlmStreamEvent.thinking(inlineThinking, "assistant_content", originModel, 1));
+										if (!inlineThinkingEmitted) {
+											sink.next(LlmStreamEvent.thinking(inlineThinking, "assistant_content", originModel, 1));
+										}
 										recordThinkingMessage(sid, inlineThinking);
 									} else if (looksLikeStepByStep(assistantFinal)) {
 										sink.next(LlmStreamEvent.thinking(assistantFinal, "assistant_content", originModel, 1));

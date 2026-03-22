@@ -171,6 +171,7 @@ public class AgentStreamingService {
 						ThinkTagParser thinkTagParser = new ThinkTagParser();
 						String finishReason = null;
 						boolean hasToolThinking = false;
+						boolean inlineThinkingEmitted = false;
 						String originModel = model;
 
 						try (StreamResponse<ChatCompletionChunk> streamResponse = client.chat().completions().createStreaming(paramsBuilder.build())) {
@@ -197,7 +198,11 @@ public class AgentStreamingService {
 													assistantContent.append(answerPart);
 													sink.next(LlmStreamEvent.delta(answerPart));
 												},
-												thinkPart -> inlineThinkBuffer.append(thinkPart)
+												thinkPart -> {
+													inlineThinkBuffer.append(thinkPart);
+													inlineThinkingEmitted = true;
+													sink.next(LlmStreamEvent.thinking(thinkPart, "assistant_content", originModel, iteration));
+												}
 											);
 										}
 									}
@@ -232,7 +237,17 @@ public class AgentStreamingService {
 						}
 
 						if (toolCalls == null || toolCalls.isEmpty()) {
-							emitThinkingIfNeeded(false, reasoningBuffer, inlineThinkBuffer, assistantFinal, originModel, iteration, sink, sid);
+							emitThinkingIfNeeded(
+								false,
+								reasoningBuffer,
+								inlineThinkBuffer,
+								assistantFinal,
+								originModel,
+								iteration,
+								sink,
+								sid,
+								inlineThinkingEmitted
+							);
 							sink.next(LlmStreamEvent.done(finishReason != null ? finishReason : "stop", null));
 							finished = true;
 							break;
@@ -298,7 +313,17 @@ public class AgentStreamingService {
 						}
 
 						if (!hasToolThinking) {
-							emitThinkingIfNeeded(false, reasoningBuffer, inlineThinkBuffer, assistantFinal, originModel, iteration, sink, sid);
+							emitThinkingIfNeeded(
+								false,
+								reasoningBuffer,
+								inlineThinkBuffer,
+								assistantFinal,
+								originModel,
+								iteration,
+								sink,
+								sid,
+								inlineThinkingEmitted
+							);
 						}
 					}
 
@@ -500,7 +525,8 @@ public class AgentStreamingService {
 		String originModel,
 		int iteration,
 		reactor.core.publisher.FluxSink<LlmStreamEvent> sink,
-		String sessionId
+		String sessionId,
+		boolean inlineThinkingEmitted
 	) {
 		if (hasToolThinking || sink == null) {
 			return;
@@ -513,7 +539,9 @@ public class AgentStreamingService {
 		}
 		String inlineThinking = inlineThinkBuffer == null ? "" : inlineThinkBuffer.toString().trim();
 		if (!inlineThinking.isEmpty()) {
-			sink.next(LlmStreamEvent.thinking(inlineThinking, "assistant_content", originModel, iteration));
+			if (!inlineThinkingEmitted) {
+				sink.next(LlmStreamEvent.thinking(inlineThinking, "assistant_content", originModel, iteration));
+			}
 			recordThinkingMessage(sessionId, inlineThinking);
 			return;
 		}
