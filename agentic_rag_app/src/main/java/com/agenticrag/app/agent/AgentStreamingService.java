@@ -221,6 +221,7 @@ public class AgentStreamingService {
 						}
 
 						if (toolCalls == null || toolCalls.isEmpty()) {
+							emitThinkingIfNeeded(false, reasoningBuffer, assistantFinal, originModel, iteration, sink);
 							sink.next(LlmStreamEvent.done(finishReason != null ? finishReason : "stop", null));
 							finished = true;
 							break;
@@ -285,12 +286,7 @@ public class AgentStreamingService {
 						}
 
 						if (!hasToolThinking) {
-							String reasoning = reasoningBuffer.toString().trim();
-							if (!reasoning.isEmpty()) {
-								sink.next(LlmStreamEvent.thinking(reasoning, "reasoning_field", originModel, iteration));
-							} else if (looksLikeStepByStep(assistantFinal)) {
-								sink.next(LlmStreamEvent.thinking(assistantFinal, "assistant_content", originModel, iteration));
-							}
+							emitThinkingIfNeeded(false, reasoningBuffer, assistantFinal, originModel, iteration, sink);
 						}
 					}
 
@@ -482,6 +478,27 @@ public class AgentStreamingService {
 			}
 		}
 		return null;
+	}
+
+	private void emitThinkingIfNeeded(
+		boolean hasToolThinking,
+		StringBuilder reasoningBuffer,
+		String assistantFinal,
+		String originModel,
+		int iteration,
+		reactor.core.publisher.FluxSink<LlmStreamEvent> sink
+	) {
+		if (hasToolThinking || sink == null) {
+			return;
+		}
+		String reasoning = reasoningBuffer == null ? "" : reasoningBuffer.toString().trim();
+		if (!reasoning.isEmpty()) {
+			sink.next(LlmStreamEvent.thinking(reasoning, "reasoning_field", originModel, iteration));
+			return;
+		}
+		if (looksLikeStepByStep(assistantFinal)) {
+			sink.next(LlmStreamEvent.thinking(assistantFinal, "assistant_content", originModel, iteration));
+		}
 	}
 
 	private boolean looksLikeStepByStep(String text) {
