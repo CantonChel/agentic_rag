@@ -1,10 +1,15 @@
 package com.agenticrag.app.ingest.api;
 
 import com.agenticrag.app.ingest.service.KnowledgeBrowseService;
+import com.agenticrag.app.ingest.service.KnowledgeImageService;
+import com.agenticrag.app.ingest.storage.MinioObjectService;
 import java.util.List;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
@@ -14,9 +19,11 @@ import reactor.core.scheduler.Schedulers;
 @RequestMapping("/api")
 public class KnowledgeBrowseController {
 	private final KnowledgeBrowseService knowledgeBrowseService;
+	private final KnowledgeImageService knowledgeImageService;
 
-	public KnowledgeBrowseController(KnowledgeBrowseService knowledgeBrowseService) {
+	public KnowledgeBrowseController(KnowledgeBrowseService knowledgeBrowseService, KnowledgeImageService knowledgeImageService) {
 		this.knowledgeBrowseService = knowledgeBrowseService;
+		this.knowledgeImageService = knowledgeImageService;
 	}
 
 	@GetMapping(value = "/knowledge-bases", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -39,5 +46,18 @@ public class KnowledgeBrowseController {
 	) {
 		return Mono.fromCallable(() -> knowledgeBrowseService.listChunks(knowledgeId))
 			.subscribeOn(Schedulers.boundedElastic());
+	}
+
+	@GetMapping(value = "/knowledge/images")
+	public Mono<ResponseEntity<byte[]>> fetchImage(
+		@RequestParam("bucket") String bucket,
+		@RequestParam("key") String key
+	) {
+		return Mono.fromCallable(() -> {
+			MinioObjectService.StoredObject obj = knowledgeImageService.loadImage(bucket, key);
+			return ResponseEntity.ok()
+				.header(HttpHeaders.CONTENT_TYPE, obj.getContentType())
+				.body(obj.getBytes());
+		}).subscribeOn(Schedulers.boundedElastic());
 	}
 }

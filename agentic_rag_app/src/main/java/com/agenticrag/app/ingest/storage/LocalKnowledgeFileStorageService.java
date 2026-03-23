@@ -7,20 +7,23 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 @Service
-public class LocalKnowledgeFileStorageService {
+@ConditionalOnProperty(name = "ingest.file-storage.backend", havingValue = "local", matchIfMissing = true)
+public class LocalKnowledgeFileStorageService implements KnowledgeFileStorageService {
 	private final FileStorageProperties properties;
 
 	public LocalKnowledgeFileStorageService(FileStorageProperties properties) {
 		this.properties = properties;
 	}
 
-	public StoredFile store(String knowledgeId, String originalFileName, byte[] bytes) {
+	@Override
+	public StoredFile store(String userId, String knowledgeId, String originalFileName, byte[] bytes) {
 		String safeName = sanitizeFileName(originalFileName);
 		Path root = Paths.get(properties.getRootDir()).toAbsolutePath().normalize();
-		Path dir = root.resolve(knowledgeId);
+		Path dir = root.resolve(sanitizePathToken(userId)).resolve(knowledgeId);
 		try {
 			Files.createDirectories(dir);
 			Path file = dir.resolve(safeName);
@@ -33,6 +36,11 @@ public class LocalKnowledgeFileStorageService {
 		}
 	}
 
+	@Override
+	public String resolveReadUrl(String filePath) {
+		return filePath;
+	}
+
 	private String sanitizeFileName(String input) {
 		if (input == null || input.trim().isEmpty()) {
 			return "upload.bin";
@@ -42,6 +50,14 @@ public class LocalKnowledgeFileStorageService {
 			return "upload.bin";
 		}
 		return cleaned;
+	}
+
+	private String sanitizePathToken(String input) {
+		if (input == null || input.trim().isEmpty()) {
+			return "anonymous";
+		}
+		String cleaned = input.replaceAll("[^a-zA-Z0-9._-]", "_").trim();
+		return cleaned.isEmpty() ? "anonymous" : cleaned;
 	}
 
 	private String md5(byte[] input) {

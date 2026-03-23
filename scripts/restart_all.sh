@@ -18,6 +18,18 @@ PG_MODE_RAW="${PG_MODE:-docker}"
 PG_DB="${PG_DB:-agentic_rag}"
 PG_USER="${PG_USER:-agentic}"
 PG_PASSWORD="${PG_PASSWORD:-agentic}"
+MINIO_PORT="${MINIO_PORT:-9000}"
+MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-9001}"
+MINIO_DOCKER_NAME="${MINIO_DOCKER_NAME:-agentic-rag-minio}"
+MINIO_DOCKER_IMAGE="${MINIO_DOCKER_IMAGE:-minio/minio:RELEASE.2025-02-28T09-55-16Z}"
+MINIO_DOCKER_VOLUME="${MINIO_DOCKER_VOLUME:-agentic-rag-minio-data}"
+MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-minioadmin}"
+MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin}"
+MINIO_BUCKET="${MINIO_BUCKET:-agentic-rag}"
+MINIO_SECURE="${MINIO_SECURE:-false}"
+MINIO_ENDPOINT_DOCREADER="${MINIO_ENDPOINT_DOCREADER:-127.0.0.1:${MINIO_PORT}}"
+MINIO_ENDPOINT_APP="${MINIO_ENDPOINT_APP:-http://127.0.0.1:${MINIO_PORT}}"
+INGEST_FILE_STORAGE_BACKEND="${INGEST_FILE_STORAGE_BACKEND:-minio}"
 DOTENV_PATH="${ROOT_DIR}/.env"
 REDIS_MODE="$(printf '%s' "${REDIS_MODE_RAW}" | tr '[:upper:]' '[:lower:]')"
 PG_MODE="$(printf '%s' "${PG_MODE_RAW}" | tr '[:upper:]' '[:lower:]')"
@@ -52,6 +64,17 @@ java_major() {
   return 1
 }
 
+ensure_docreader_dependency() {
+  if /usr/bin/python3 -c "import minio" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Installing python dependency for docreader: minio==7.2.12"
+  if ! /usr/bin/python3 -m pip --version >/dev/null 2>&1; then
+    /usr/bin/python3 -m ensurepip --user >/dev/null 2>&1 || true
+  fi
+  /usr/bin/python3 -m pip install --user minio==7.2.12 >/dev/null
+}
+
 if [[ "${REDIS_MODE}" != "docker" && "${REDIS_MODE}" != "local" ]]; then
   echo "Invalid REDIS_MODE=${REDIS_MODE_RAW}. Use docker or local."
   exit 1
@@ -63,6 +86,7 @@ fi
 
 echo "==> Redis mode: ${REDIS_MODE}"
 echo "==> Postgres mode: ${PG_MODE}"
+echo "==> Storage backend: ${INGEST_FILE_STORAGE_BACKEND}"
 echo "==> Stopping services on ports ${JAVA_PORT}, ${DOCREADER_PORT}, ${REDIS_PORT}, ${PG_PORT}"
 
 kill_by_port() {
@@ -102,6 +126,15 @@ if [[ "${PG_MODE}" == "docker" ]]; then
     if docker_container_exists "${PG_DOCKER_NAME}"; then
       echo "Stopping docker postgres container: ${PG_DOCKER_NAME}"
       docker stop "${PG_DOCKER_NAME}" >/dev/null 2>&1 || true
+    fi
+  fi
+fi
+
+if [[ "${INGEST_FILE_STORAGE_BACKEND}" == "minio" ]]; then
+  if command -v docker >/dev/null 2>&1; then
+    if docker_container_exists "${MINIO_DOCKER_NAME}"; then
+      echo "Stopping docker minio container: ${MINIO_DOCKER_NAME}"
+      docker stop "${MINIO_DOCKER_NAME}" >/dev/null 2>&1 || true
     fi
   fi
 fi
@@ -157,6 +190,30 @@ else
   fi
 fi
 
+if [[ "${INGEST_FILE_STORAGE_BACKEND}" == "minio" ]]; then
+  if ! docker_ready; then
+    echo "Docker is required for INGEST_FILE_STORAGE_BACKEND=minio."
+    exit 1
+  fi
+  if docker_container_exists "${MINIO_DOCKER_NAME}"; then
+    echo "Starting existing minio container: ${MINIO_DOCKER_NAME}"
+    docker start "${MINIO_DOCKER_NAME}" >/dev/null || docker restart "${MINIO_DOCKER_NAME}" >/dev/null
+  else
+    echo "Pulling minio image: ${MINIO_DOCKER_IMAGE}"
+    docker pull "${MINIO_DOCKER_IMAGE}" >/dev/null
+    echo "Creating minio container with volume ${MINIO_DOCKER_VOLUME}: ${MINIO_DOCKER_NAME}"
+    docker volume create "${MINIO_DOCKER_VOLUME}" >/dev/null
+    docker run -d --name "${MINIO_DOCKER_NAME}" \
+      --restart unless-stopped \
+      -e MINIO_ROOT_USER="${MINIO_ACCESS_KEY}" \
+      -e MINIO_ROOT_PASSWORD="${MINIO_SECRET_KEY}" \
+      -p "${MINIO_PORT}:9000" \
+      -p "${MINIO_CONSOLE_PORT}:9001" \
+      -v "${MINIO_DOCKER_VOLUME}:/data" \
+      "${MINIO_DOCKER_IMAGE}" server /data --console-address ":9001" >/dev/null
+  fi
+fi
+
 if [[ "${PG_MODE}" == "docker" ]]; then
   if ! docker_ready; then
     echo "Docker is required for PG_MODE=docker."
@@ -188,8 +245,14 @@ elif [[ -z "${DB_URL:-}" || -z "${DB_USER:-}" || -z "${DB_PASSWORD:-}" ]]; then
 fi
 
 echo "Starting docreader_service (port ${DOCREADER_PORT})"
+ensure_docreader_dependency
 (
   cd "${ROOT_DIR}/docreader_service"
+  export MINIO_ENDPOINT="${MINIO_ENDPOINT_DOCREADER}"
+  export MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY}"
+  export MINIO_SECRET_KEY="${MINIO_SECRET_KEY}"
+  export MINIO_BUCKET="${MINIO_BUCKET}"
+  export MINIO_SECURE="${MINIO_SECURE}"
   nohup /usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port "${DOCREADER_PORT}" > "${LOG_DIR}/docreader.log" 2>&1 &
 )
 
@@ -241,7 +304,13 @@ echo "Starting agentic_rag_app (port ${JAVA_PORT})"
     export DB_PASSWORD="${DB_PASSWORD:-${PG_PASSWORD}}"
   fi
   export INGEST_ASYNC_ENABLED="${INGEST_ASYNC_ENABLED:-true}"
+  export INGEST_FILE_STORAGE_BACKEND="${INGEST_FILE_STORAGE_BACKEND}"
   export INGEST_FILE_ROOT="${INGEST_FILE_ROOT:-/tmp/knowledge-files-local}"
+  export MINIO_ENDPOINT="${MINIO_ENDPOINT_APP}"
+  export MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY}"
+  export MINIO_SECRET_KEY="${MINIO_SECRET_KEY}"
+  export MINIO_BUCKET="${MINIO_BUCKET}"
+  export MINIO_SECURE="${MINIO_SECURE}"
   export DOCREADER_BASE_URL="${DOCREADER_BASE_URL:-http://127.0.0.1:${DOCREADER_PORT}}"
   export DOCREADER_CALLBACK_BASE_URL="${DOCREADER_CALLBACK_BASE_URL:-http://127.0.0.1:${JAVA_PORT}}"
   export DOCREADER_CALLBACK_SECRET="${DOCREADER_CALLBACK_SECRET:-}"

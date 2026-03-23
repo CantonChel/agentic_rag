@@ -236,7 +236,7 @@ public class DocreaderCallbackService {
 			Map<String, Object> metadata = new HashMap<>();
 			metadata.put("chunk_type", chunk.getChunkType().name().toLowerCase(Locale.ROOT));
 			if (chunk.getImageInfoJson() != null) {
-				metadata.put("image_info", chunk.getImageInfoJson());
+				metadata.put("image_info", parseJsonValue(chunk.getImageInfoJson()));
 			}
 			indexChunks.add(new TextChunk(chunk.getChunkId(), knowledgeId, chunk.getContent(), null, metadata));
 		}
@@ -333,6 +333,17 @@ public class DocreaderCallbackService {
 			return objectMapper.writeValueAsString(obj);
 		} catch (Exception e) {
 			return null;
+		}
+	}
+
+	private Object parseJsonValue(String json) {
+		if (json == null || json.trim().isEmpty()) {
+			return null;
+		}
+		try {
+			return objectMapper.readValue(json, Object.class);
+		} catch (Exception ignored) {
+			return json;
 		}
 	}
 

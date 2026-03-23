@@ -150,7 +150,9 @@ public class KnowledgeBrowseService {
 			intOf(node, "start_pos", "startPos"),
 			intOf(node, "end_pos", "endPos"),
 			textOf(node, "caption"),
-			firstNonBlank(textOf(node, "ocr_text"), textOf(node, "ocrText"))
+			firstNonBlank(textOf(node, "ocr_text"), textOf(node, "ocrText")),
+			firstNonBlank(textOf(node, "storage_bucket"), textOf(node, "storageBucket")),
+			firstNonBlank(textOf(node, "storage_key"), textOf(node, "storageKey"))
 		);
 	}
 
@@ -409,6 +411,8 @@ public class KnowledgeBrowseService {
 		private final Integer endPos;
 		private final String caption;
 		private final String ocrText;
+		private final String storageBucket;
+		private final String storageKey;
 
 		public ImageInfoView(
 			String url,
@@ -416,7 +420,9 @@ public class KnowledgeBrowseService {
 			Integer startPos,
 			Integer endPos,
 			String caption,
-			String ocrText
+			String ocrText,
+			String storageBucket,
+			String storageKey
 		) {
 			this.url = url;
 			this.originalUrl = originalUrl;
@@ -424,6 +430,8 @@ public class KnowledgeBrowseService {
 			this.endPos = endPos;
 			this.caption = caption;
 			this.ocrText = ocrText;
+			this.storageBucket = storageBucket;
+			this.storageKey = storageKey;
 		}
 
 		public String getUrl() {
@@ -448,6 +456,14 @@ public class KnowledgeBrowseService {
 
 		public String getOcrText() {
 			return ocrText;
+		}
+
+		public String getStorageBucket() {
+			return storageBucket;
+		}
+
+		public String getStorageKey() {
+			return storageKey;
 		}
 	}
 }

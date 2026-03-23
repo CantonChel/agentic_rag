@@ -73,7 +73,7 @@ class KnowledgeBrowseIntegrationTest {
 		chunk.setStartAt(0);
 		chunk.setEndAt(10);
 		chunk.setContent("hello");
-		chunk.setImageInfoJson("[{\"url\":\"https://example.com/a.png\",\"original_url\":\"https://example.com/orig.png\",\"caption\":\"cap\",\"ocr_text\":\"ocr\"}]");
+		chunk.setImageInfoJson("[{\"url\":\"https://example.com/a.png\",\"original_url\":\"https://example.com/orig.png\",\"caption\":\"cap\",\"ocr_text\":\"ocr\",\"storage_bucket\":\"bucket-a\",\"storage_key\":\"u1/k1/a.png\"}]");
 		chunk.setCreatedAt(Instant.now());
 		chunk.setUpdatedAt(Instant.now());
 		chunkRepository.save(chunk);
@@ -88,7 +88,9 @@ class KnowledgeBrowseIntegrationTest {
 			.jsonPath("$[0].imageInfos[0].url").isEqualTo("https://example.com/a.png")
 			.jsonPath("$[0].imageInfos[0].originalUrl").isEqualTo("https://example.com/orig.png")
 			.jsonPath("$[0].imageInfos[0].caption").isEqualTo("cap")
-			.jsonPath("$[0].imageInfos[0].ocrText").isEqualTo("ocr");
+			.jsonPath("$[0].imageInfos[0].ocrText").isEqualTo("ocr")
+			.jsonPath("$[0].imageInfos[0].storageBucket").isEqualTo("bucket-a")
+			.jsonPath("$[0].imageInfos[0].storageKey").isEqualTo("u1/k1/a.png");
 	}
 
 	@Test

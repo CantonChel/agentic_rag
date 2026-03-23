@@ -10,6 +10,9 @@ import com.agenticrag.app.ingest.model.JobFailureAction;
 import com.agenticrag.app.ingest.queue.DocumentParseQueue;
 import com.agenticrag.app.ingest.queue.ReservedJob;
 import com.agenticrag.app.ingest.repo.KnowledgeRepository;
+import com.agenticrag.app.ingest.storage.KnowledgeFileStorageService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -29,6 +32,8 @@ public class DocumentParseDispatcher {
 	private final IngestAsyncProperties asyncProperties;
 	private final FailureClassifier failureClassifier;
 	private final DocumentParseQueue queue;
+	private final KnowledgeFileStorageService fileStorageService;
+	private final ObjectMapper objectMapper;
 
 	public DocumentParseDispatcher(
 		ParseJobService parseJobService,
@@ -37,7 +42,9 @@ public class DocumentParseDispatcher {
 		DocreaderProperties docreaderProperties,
 		IngestAsyncProperties asyncProperties,
 		FailureClassifier failureClassifier,
-		DocumentParseQueue queue
+		DocumentParseQueue queue,
+		KnowledgeFileStorageService fileStorageService,
+		ObjectMapper objectMapper
 	) {
 		this.parseJobService = parseJobService;
 		this.knowledgeRepository = knowledgeRepository;
@@ -46,6 +53,8 @@ public class DocumentParseDispatcher {
 		this.asyncProperties = asyncProperties;
 		this.failureClassifier = failureClassifier;
 		this.queue = queue;
+		this.fileStorageService = fileStorageService;
+		this.objectMapper = objectMapper;
 	}
 
 	public void dispatch(ReservedJob reservedJob) {
@@ -78,12 +87,14 @@ public class DocumentParseDispatcher {
 			DocreaderJobSubmitRequest request = new DocreaderJobSubmitRequest();
 			request.setJobId(jobId);
 			request.setKnowledgeId(knowledge.getId());
-			request.setFileUrl(knowledge.getFilePath());
+			request.setFileUrl(fileStorageService.resolveReadUrl(knowledge.getFilePath()));
 			request.setCallbackUrl(docreaderProperties.getCallbackBaseUrl() + "/internal/docreader/jobs/" + jobId + "/result");
 			request.setPipelineVersion(jobOpt.get().getPipelineVersion());
 			Map<String, Object> options = new HashMap<>();
 			options.put("file_type", knowledge.getFileType());
 			options.put("knowledge_base_id", knowledge.getKnowledgeBaseId());
+			options.put("knowledge_id", knowledge.getId());
+			options.put("user_id", extractUserId(knowledge.getMetadataJson()));
 			request.setOptions(options);
 
 			DocreaderJobSubmitResponse response = docreaderClient.submitJob(request);
@@ -119,5 +130,39 @@ public class DocumentParseDispatcher {
 				queue.ack(reservedJob);
 				break;
 		}
+	}
+
+	private String extractUserId(String metadataJson) {
+		if (metadataJson == null || metadataJson.trim().isEmpty()) {
+			return "anonymous";
+		}
+		try {
+			JsonNode root = objectMapper.readTree(metadataJson);
+			String v = text(root, "user_id");
+			if (v == null) {
+				v = text(root, "userId");
+			}
+			if (v == null) {
+				v = text(root, "uid");
+			}
+			if (v == null || v.trim().isEmpty()) {
+				return "anonymous";
+			}
+			return v.replaceAll("[^a-zA-Z0-9._-]", "_");
+		} catch (Exception ignored) {
+			return "anonymous";
+		}
+	}
+
+	private String text(JsonNode node, String field) {
+		if (node == null || field == null) {
+			return null;
+		}
+		JsonNode value = node.get(field);
+		if (value == null || value.isNull()) {
+			return null;
+		}
+		String out = value.asText();
+		return out != null && !out.trim().isEmpty() ? out : null;
 	}
 }
