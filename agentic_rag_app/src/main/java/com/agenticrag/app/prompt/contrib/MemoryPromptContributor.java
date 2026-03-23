@@ -15,7 +15,10 @@ public class MemoryPromptContributor implements SystemPromptContributor {
 
 	@Override
 	public String contribute(SystemPromptContext context) {
-		return "";
+		return "### Memory Policy\n"
+			+ "- For questions about past decisions, prior tasks, preferences, dates, or reminders, call memory_search first.\n"
+			+ "- memory_search is user-scoped: only current user's memory can be recalled.\n"
+			+ "- Treat MEMORY.md as read-only reference. Never edit or overwrite MEMORY.md in runtime.\n"
+			+ "- Runtime memory writes must go to memory/users/<userId>/... files only.";
 	}
 }
-
