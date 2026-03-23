@@ -10,7 +10,7 @@ import com.agenticrag.app.ingest.model.ParseJobStatus;
 import com.agenticrag.app.ingest.queue.DocumentParseQueue;
 import com.agenticrag.app.ingest.repo.KnowledgeRepository;
 import com.agenticrag.app.ingest.repo.ParseJobRepository;
-import com.agenticrag.app.ingest.storage.LocalKnowledgeFileStorageService;
+import com.agenticrag.app.ingest.storage.KnowledgeFileStorageService;
 import com.agenticrag.app.ingest.storage.StoredFile;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
@@ -26,7 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class KnowledgeIngestService {
 	private final KnowledgeRepository knowledgeRepository;
 	private final ParseJobRepository parseJobRepository;
-	private final LocalKnowledgeFileStorageService fileStorageService;
+	private final KnowledgeFileStorageService fileStorageService;
 	private final DocumentParseQueue documentParseQueue;
 	private final ParseJobService parseJobService;
 	private final IngestAsyncProperties asyncProperties;
@@ -35,7 +35,7 @@ public class KnowledgeIngestService {
 	public KnowledgeIngestService(
 		KnowledgeRepository knowledgeRepository,
 		ParseJobRepository parseJobRepository,
-		LocalKnowledgeFileStorageService fileStorageService,
+		KnowledgeFileStorageService fileStorageService,
 		DocumentParseQueue documentParseQueue,
 		ParseJobService parseJobService,
 		IngestAsyncProperties asyncProperties,
@@ -74,8 +74,14 @@ public class KnowledgeIngestService {
 	) {
 		String kbId = normalize(knowledgeBaseId, "default");
 		String knowledgeId = UUID.randomUUID().toString();
-		StoredFile storedFile = fileStorageService.store(knowledgeId, fileName, fileBytes);
+		String userId = extractUserId(metadata);
+		StoredFile storedFile = fileStorageService.store(userId, knowledgeId, fileName, fileBytes);
 		String idempotencyKey = knowledgeId + ":" + storedFile.getFileHash() + ":" + asyncProperties.getPipelineVersion();
+		Map<String, Object> metadataToPersist = new HashMap<>();
+		if (metadata != null) {
+			metadataToPersist.putAll(metadata);
+		}
+		metadataToPersist.put("user_id", userId);
 
 		KnowledgeEntity knowledge = new KnowledgeEntity();
 		knowledge.setId(knowledgeId);
@@ -87,7 +93,7 @@ public class KnowledgeIngestService {
 		knowledge.setFilePath(storedFile.getFilePath());
 		knowledge.setParseStatus(KnowledgeParseStatus.QUEUED);
 		knowledge.setEnableStatus(KnowledgeEnableStatus.DISABLED);
-		knowledge.setMetadataJson(toJson(metadata));
+		knowledge.setMetadataJson(toJson(metadataToPersist));
 		knowledge.setCreatedAt(Instant.now());
 		knowledge.setUpdatedAt(Instant.now());
 		knowledgeRepository.save(knowledge);
@@ -161,6 +167,21 @@ public class KnowledgeIngestService {
 			return "bin";
 		}
 		return n.substring(idx + 1).toLowerCase();
+	}
+
+	private String extractUserId(Map<String, Object> metadata) {
+		if (metadata == null || metadata.isEmpty()) {
+			return "anonymous";
+		}
+		Object value = metadata.get("user_id");
+		if (value == null) {
+			value = metadata.get("userId");
+		}
+		if (value == null) {
+			value = metadata.get("uid");
+		}
+		String normalized = normalize(value != null ? String.valueOf(value) : null, "anonymous");
+		return normalized.replaceAll("[^a-zA-Z0-9._-]", "_");
 	}
 
 	public static class CreateRecordResult {

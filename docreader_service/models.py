@@ -31,6 +31,8 @@ class ImageInfo(BaseModel):
     end_pos: Optional[int] = None
     caption: Optional[str] = None
     ocr_text: Optional[str] = None
+    storage_bucket: Optional[str] = None
+    storage_key: Optional[str] = None
 
 
 class ChunkPayload(BaseModel):

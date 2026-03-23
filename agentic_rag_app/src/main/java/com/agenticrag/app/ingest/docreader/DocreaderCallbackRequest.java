@@ -169,6 +169,12 @@ public class DocreaderCallbackRequest {
 		@JsonProperty("ocr_text")
 		private String ocrText;
 
+		@JsonProperty("storage_bucket")
+		private String storageBucket;
+
+		@JsonProperty("storage_key")
+		private String storageKey;
+
 		public String getUrl() {
 			return url;
 		}
@@ -215,6 +221,22 @@ public class DocreaderCallbackRequest {
 
 		public void setOcrText(String ocrText) {
 			this.ocrText = ocrText;
+		}
+
+		public String getStorageBucket() {
+			return storageBucket;
+		}
+
+		public void setStorageBucket(String storageBucket) {
+			this.storageBucket = storageBucket;
+		}
+
+		public String getStorageKey() {
+			return storageKey;
+		}
+
+		public void setStorageKey(String storageKey) {
+			this.storageKey = storageKey;
 		}
 	}
 }
