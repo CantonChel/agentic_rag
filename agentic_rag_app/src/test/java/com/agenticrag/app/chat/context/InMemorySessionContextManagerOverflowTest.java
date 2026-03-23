@@ -58,4 +58,24 @@ class InMemorySessionContextManagerOverflowTest {
 		Mockito.verify(memoryFlushService, Mockito.atLeastOnce())
 			.flushPreCompaction(Mockito.eq(sid), Mockito.anyList());
 	}
+
+	@Test
+	void triggersPreCompactionFlushWhenByteLimitExceeded() {
+		SessionContextProperties props = new SessionContextProperties();
+		props.setMaxTokens(100000);
+		props.setMaxBytes(120);
+		props.setKeepLastMessages(3);
+		TokenCounter tokenCounter = text -> 1;
+		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
+		InMemorySessionContextManager mgr = new InMemorySessionContextManager(props, tokenCounter, memoryFlushService);
+
+		String sid = "u1::byte";
+		mgr.ensureSystemPrompt(sid, "SYSTEM_PROMPT");
+		for (int i = 0; i < 10; i++) {
+			mgr.addMessage(sid, new UserMessage("m" + i + ":" + repeat("字", 20)));
+		}
+
+		Mockito.verify(memoryFlushService, Mockito.atLeastOnce())
+			.flushPreCompaction(Mockito.eq(sid), Mockito.anyList());
+	}
 }

@@ -5,6 +5,7 @@ import com.agenticrag.app.chat.message.ChatMessageType;
 import com.agenticrag.app.chat.message.SystemMessage;
 import com.agenticrag.app.memory.MemoryFlushService;
 import com.agenticrag.app.rag.splitter.TokenCounter;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -90,7 +91,11 @@ public class InMemorySessionContextManager implements ContextManager {
 
 		int maxTokens = props != null && props.getMaxTokens() > 0 ? props.getMaxTokens() : 20000;
 		int tokens = countTokens(list);
-		if (tokens <= maxTokens) {
+		int maxBytes = props != null ? props.getMaxBytes() : 0;
+		int bytes = countBytes(list);
+		boolean tokenOverflow = tokens > maxTokens;
+		boolean bytesOverflow = maxBytes > 0 && bytes > maxBytes;
+		if (!tokenOverflow && !bytesOverflow) {
 			return;
 		}
 		if (memoryFlushService != null) {
@@ -122,6 +127,24 @@ public class InMemorySessionContextManager implements ContextManager {
 			tokens += tokenCounter != null ? tokenCounter.count(c) : c.length();
 		}
 		return tokens;
+	}
+
+	private int countBytes(List<ChatMessage> messages) {
+		if (messages == null || messages.isEmpty()) {
+			return 0;
+		}
+		int bytes = 0;
+		for (ChatMessage m : messages) {
+			if (m == null) {
+				continue;
+			}
+			String c = m.getContent();
+			if (c == null || c.isEmpty()) {
+				continue;
+			}
+			bytes += c.getBytes(StandardCharsets.UTF_8).length;
+		}
+		return bytes;
 	}
 
 	private String normalize(String sessionId) {

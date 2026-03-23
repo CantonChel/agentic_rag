@@ -14,6 +14,7 @@ import java.util.List;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mockito;
 
 class MemoryFlushServiceTest {
 	@TempDir
@@ -28,7 +29,15 @@ class MemoryFlushServiceTest {
 		props.setPreCompactionFlushEnabled(true);
 		props.setFlushRecentMessages(10);
 
-		MemoryFlushService service = new MemoryFlushService(props);
+		MemoryLlmExtractor extractor = Mockito.mock(MemoryLlmExtractor.class);
+		Mockito.when(extractor.extractDurableMarkdown(
+			Mockito.eq("u1"),
+			Mockito.eq("s1"),
+			Mockito.eq("pre-compaction"),
+			Mockito.anyList()
+		)).thenReturn("- **截止日期**：周五前完成");
+
+		MemoryFlushService service = new MemoryFlushService(props, extractor);
 		List<ChatMessage> messages = Arrays.asList(
 			new SystemMessage("system"),
 			new UserMessage("用户提到要在周五前完成"),
@@ -40,9 +49,9 @@ class MemoryFlushServiceTest {
 		Path daily = tempDir.resolve("memory/users/u1/" + LocalDate.now() + ".md");
 		Assertions.assertTrue(Files.exists(daily));
 		String content = Files.readString(daily, StandardCharsets.UTF_8);
-		Assertions.assertTrue(content.contains("pre-compaction session=s1"));
-		Assertions.assertTrue(content.contains("USER: 用户提到要在周五前完成"));
-		Assertions.assertTrue(content.contains("ASSISTANT: 收到，我会记录这个截止日期"));
+		Assertions.assertTrue(content.contains("Memory Flush"));
+		Assertions.assertTrue(content.contains("Session: s1"));
+		Assertions.assertTrue(content.contains("截止日期"));
 	}
 
 	@Test

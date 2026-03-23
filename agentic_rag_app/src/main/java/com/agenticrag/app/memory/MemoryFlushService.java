@@ -14,14 +14,22 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
 public class MemoryFlushService {
 	private final MemoryProperties properties;
+	private final MemoryLlmExtractor memoryLlmExtractor;
 
 	public MemoryFlushService(MemoryProperties properties) {
+		this(properties, null);
+	}
+
+	@Autowired
+	public MemoryFlushService(MemoryProperties properties, MemoryLlmExtractor memoryLlmExtractor) {
 		this.properties = properties;
+		this.memoryLlmExtractor = memoryLlmExtractor;
 	}
 
 	public void flushPreCompaction(String scopedSessionId, List<ChatMessage> messages) {
@@ -33,7 +41,14 @@ public class MemoryFlushService {
 		}
 		String userId = SessionScope.userIdFromScopedSessionId(scopedSessionId);
 		String sessionId = SessionScope.sessionIdFromScopedSessionId(scopedSessionId);
-		String markdown = buildSnapshotMarkdown("pre-compaction", sessionId, messages);
+		List<String> lines = extractRecentContextLines(messages);
+		if (lines.isEmpty()) {
+			return;
+		}
+		String durable = memoryLlmExtractor != null
+			? memoryLlmExtractor.extractDurableMarkdown(userId, sessionId, "pre-compaction", lines)
+			: "";
+		String markdown = buildPreCompactionMarkdown(sessionId, durable);
 		if (markdown.trim().isEmpty()) {
 			return;
 		}
@@ -57,7 +72,7 @@ public class MemoryFlushService {
 		appendToSessionSummary(userId, sessionId, markdown);
 	}
 
-	private String buildSnapshotMarkdown(String reason, String sessionId, List<ChatMessage> messages) {
+	private List<String> extractRecentContextLines(List<ChatMessage> messages) {
 		int keep = properties.getFlushRecentMessages() > 0 ? properties.getFlushRecentMessages() : 12;
 		int start = Math.max(0, messages.size() - keep);
 		List<String> lines = new ArrayList<>();
@@ -70,24 +85,20 @@ public class MemoryFlushService {
 			if (content.isEmpty()) {
 				continue;
 			}
-			lines.add("- " + m.getType().name() + ": " + content);
+			lines.add(m.getType().name() + ": " + content);
 		}
-		if (lines.isEmpty()) {
+		return lines;
+	}
+
+	private String buildPreCompactionMarkdown(String sessionId, String durable) {
+		if (durable == null || durable.trim().isEmpty()) {
 			return "";
 		}
 
 		StringBuilder out = new StringBuilder();
-		out.append("## [")
-			.append(OffsetDateTime.now())
-			.append("] ")
-			.append(reason)
-			.append(" session=")
-			.append(sessionId)
-			.append("\n");
-		for (String line : lines) {
-			out.append(line).append("\n");
-		}
-		out.append("\n");
+		out.append("<!-- Memory Flush: ").append(OffsetDateTime.now()).append(" (Pre-compaction) -->\n");
+		out.append("### Durable Memory (Session: ").append(sessionId).append(")\n");
+		out.append(durable.trim()).append("\n\n---\n\n");
 		return out.toString();
 	}
 
