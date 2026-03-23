@@ -78,6 +78,37 @@ class MemoryFlushServiceTest {
 		Assertions.assertTrue(content.contains("ASSISTANT: 好的，我已记录"));
 	}
 
+	@Test
+	void flushOnSessionSwitchCommandShouldWriteSlugSnapshotFile() throws Exception {
+		MemoryProperties props = new MemoryProperties();
+		props.setWorkspaceRoot(tempDir.toString());
+		props.setUserMemoryBaseDir("memory/users");
+		props.setFlushEnabled(true);
+		props.setSessionResetFlushEnabled(true);
+		props.setSessionSnapshotRecentMessages(10);
+
+		MemoryLlmExtractor extractor = Mockito.mock(MemoryLlmExtractor.class);
+		Mockito.when(extractor.generateSessionSlug(
+			Mockito.eq("u1"),
+			Mockito.eq("s99"),
+			Mockito.anyList()
+		)).thenReturn("product-decision");
+
+		MemoryFlushService service = new MemoryFlushService(props, extractor);
+		service.flushOnSessionSwitchCommand(
+			"u1::s99",
+			"command:/new",
+			null,
+			Arrays.asList(message("USER", "我们决定这周发布"), message("ASSISTANT", "已记录"))
+		);
+
+		Path snapshot = tempDir.resolve("memory/users/u1/sessions/" + LocalDate.now() + "-product-decision.md");
+		Assertions.assertTrue(Files.exists(snapshot));
+		String content = Files.readString(snapshot, StandardCharsets.UTF_8);
+		Assertions.assertTrue(content.contains("reason: command:/new"));
+		Assertions.assertTrue(content.contains("USER: 我们决定这周发布"));
+	}
+
 	private StoredMessageEntity message(String type, String content) {
 		StoredMessageEntity entity = new StoredMessageEntity();
 		entity.setType(type);

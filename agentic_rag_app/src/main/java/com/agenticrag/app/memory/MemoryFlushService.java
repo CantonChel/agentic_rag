@@ -14,11 +14,16 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
 public class MemoryFlushService {
+	private static final Pattern SLUG_INVALID = Pattern.compile("[^a-z0-9-]");
+	private static final Pattern DASHES = Pattern.compile("-{2,}");
+
 	private final MemoryProperties properties;
 	private final MemoryLlmExtractor memoryLlmExtractor;
 
@@ -70,6 +75,32 @@ public class MemoryFlushService {
 			return;
 		}
 		appendToSessionSummary(userId, sessionId, markdown);
+	}
+
+	public String flushOnSessionSwitchCommand(
+		String scopedSessionId,
+		String reason,
+		List<ChatMessage> contextMessages,
+		List<StoredMessageEntity> persistedMessages
+	) {
+		if (!properties.isEnabled() || !properties.isFlushEnabled() || !properties.isSessionResetFlushEnabled()) {
+			return "";
+		}
+		String userId = SessionScope.userIdFromScopedSessionId(scopedSessionId);
+		String sessionId = SessionScope.sessionIdFromScopedSessionId(scopedSessionId);
+		List<String> lines = extractRecentSessionLines(contextMessages, persistedMessages);
+		if (lines.isEmpty()) {
+			return "";
+		}
+		String slug = memoryLlmExtractor != null
+			? memoryLlmExtractor.generateSessionSlug(userId, sessionId, lines)
+			: "session-memory";
+		String markdown = buildSessionSnapshotMarkdown(sessionId, reason, lines);
+		if (markdown.trim().isEmpty()) {
+			return "";
+		}
+		appendToSessionSnapshot(userId, slug, markdown);
+		return slug;
 	}
 
 	private List<String> extractRecentContextLines(List<ChatMessage> messages) {
@@ -195,6 +226,115 @@ public class MemoryFlushService {
 		} catch (IOException ignored) {
 			// avoid breaking reset flow
 		}
+	}
+
+	private List<String> extractRecentSessionLines(
+		List<ChatMessage> contextMessages,
+		List<StoredMessageEntity> persistedMessages
+	) {
+		List<String> lines = new ArrayList<>();
+		int keep = properties.getSessionSnapshotRecentMessages() > 0 ? properties.getSessionSnapshotRecentMessages() : 15;
+		if (persistedMessages != null && !persistedMessages.isEmpty()) {
+			int start = Math.max(0, persistedMessages.size() - keep);
+			for (int i = start; i < persistedMessages.size(); i++) {
+				StoredMessageEntity e = persistedMessages.get(i);
+				if (e == null || e.getType() == null || e.getContent() == null) {
+					continue;
+				}
+				String type = e.getType().trim().toUpperCase(Locale.ROOT);
+				if (!"USER".equals(type) && !"ASSISTANT".equals(type) && !"THINKING".equals(type)) {
+					continue;
+				}
+				String content = sanitize(e.getContent());
+				if (!content.isEmpty()) {
+					lines.add(type + ": " + content);
+				}
+			}
+		}
+
+		if (!lines.isEmpty()) {
+			return lines;
+		}
+		if (contextMessages == null || contextMessages.isEmpty()) {
+			return lines;
+		}
+		int start = Math.max(0, contextMessages.size() - keep);
+		for (int i = start; i < contextMessages.size(); i++) {
+			ChatMessage m = contextMessages.get(i);
+			if (m == null || m.getType() == null || m.getType() == ChatMessageType.SYSTEM) {
+				continue;
+			}
+			String content = sanitize(m.getContent());
+			if (!content.isEmpty()) {
+				lines.add(m.getType().name() + ": " + content);
+			}
+		}
+		return lines;
+	}
+
+	private String buildSessionSnapshotMarkdown(String sessionId, String reason, List<String> lines) {
+		if (lines == null || lines.isEmpty()) {
+			return "";
+		}
+		StringBuilder out = new StringBuilder();
+		out.append("# Session Snapshot\n");
+		out.append("- session_id: ").append(sessionId).append("\n");
+		out.append("- flushed_at: ").append(OffsetDateTime.now()).append("\n");
+		out.append("- reason: ").append(reason == null ? "session-switch" : reason).append("\n\n");
+		out.append("## Recent Messages\n");
+		for (String line : lines) {
+			out.append("- ").append(line).append("\n");
+		}
+		out.append("\n");
+		return out.toString();
+	}
+
+	private void appendToSessionSnapshot(String userId, String slug, String markdown) {
+		Path root = workspaceRoot();
+		Path dir = root.resolve(properties.getUserMemoryBaseDir())
+			.resolve(SessionScope.normalizeUserId(userId))
+			.resolve("sessions");
+		String normalizedSlug = normalizeSlug(slug);
+		Path file = dir.resolve(LocalDate.now() + "-" + normalizedSlug + ".md");
+		try {
+			Files.createDirectories(dir);
+			Files.writeString(
+				file,
+				markdown,
+				StandardCharsets.UTF_8,
+				StandardOpenOption.CREATE,
+				StandardOpenOption.APPEND
+			);
+		} catch (IOException ignored) {
+			// avoid breaking command flow
+		}
+	}
+
+	private String normalizeSlug(String slug) {
+		String raw = slug == null ? "" : slug.trim().toLowerCase(Locale.ROOT);
+		if (raw.isEmpty()) {
+			return "session-memory";
+		}
+		String out = raw.replace(' ', '-').replace('_', '-');
+		out = SLUG_INVALID.matcher(out).replaceAll("-");
+		out = DASHES.matcher(out).replaceAll("-");
+		while (out.startsWith("-")) {
+			out = out.substring(1);
+		}
+		while (out.endsWith("-")) {
+			out = out.substring(0, out.length() - 1);
+		}
+		if (out.isEmpty()) {
+			return "session-memory";
+		}
+		int max = properties.getSlugMaxLength() > 0 ? properties.getSlugMaxLength() : 64;
+		if (out.length() > max) {
+			out = out.substring(0, max);
+			while (out.endsWith("-")) {
+				out = out.substring(0, out.length() - 1);
+			}
+		}
+		return out.isEmpty() ? "session-memory" : out;
 	}
 
 	private Path workspaceRoot() {

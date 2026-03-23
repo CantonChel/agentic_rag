@@ -12,9 +12,10 @@ public class LlmStreamEvent {
 	private final String source;
 	private final String originModel;
 	private final Integer roundId;
+	private final String sessionId;
 
 	public LlmStreamEvent(String type, String content, List<LlmToolCall> toolCalls, String finishReason, JsonNode raw) {
-		this(type, content, toolCalls, finishReason, raw, null, null, null);
+		this(type, content, toolCalls, finishReason, raw, null, null, null, null);
 	}
 
 	public LlmStreamEvent(
@@ -25,7 +26,8 @@ public class LlmStreamEvent {
 		JsonNode raw,
 		String source,
 		String originModel,
-		Integer roundId
+		Integer roundId,
+		String sessionId
 	) {
 		this.type = type;
 		this.content = content;
@@ -35,22 +37,27 @@ public class LlmStreamEvent {
 		this.source = source;
 		this.originModel = originModel;
 		this.roundId = roundId;
+		this.sessionId = sessionId;
 	}
 
 	public static LlmStreamEvent delta(String content) {
-		return new LlmStreamEvent("delta", content, null, null, null, null, null, null);
+		return new LlmStreamEvent("delta", content, null, null, null, null, null, null, null);
 	}
 
 	public static LlmStreamEvent done(String finishReason, List<LlmToolCall> toolCalls) {
-		return new LlmStreamEvent("done", null, toolCalls, finishReason, null, null, null, null);
+		return new LlmStreamEvent("done", null, toolCalls, finishReason, null, null, null, null, null);
 	}
  
 	public static LlmStreamEvent error(String message) {
-		return new LlmStreamEvent("error", message, null, null, null, null, null, null);
+		return new LlmStreamEvent("error", message, null, null, null, null, null, null, null);
 	}
 
 	public static LlmStreamEvent thinking(String content, String source, String originModel, Integer roundId) {
-		return new LlmStreamEvent("thinking", content, null, null, null, source, originModel, roundId);
+		return new LlmStreamEvent("thinking", content, null, null, null, source, originModel, roundId, null);
+	}
+
+	public static LlmStreamEvent sessionSwitched(String sessionId) {
+		return new LlmStreamEvent("session_switched", null, null, null, null, null, null, null, sessionId);
 	}
 
 	public String getType() {
@@ -83,5 +90,9 @@ public class LlmStreamEvent {
 
 	public Integer getRoundId() {
 		return roundId;
+	}
+
+	public String getSessionId() {
+		return sessionId;
 	}
 }

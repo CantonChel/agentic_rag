@@ -10,8 +10,11 @@ import com.agenticrag.app.chat.message.UserMessage;
 import com.agenticrag.app.chat.message.ThinkingMessage;
 import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.chat.message.SystemMessage;
+import com.agenticrag.app.memory.MemoryFlushService;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
+import com.agenticrag.app.session.ChatSession;
+import com.agenticrag.app.session.SessionManager;
 import com.agenticrag.app.session.SessionScope;
 import com.agenticrag.app.tool.ToolDefinition;
 import com.agenticrag.app.tool.ToolRouter;
@@ -38,6 +41,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import com.openai.errors.UnauthorizedException;
@@ -54,6 +58,8 @@ public class StreamingChatService {
 	private final SystemPromptManager systemPromptManager;
 	private final ContextManager contextManager;
 	private final PersistentMessageStore persistentMessageStore;
+	private final SessionManager sessionManager;
+	private final MemoryFlushService memoryFlushService;
 	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+\\.?|Step\\s*\\d+\\.?|\\d+\\.)\\s+)");
 	private static final String THINK_OPEN = "<think>";
 	private static final String THINK_CLOSE = "</think>";
@@ -69,6 +75,35 @@ public class StreamingChatService {
 		ContextManager contextManager,
 		PersistentMessageStore persistentMessageStore
 	) {
+		this(
+			openAiClient,
+			minimaxClient,
+			openAiProperties,
+			minimaxProperties,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistentMessageStore,
+			null,
+			null
+		);
+	}
+
+	@Autowired
+	public StreamingChatService(
+		OpenAIClient openAiClient,
+		OpenAIClient minimaxClient,
+		OpenAiClientProperties openAiProperties,
+		MinimaxClientProperties minimaxProperties,
+		ToolRouter toolRouter,
+		ObjectMapper objectMapper,
+		SystemPromptManager systemPromptManager,
+		ContextManager contextManager,
+		PersistentMessageStore persistentMessageStore,
+		SessionManager sessionManager,
+		MemoryFlushService memoryFlushService
+	) {
 		this.openAiClient = openAiClient;
 		this.minimaxClient = minimaxClient;
 		this.openAiProperties = openAiProperties;
@@ -79,6 +114,8 @@ public class StreamingChatService {
 		this.systemPromptManager = systemPromptManager;
 		this.contextManager = contextManager;
 		this.persistentMessageStore = persistentMessageStore;
+		this.sessionManager = sessionManager;
+		this.memoryFlushService = memoryFlushService;
 	}
 
 	public Flux<LlmStreamEvent> stream(LlmProvider provider, String prompt, boolean includeTools) {
@@ -123,6 +160,23 @@ public class StreamingChatService {
 				String uid = SessionScope.normalizeUserId(userId);
 				String sid = SessionScope.normalizeSessionId(sessionId);
 				String scopedSid = SessionScope.scopedSessionId(uid, sid);
+
+				if (isSessionSwitchCommand(prompt)) {
+					if (memoryFlushService != null) {
+						memoryFlushService.flushOnSessionSwitchCommand(
+							scopedSid,
+							normalizeSwitchReason(prompt),
+							contextManager.getContext(scopedSid),
+							persistentMessageStore.list(scopedSid)
+						);
+					}
+					String newSessionId = createNextSessionId(uid);
+					sink.next(LlmStreamEvent.sessionSwitched(newSessionId));
+					sink.next(LlmStreamEvent.done("session_switched", null));
+					sink.complete();
+					return;
+				}
+
 				String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, true));
 				contextManager.ensureSystemPrompt(scopedSid, configuredSystemPrompt);
 				String systemPrompt = contextManager.getSystemPrompt(scopedSid);
@@ -257,6 +311,35 @@ public class StreamingChatService {
 			return ChatCompletionToolChoiceOption.Auto.NONE;
 		}
 		return ChatCompletionToolChoiceOption.Auto.AUTO;
+	}
+
+	private boolean isSessionSwitchCommand(String prompt) {
+		if (prompt == null) {
+			return false;
+		}
+		String normalized = prompt.trim().toLowerCase();
+		return "/new".equals(normalized) || "/reset".equals(normalized);
+	}
+
+	private String normalizeSwitchReason(String prompt) {
+		if (prompt == null) {
+			return "command:/new";
+		}
+		String normalized = prompt.trim().toLowerCase();
+		if ("/reset".equals(normalized)) {
+			return "command:/reset";
+		}
+		return "command:/new";
+	}
+
+	private String createNextSessionId(String userId) {
+		if (sessionManager != null) {
+			ChatSession created = sessionManager.create(userId);
+			if (created != null && created.getId() != null && !created.getId().trim().isEmpty()) {
+				return created.getId().trim();
+			}
+		}
+		return java.util.UUID.randomUUID().toString();
 	}
 
 	private List<ChatCompletionTool> buildChatCompletionTools(Iterable<ToolDefinition> toolDefinitions) {

@@ -15,8 +15,11 @@ import com.agenticrag.app.llm.LlmProvider;
 import com.agenticrag.app.llm.LlmStreamEvent;
 import com.agenticrag.app.llm.LlmToolCall;
 import com.agenticrag.app.llm.LlmToolChoiceMode;
+import com.agenticrag.app.memory.MemoryFlushService;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
+import com.agenticrag.app.session.ChatSession;
+import com.agenticrag.app.session.SessionManager;
 import com.agenticrag.app.session.SessionScope;
 import com.agenticrag.app.tool.ToolDefinition;
 import com.agenticrag.app.tool.ToolArgumentValidator;
@@ -50,6 +53,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -68,6 +72,8 @@ public class AgentStreamingService {
 	private final com.agenticrag.app.chat.context.LocalExecutionContextRecorder localExecutionContextRecorder;
 	private final AgentProperties agentProperties;
 	private final ToolArgumentValidator toolArgumentValidator;
+	private final SessionManager sessionManager;
+	private final MemoryFlushService memoryFlushService;
 	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+\\.?|Step\\s*\\d+\\.?|\\d+\\.)\\s+)");
 	private static final String THINK_OPEN = "<think>";
 	private static final String THINK_CLOSE = "</think>";
@@ -86,6 +92,41 @@ public class AgentStreamingService {
 		AgentProperties agentProperties,
 		ToolArgumentValidator toolArgumentValidator
 	) {
+		this(
+			openAiClient,
+			minimaxClient,
+			openAiProperties,
+			minimaxProperties,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistentMessageStore,
+			localExecutionContextRecorder,
+			agentProperties,
+			toolArgumentValidator,
+			null,
+			null
+		);
+	}
+
+	@Autowired
+	public AgentStreamingService(
+		OpenAIClient openAiClient,
+		OpenAIClient minimaxClient,
+		OpenAiClientProperties openAiProperties,
+		MinimaxClientProperties minimaxProperties,
+		ToolRouter toolRouter,
+		ObjectMapper objectMapper,
+		SystemPromptManager systemPromptManager,
+		ContextManager contextManager,
+		PersistentMessageStore persistentMessageStore,
+		com.agenticrag.app.chat.context.LocalExecutionContextRecorder localExecutionContextRecorder,
+		AgentProperties agentProperties,
+		ToolArgumentValidator toolArgumentValidator,
+		SessionManager sessionManager,
+		MemoryFlushService memoryFlushService
+	) {
 		this.openAiClient = openAiClient;
 		this.minimaxClient = minimaxClient;
 		this.openAiProperties = openAiProperties;
@@ -99,6 +140,8 @@ public class AgentStreamingService {
 		this.localExecutionContextRecorder = localExecutionContextRecorder;
 		this.agentProperties = agentProperties;
 		this.toolArgumentValidator = toolArgumentValidator;
+		this.sessionManager = sessionManager;
+		this.memoryFlushService = memoryFlushService;
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -132,6 +175,22 @@ public class AgentStreamingService {
 					String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
 					String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, true));
 					OpenAiMessageAdapter adapter = new OpenAiMessageAdapter(objectMapper);
+
+					if (isSessionSwitchCommand(prompt)) {
+						if (memoryFlushService != null) {
+							memoryFlushService.flushOnSessionSwitchCommand(
+								scopedSid,
+								normalizeSwitchReason(prompt),
+								contextManager.getContext(scopedSid),
+								persistentMessageStore.list(scopedSid)
+							);
+						}
+						String newSessionId = createNextSessionId(uid);
+						sink.next(LlmStreamEvent.sessionSwitched(newSessionId));
+						sink.next(LlmStreamEvent.done("session_switched", null));
+						sink.complete();
+						return;
+					}
 
 					contextManager.ensureSystemPrompt(scopedSid, configuredSystemPrompt);
 					String systemPrompt = contextManager.getSystemPrompt(scopedSid);
@@ -383,6 +442,35 @@ public class AgentStreamingService {
 			return ChatCompletionToolChoiceOption.Auto.NONE;
 		}
 		return ChatCompletionToolChoiceOption.Auto.AUTO;
+	}
+
+	private boolean isSessionSwitchCommand(String prompt) {
+		if (prompt == null) {
+			return false;
+		}
+		String normalized = prompt.trim().toLowerCase();
+		return "/new".equals(normalized) || "/reset".equals(normalized);
+	}
+
+	private String normalizeSwitchReason(String prompt) {
+		if (prompt == null) {
+			return "command:/new";
+		}
+		String normalized = prompt.trim().toLowerCase();
+		if ("/reset".equals(normalized)) {
+			return "command:/reset";
+		}
+		return "command:/new";
+	}
+
+	private String createNextSessionId(String userId) {
+		if (sessionManager != null) {
+			ChatSession created = sessionManager.create(userId);
+			if (created != null && created.getId() != null && !created.getId().trim().isEmpty()) {
+				return created.getId().trim();
+			}
+		}
+		return UUID.randomUUID().toString();
 	}
 
 	private List<ChatCompletionTool> buildChatCompletionTools(Iterable<ToolDefinition> toolDefinitions) {

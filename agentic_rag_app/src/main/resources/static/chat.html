@@ -394,6 +394,18 @@
         }
       }
 
+      function handleSessionSwitchedEvent(data) {
+        const newSessionId = ((data && data.sessionId) || '').trim();
+        if (!newSessionId) return;
+        sessionIdInput.value = newSessionId;
+        if (historySessionSel) {
+          historySessionSel.value = newSessionId;
+        }
+        clearChatBox();
+        appendMessage('assistant', '已切换到新会话：' + newSessionId);
+        refreshSessions(false);
+      }
+
       function handleSseMessage(evt) {
         try {
           const data = JSON.parse(evt.data);
@@ -402,6 +414,8 @@
             handleThinkingEvent(data);
           } else if (data.type === 'delta') {
             handleDeltaEvent(data);
+          } else if (data.type === 'session_switched') {
+            handleSessionSwitchedEvent(data);
           }
         } catch (_) {}
       }
@@ -479,6 +493,10 @@
 
         es.addEventListener('done', () => {
           stopStream();
+        });
+
+        es.addEventListener('session_switched', (evt) => {
+          handleSseMessage(evt);
         });
 
         es.addEventListener('error', (evt) => {
