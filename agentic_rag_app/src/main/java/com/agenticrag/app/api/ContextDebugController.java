@@ -8,6 +8,7 @@ import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.llm.LlmProvider;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
+import com.agenticrag.app.session.SessionScope;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -38,43 +39,58 @@ public class ContextDebugController {
 	}
 
 	@GetMapping("/session")
-	public List<SessionController.ChatMessageView> sessionContext(@PathVariable("sessionId") String sessionId) {
-		return contextManager.getContext(sessionId).stream()
+	public List<SessionController.ChatMessageView> sessionContext(
+		@PathVariable("sessionId") String sessionId,
+		@RequestParam(value = "userId", defaultValue = "anonymous") String userId
+	) {
+		String scopedSessionId = SessionScope.scopedSessionId(userId, sessionId);
+		return contextManager.getContext(scopedSessionId).stream()
 			.map(m -> new SessionController.ChatMessageView(m.getType().name(), m.getContent(), null, null, null, null, null))
 			.collect(Collectors.toList());
 	}
 
 	@GetMapping("/local")
-	public LocalExecutionContextView localContext(@PathVariable("sessionId") String sessionId) {
-		LocalExecutionContextRecorder.LocalExecutionContextSnapshot snap = localExecutionContextRecorder.getLatest(sessionId);
+	public LocalExecutionContextView localContext(
+		@PathVariable("sessionId") String sessionId,
+		@RequestParam(value = "userId", defaultValue = "anonymous") String userId
+	) {
+		String scopedSessionId = SessionScope.scopedSessionId(userId, sessionId);
+		LocalExecutionContextRecorder.LocalExecutionContextSnapshot snap = localExecutionContextRecorder.getLatest(scopedSessionId);
 		if (snap == null) {
 			return new LocalExecutionContextView(sessionId, 0, null, java.util.Collections.emptyList());
 		}
 		List<SessionController.ChatMessageView> msgs = snap.getMessages().stream()
 			.map(m -> new SessionController.ChatMessageView(m.getType().name(), m.getContent(), null, null, null, null, null))
 			.collect(Collectors.toList());
-		return new LocalExecutionContextView(snap.getSessionId(), snap.getIteration(), snap.getRecordedAt().toString(), msgs);
+		return new LocalExecutionContextView(
+			SessionScope.sessionIdFromScopedSessionId(snap.getSessionId()),
+			snap.getIteration(),
+			snap.getRecordedAt().toString(),
+			msgs
+		);
 	}
 
 	@PostMapping("/seed")
 	public SeedResult seed(
 		@PathVariable("sessionId") String sessionId,
+		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "count", defaultValue = "50") int count,
 		@RequestParam(value = "chars", defaultValue = "200") int chars
 	) {
+		String scopedSessionId = SessionScope.scopedSessionId(userId, sessionId);
 		int c = Math.max(0, Math.min(count, 2000));
 		int len = Math.max(1, Math.min(chars, 5000));
 		String payload = repeat("中", len);
 
 		String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(LlmProvider.OPENAI, true));
-		contextManager.ensureSystemPrompt(sessionId, configuredSystemPrompt);
-		String systemPrompt = contextManager.getSystemPrompt(sessionId);
-		persistentMessageStore.ensureSystemPrompt(sessionId, systemPrompt);
+		contextManager.ensureSystemPrompt(scopedSessionId, configuredSystemPrompt);
+		String systemPrompt = contextManager.getSystemPrompt(scopedSessionId);
+		persistentMessageStore.ensureSystemPrompt(scopedSessionId, systemPrompt);
 
 		for (int i = 0; i < c; i++) {
 			ChatMessage u = new UserMessage("seed-" + i + ": " + payload);
-			persistentMessageStore.append(sessionId, u);
-			contextManager.addMessage(sessionId, u);
+			persistentMessageStore.append(scopedSessionId, u);
+			contextManager.addMessage(scopedSessionId, u);
 		}
 		return new SeedResult(c, len);
 	}

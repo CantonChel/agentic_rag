@@ -69,6 +69,10 @@
             </select>
           </label>
           <label>
+            User ID
+            <input id="userId" placeholder="anonymous" style="width: 180px;" />
+          </label>
+          <label>
             Session ID
             <input id="sessionId" readonly style="width: 260px;" />
           </label>
@@ -107,6 +111,7 @@
       const providerSel = document.getElementById('provider');
       const modeSel = document.getElementById('mode');
       const toolsSel = document.getElementById('toolsEnabled');
+      const userIdInput = document.getElementById('userId');
       const sessionIdInput = document.getElementById('sessionId');
       const historySessionSel = document.getElementById('historySession');
       const loadSessionBtn = document.getElementById('loadSessionBtn');
@@ -132,6 +137,10 @@
 
       function newSessionId() {
         return 'web-' + Date.now();
+      }
+
+      function currentUserId() {
+        return (userIdInput && userIdInput.value ? userIdInput.value : '').trim() || 'anonymous';
       }
 
       function appendMessage(role, text) {
@@ -175,7 +184,8 @@
 
       async function createSession() {
         try {
-          const res = await fetch(apiUrl('/api/sessions'), { method: 'POST' });
+          const query = new URLSearchParams({ userId: currentUserId() });
+          const res = await fetch(apiUrl('/api/sessions') + '?' + query.toString(), { method: 'POST' });
           if (!res.ok) throw new Error('create session failed: ' + res.status);
           const data = await res.json();
           sessionIdInput.value = data.sessionId || newSessionId();
@@ -224,7 +234,8 @@
       async function refreshSessions() {
         if (!historySessionSel) return;
         try {
-          const res = await fetch(apiUrl('/api/sessions'));
+          const query = new URLSearchParams({ userId: currentUserId() });
+          const res = await fetch(apiUrl('/api/sessions') + '?' + query.toString());
           if (!res.ok) throw new Error('list sessions failed: ' + res.status);
           const data = await res.json();
           historySessionSel.innerHTML = '';
@@ -245,7 +256,8 @@
         const sid = historySessionSel && historySessionSel.value ? historySessionSel.value : '';
         if (!sid) return;
         try {
-          const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sid)}/messages`));
+          const query = new URLSearchParams({ userId: currentUserId() });
+          const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sid)}/messages`) + '?' + query.toString());
           if (!res.ok) throw new Error('load messages failed: ' + res.status);
           const data = await res.json();
           clearChatBox();
@@ -370,12 +382,13 @@
         const provider = providerSel.value;
         const mode = modeSel.value;
         const sessionId = sessionIdInput.value || newSessionId();
+        const userId = currentUserId();
         sessionIdInput.value = sessionId;
         const toolsEnabled = toolsSel.value === 'true';
 
         const basePath = mode === 'agent' ? '/api/agent/' : '/api/llm/';
         const path = basePath + provider + '/stream';
-        const query = new URLSearchParams({ sessionId, prompt, tools: String(toolsEnabled) });
+        const query = new URLSearchParams({ userId, sessionId, prompt, tools: String(toolsEnabled) });
         const url = apiUrl(path) + '?' + query.toString();
 
         es = new EventSource(url);
@@ -427,6 +440,10 @@
       promptInput.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send();
       });
+      userIdInput.addEventListener('change', async () => {
+        await refreshSessions();
+      });
+      userIdInput.value = 'anonymous';
 
       createSession();
       refreshTools();

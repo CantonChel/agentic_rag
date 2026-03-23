@@ -17,6 +17,7 @@ import com.agenticrag.app.llm.LlmToolCall;
 import com.agenticrag.app.llm.LlmToolChoiceMode;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
+import com.agenticrag.app.session.SessionScope;
 import com.agenticrag.app.tool.ToolDefinition;
 import com.agenticrag.app.tool.ToolArgumentValidator;
 import com.agenticrag.app.tool.ToolExecutionContext;
@@ -107,7 +108,20 @@ public class AgentStreamingService {
 		boolean includeTools,
 		LlmToolChoiceMode toolChoiceMode
 	) {
-		String sid = sessionId == null || sessionId.trim().isEmpty() ? "default" : sessionId.trim();
+		return stream(provider, "anonymous", sessionId, prompt, includeTools, toolChoiceMode);
+	}
+
+	public Flux<LlmStreamEvent> stream(
+		LlmProvider provider,
+		String userId,
+		String sessionId,
+		String prompt,
+		boolean includeTools,
+		LlmToolChoiceMode toolChoiceMode
+	) {
+		String uid = SessionScope.normalizeUserId(userId);
+		String sid = SessionScope.normalizeSessionId(sessionId);
+		String scopedSid = SessionScope.scopedSessionId(uid, sid);
 		int maxIterations = agentProperties.getMaxIterations() > 0 ? agentProperties.getMaxIterations() : 6;
 		long toolTimeoutSeconds = agentProperties.getToolTimeoutSeconds() > 0 ? agentProperties.getToolTimeoutSeconds() : 30;
 
@@ -119,12 +133,12 @@ public class AgentStreamingService {
 					String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, true));
 					OpenAiMessageAdapter adapter = new OpenAiMessageAdapter(objectMapper);
 
-					contextManager.ensureSystemPrompt(sid, configuredSystemPrompt);
-					String systemPrompt = contextManager.getSystemPrompt(sid);
-					persistentMessageStore.ensureSystemPrompt(sid, systemPrompt);
+					contextManager.ensureSystemPrompt(scopedSid, configuredSystemPrompt);
+					String systemPrompt = contextManager.getSystemPrompt(scopedSid);
+					persistentMessageStore.ensureSystemPrompt(scopedSid, systemPrompt);
 
 					List<ChatMessage> localContext = new ArrayList<>();
-					List<ChatMessage> sessionContext = contextManager.getContext(sid);
+					List<ChatMessage> sessionContext = contextManager.getContext(scopedSid);
 					if (sessionContext != null && !sessionContext.isEmpty()) {
 						for (int i = 1; i < sessionContext.size(); i++) {
 							localContext.add(sessionContext.get(i));
@@ -133,8 +147,8 @@ public class AgentStreamingService {
 
 					ChatMessage userMsg = new UserMessage(prompt);
 					localContext.add(userMsg);
-					persistentMessageStore.append(sid, userMsg);
-					contextManager.addMessage(sid, userMsg);
+					persistentMessageStore.append(scopedSid, userMsg);
+					contextManager.addMessage(scopedSid, userMsg);
 
 					boolean finished = false;
 					int iteration = 0;
@@ -144,7 +158,7 @@ public class AgentStreamingService {
 						final int iterationFinal = iteration;
 						boolean isFinalIteration = iteration >= maxIterations;
 
-						localExecutionContextRecorder.record(sid, systemPrompt, localContext, iteration);
+						localExecutionContextRecorder.record(scopedSid, systemPrompt, localContext, iteration);
 
 						ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder()
 							.model(model)
@@ -234,8 +248,8 @@ public class AgentStreamingService {
 						if (!assistantFinal.isEmpty()) {
 							AssistantMessage am = new AssistantMessage(assistantFinal);
 							localContext.add(am);
-							persistentMessageStore.append(sid, am);
-							contextManager.addMessage(sid, am);
+							persistentMessageStore.append(scopedSid, am);
+							contextManager.addMessage(scopedSid, am);
 						}
 
 						if (isFinalIteration) {
@@ -253,7 +267,7 @@ public class AgentStreamingService {
 								originModelRef.get(),
 								iterationFinal,
 								sink,
-								sid,
+								scopedSid,
 								inlineThinkingEmitted.get()
 							);
 							sink.next(LlmStreamEvent.done(finishReason != null ? finishReason : "stop", null));
@@ -263,8 +277,8 @@ public class AgentStreamingService {
 
 						ToolCallMessage tcm = new ToolCallMessage(toolCalls);
 						localContext.add(tcm);
-						persistentMessageStore.append(sid, tcm);
-						contextManager.addMessage(sid, tcm);
+						persistentMessageStore.append(scopedSid, tcm);
+						contextManager.addMessage(scopedSid, tcm);
 
 						for (LlmToolCall call : toolCalls) {
 							if (call == null) {
@@ -287,7 +301,7 @@ public class AgentStreamingService {
 											String err = "Error: 参数解析失败。请检查并重新调用工具。细节: " + String.join("; ", vr.getErrors());
 											return ToolResult.error(err);
 										}
-										return t.execute(toolArgs, new ToolExecutionContext(toolCallId))
+										return t.execute(toolArgs, new ToolExecutionContext(toolCallId, uid, sid))
 											.block(Duration.ofSeconds(toolTimeoutSeconds));
 									})
 									.orElse(ToolResult.error("Tool not found: " + toolName));
@@ -308,7 +322,7 @@ public class AgentStreamingService {
 											originModelRef.get(),
 											iterationFinal
 										));
-										recordThinkingMessage(sid, thought);
+										recordThinkingMessage(scopedSid, thought);
 										hasToolThinking = true;
 									}
 								}
@@ -321,8 +335,8 @@ public class AgentStreamingService {
 								toolResult.getError()
 							);
 							localContext.add(trm);
-							persistentMessageStore.append(sid, trm);
-							contextManager.addMessage(sid, trm);
+							persistentMessageStore.append(scopedSid, trm);
+							contextManager.addMessage(scopedSid, trm);
 						}
 
 						if (!hasToolThinking) {
@@ -334,7 +348,7 @@ public class AgentStreamingService {
 								originModelRef.get(),
 								iterationFinal,
 								sink,
-								sid,
+								scopedSid,
 								inlineThinkingEmitted.get()
 							);
 						}

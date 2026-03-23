@@ -8,6 +8,7 @@ import com.agenticrag.app.tool.ToolExecutionContext;
 import com.agenticrag.app.tool.ToolDefinition;
 import com.agenticrag.app.tool.ToolResult;
 import com.agenticrag.app.tool.ToolRouter;
+import com.agenticrag.app.session.SessionScope;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
 import java.util.UUID;
@@ -48,11 +49,14 @@ public class ToolController {
 
 	@PostMapping(value = "/execute", produces = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<ToolResult> execute(
+		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "sessionId", defaultValue = "default") String sessionId,
 		@RequestBody ExecuteToolRequest request
 	) {
-		ToolExecutionContext context = new ToolExecutionContext(UUID.randomUUID().toString());
-		String sid = sessionId == null || sessionId.trim().isEmpty() ? "default" : sessionId.trim();
+		String uid = SessionScope.normalizeUserId(userId);
+		String sid = SessionScope.normalizeSessionId(sessionId);
+		String scopedSid = SessionScope.scopedSessionId(uid, sid);
+		ToolExecutionContext context = new ToolExecutionContext(UUID.randomUUID().toString(), uid, sid);
 		return toolRouter.getTool(request.getName())
 			.map(t -> {
 				ToolArgumentValidator.ValidationResult vr = toolArgumentValidator.validate(t.parametersSchema(), request.getArguments());
@@ -60,8 +64,8 @@ public class ToolController {
 					String err = "Error: 参数解析失败。请检查并重新调用工具。细节: " + String.join("; ", vr.getErrors());
 					ToolResult tr = ToolResult.error(err);
 					ToolResultMessage msg = new ToolResultMessage(request.getName(), request.getToolCallId(), false, null, tr.getError());
-					persistentMessageStore.append(sid, msg);
-					contextManager.addMessage(sid, msg);
+					persistentMessageStore.append(scopedSid, msg);
+					contextManager.addMessage(scopedSid, msg);
 					return Mono.just(tr);
 				}
 
@@ -73,8 +77,8 @@ public class ToolController {
 						result.getOutput(),
 						result.getError()
 					);
-					persistentMessageStore.append(sid, msg);
-					contextManager.addMessage(sid, msg);
+					persistentMessageStore.append(scopedSid, msg);
+					contextManager.addMessage(scopedSid, msg);
 				});
 			})
 			.orElseGet(() -> Mono.just(ToolResult.error("Tool not found: " + request.getName())))

@@ -94,7 +94,7 @@ class AgentStreamingServiceTest {
 		Assertions.assertEquals("done", events.get(events.size() - 1).getType());
 
 		boolean hasFinalAnswer = false;
-		for (ChatMessage msg : contextManager.getContext("s1")) {
+		for (ChatMessage msg : contextManager.getContext("anonymous::s1")) {
 			if (msg instanceof com.agenticrag.app.chat.message.AssistantMessage) {
 				com.agenticrag.app.chat.message.AssistantMessage am = (com.agenticrag.app.chat.message.AssistantMessage) msg;
 				if ("42".equals(am.getContent())) {

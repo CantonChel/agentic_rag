@@ -12,6 +12,7 @@ import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.chat.message.SystemMessage;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
+import com.agenticrag.app.session.SessionScope;
 import com.agenticrag.app.tool.ToolDefinition;
 import com.agenticrag.app.tool.ToolRouter;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -81,15 +82,26 @@ public class StreamingChatService {
 	}
 
 	public Flux<LlmStreamEvent> stream(LlmProvider provider, String prompt, boolean includeTools) {
-		return stream(provider, "default", prompt, includeTools, LlmToolChoiceMode.AUTO);
+		return stream(provider, "anonymous", "default", prompt, includeTools, LlmToolChoiceMode.AUTO);
 	}
 
 	public Flux<LlmStreamEvent> stream(LlmProvider provider, String prompt, boolean includeTools, LlmToolChoiceMode toolChoiceMode) {
-		return stream(provider, "default", prompt, includeTools, toolChoiceMode);
+		return stream(provider, "anonymous", "default", prompt, includeTools, toolChoiceMode);
 	}
 
 	public Flux<LlmStreamEvent> stream(
 		LlmProvider provider,
+		String sessionId,
+		String prompt,
+		boolean includeTools,
+		LlmToolChoiceMode toolChoiceMode
+	) {
+		return stream(provider, "anonymous", sessionId, prompt, includeTools, toolChoiceMode);
+	}
+
+	public Flux<LlmStreamEvent> stream(
+		LlmProvider provider,
+		String userId,
 		String sessionId,
 		String prompt,
 		boolean includeTools,
@@ -108,15 +120,17 @@ public class StreamingChatService {
 				String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
 				AtomicReference<String> originModelRef = new AtomicReference<>(model);
 
-				String sid = sessionId == null || sessionId.trim().isEmpty() ? "default" : sessionId.trim();
+				String uid = SessionScope.normalizeUserId(userId);
+				String sid = SessionScope.normalizeSessionId(sessionId);
+				String scopedSid = SessionScope.scopedSessionId(uid, sid);
 				String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, true));
-				contextManager.ensureSystemPrompt(sid, configuredSystemPrompt);
-				String systemPrompt = contextManager.getSystemPrompt(sid);
-				persistentMessageStore.ensureSystemPrompt(sid, systemPrompt);
+				contextManager.ensureSystemPrompt(scopedSid, configuredSystemPrompt);
+				String systemPrompt = contextManager.getSystemPrompt(scopedSid);
+				persistentMessageStore.ensureSystemPrompt(scopedSid, systemPrompt);
 				OpenAiMessageAdapter adapter = new OpenAiMessageAdapter(objectMapper);
 
 				List<com.agenticrag.app.chat.message.ChatMessage> local = new ArrayList<>();
-				List<com.agenticrag.app.chat.message.ChatMessage> sessionContext = contextManager.getContext(sid);
+				List<com.agenticrag.app.chat.message.ChatMessage> sessionContext = contextManager.getContext(scopedSid);
 				if (sessionContext != null && !sessionContext.isEmpty()) {
 					for (int i = 1; i < sessionContext.size(); i++) {
 						local.add(sessionContext.get(i));
@@ -124,8 +138,8 @@ public class StreamingChatService {
 				}
 				UserMessage user = new UserMessage(prompt);
 				local.add(user);
-				persistentMessageStore.append(sid, user);
-				contextManager.addMessage(sid, user);
+				persistentMessageStore.append(scopedSid, user);
+				contextManager.addMessage(scopedSid, user);
 
 				ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder()
 					.model(model)
@@ -191,28 +205,28 @@ public class StreamingChatService {
 								String assistantFinal = assistantContent.toString().trim();
 								if (!assistantFinal.isEmpty()) {
 									AssistantMessage am = new AssistantMessage(assistantFinal);
-									persistentMessageStore.append(sid, am);
-									contextManager.addMessage(sid, am);
+									persistentMessageStore.append(scopedSid, am);
+									contextManager.addMessage(scopedSid, am);
 								}
 								if (toolCalls != null && !toolCalls.isEmpty()) {
 									ToolCallMessage tcm = new ToolCallMessage(toolCalls);
-									persistentMessageStore.append(sid, tcm);
-									contextManager.addMessage(sid, tcm);
+									persistentMessageStore.append(scopedSid, tcm);
+									contextManager.addMessage(scopedSid, tcm);
 								}
 								String reasoning = reasoningBuffer.toString().trim();
 								if (!reasoning.isEmpty()) {
 									sink.next(LlmStreamEvent.thinking(reasoning, "reasoning_field", originModelRef.get(), 1));
-									recordThinkingMessage(sid, reasoning);
+									recordThinkingMessage(scopedSid, reasoning);
 								} else {
 									String inlineThinking = inlineThinkBuffer.toString().trim();
 									if (!inlineThinking.isEmpty()) {
 										if (!inlineThinkingEmitted.get()) {
 											sink.next(LlmStreamEvent.thinking(inlineThinking, "assistant_content", originModelRef.get(), 1));
 										}
-										recordThinkingMessage(sid, inlineThinking);
+										recordThinkingMessage(scopedSid, inlineThinking);
 									} else if (looksLikeStepByStep(assistantFinal)) {
 										sink.next(LlmStreamEvent.thinking(assistantFinal, "assistant_content", originModelRef.get(), 1));
-										recordThinkingMessage(sid, assistantFinal);
+										recordThinkingMessage(scopedSid, assistantFinal);
 									}
 								}
 								sink.next(LlmStreamEvent.done(finishReason, toolCalls));

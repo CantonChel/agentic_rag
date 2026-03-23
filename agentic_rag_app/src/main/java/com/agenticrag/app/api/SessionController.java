@@ -8,6 +8,7 @@ import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.chat.store.StoredMessageEntity;
 import com.agenticrag.app.llm.LlmToolCall;
 import com.agenticrag.app.session.ChatSession;
+import com.agenticrag.app.session.SessionScope;
 import com.agenticrag.app.session.SessionManager;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -34,38 +35,51 @@ public class SessionController {
 	}
 
 	@PostMapping(produces = MediaType.APPLICATION_JSON_VALUE)
-	public CreateSessionResponse create() {
-		ChatSession session = sessionManager.create();
+	public CreateSessionResponse create(
+		@RequestParam(value = "userId", defaultValue = "anonymous") String userId
+	) {
+		ChatSession session = sessionManager.create(userId);
 		return new CreateSessionResponse(session.getId());
 	}
 
 	@GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
-	public List<CreateSessionResponse> list() {
+	public List<CreateSessionResponse> list(
+		@RequestParam(value = "userId", defaultValue = "anonymous") String userId
+	) {
 		java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>();
-		sessionManager.list().forEach(s -> ids.add(s.getId()));
-		persistentMessageStore.listSessionIds().forEach(ids::add);
+		String uid = SessionScope.normalizeUserId(userId);
+		sessionManager.list(uid).forEach(s -> ids.add(s.getId()));
+		persistentMessageStore.listSessionIds().stream()
+			.filter(scopedId -> uid.equals(SessionScope.userIdFromScopedSessionId(scopedId)))
+			.map(SessionScope::sessionIdFromScopedSessionId)
+			.forEach(ids::add);
 		return ids.stream()
 			.map(CreateSessionResponse::new)
 			.collect(Collectors.toList());
 	}
 
 	@DeleteMapping("/{sessionId}")
-	public void delete(@PathVariable("sessionId") String sessionId) {
-		sessionManager.delete(sessionId);
+	public void delete(
+		@PathVariable("sessionId") String sessionId,
+		@RequestParam(value = "userId", defaultValue = "anonymous") String userId
+	) {
+		sessionManager.delete(userId, sessionId);
 	}
 
 	@GetMapping(value = "/{sessionId}/messages", produces = MediaType.APPLICATION_JSON_VALUE)
 	public List<ChatMessageView> messages(
 		@PathVariable("sessionId") String sessionId,
+		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "contentsOnly", defaultValue = "false") boolean contentsOnly
 	) {
+		String scopedSessionId = SessionScope.scopedSessionId(userId, sessionId);
 		if (contentsOnly) {
-			return contextManager.getContext(sessionId).stream()
+			return contextManager.getContext(scopedSessionId).stream()
 				.map(c -> new ChatMessageView(c.getType().name(), c.getContent(), null, null, null, null, null))
 				.collect(Collectors.toList());
 		}
 
-		return persistentMessageStore.list(sessionId).stream()
+		return persistentMessageStore.list(scopedSessionId).stream()
 			.map(e -> toView(e, persistentMessageStore))
 			.collect(Collectors.toList());
 	}

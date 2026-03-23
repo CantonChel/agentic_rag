@@ -23,24 +23,25 @@ public class AgentController {
 
 	@GetMapping(value = "/openai/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
 	public Flux<ServerSentEvent<LlmStreamEvent>> streamOpenAi(
+		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "sessionId", defaultValue = "default") String sessionId,
 		@RequestParam("prompt") String prompt,
 		@RequestParam(value = "tools", defaultValue = "true") boolean tools,
 		@RequestParam(value = "toolChoice", defaultValue = "AUTO") LlmToolChoiceMode toolChoice
 	) {
-		return agentStreamingService.stream(LlmProvider.OPENAI, sessionId, prompt, tools, toolChoice)
+		return agentStreamingService.stream(LlmProvider.OPENAI, userId, sessionId, prompt, tools, toolChoice)
 			.map(e -> ServerSentEvent.builder(e).event(e.getType()).build());
 	}
 
 	@GetMapping(value = "/minimax/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
 	public Flux<ServerSentEvent<LlmStreamEvent>> streamMinimax(
+		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "sessionId", defaultValue = "default") String sessionId,
 		@RequestParam("prompt") String prompt,
 		@RequestParam(value = "tools", defaultValue = "true") boolean tools,
 		@RequestParam(value = "toolChoice", defaultValue = "AUTO") LlmToolChoiceMode toolChoice
 	) {
-		return agentStreamingService.stream(LlmProvider.MINIMAX, sessionId, prompt, tools, toolChoice)
+		return agentStreamingService.stream(LlmProvider.MINIMAX, userId, sessionId, prompt, tools, toolChoice)
 			.map(e -> ServerSentEvent.builder(e).event(e.getType()).build());
 	}
 }
-
