@@ -31,6 +31,9 @@ public class MemoryRecallService {
 	private final PersistentMessageStore persistentMessageStore;
 	private final Map<String, CachedDocument> cacheByFilePath = new java.util.concurrent.ConcurrentHashMap<>();
 
+	/**
+	 * 构造记忆召回服务，注入配置、向量模型和消息存储。
+	 */
 	public MemoryRecallService(
 		MemoryProperties properties,
 		EmbeddingModel embeddingModel,
@@ -41,6 +44,9 @@ public class MemoryRecallService {
 		this.persistentMessageStore = persistentMessageStore;
 	}
 
+	/**
+	 * 对指定用户执行记忆检索，融合文件记忆与会话记忆并返回 TopK 片段。
+	 */
 	public List<TextChunk> search(String userId, String query, Integer requestedTopK) {
 		if (!properties.isEnabled()) {
 			return new ArrayList<>();
@@ -57,28 +63,48 @@ public class MemoryRecallService {
 			return new ArrayList<>();
 		}
 
+		// 对查询文本做一次向量化，用于后续和每个候选块做余弦相似度。
 		List<Double> queryEmbedding = embedOne(query.trim());
+		// 逐个候选块计算融合分数（向量分 + 关键词分）。
 		for (CandidateChunk candidate : candidates) {
+			// 关键词命中分，刻画“字面相关性”。
 			double lexical = lexicalScore(query, candidate.text);
+			// 默认向量分为 0，只有向量齐全时才计算。
 			double vector = 0.0;
+			// 查询向量和候选向量都存在时，计算余弦相似度。
 			if (queryEmbedding != null && candidate.embedding != null) {
+				// 计算语义相似度分数。
 				vector = CosineSimilarity.cosine(queryEmbedding, candidate.embedding);
 			}
+			// 融合打分：有查询向量时用 0.68*语义 + 0.32*字面，否则仅用字面分。
 			candidate.score = queryEmbedding != null ? (0.68 * vector + 0.32 * lexical) : lexical;
 		}
 
+		// 决定最终返回条数：优先用请求参数，其次配置默认值。
 		int topK = requestedTopK != null && requestedTopK > 0 ? requestedTopK : properties.getTopK();
+		// 决定排序后的候选截断上限，避免后续流式处理过多数据。
 		int topCandidates = properties.getTopKCandidates() > 0 ? properties.getTopKCandidates() : 20;
+		// 用于去重，避免同来源同文本重复返回。
 		Set<String> seen = new HashSet<>();
+		// 按融合分从高到低排序后，按候选上限、去重和最终 topK 依次截断并输出 TextChunk。
 		return candidates.stream()
+			// 先按 score 降序排序，高分优先。
 			.sorted(Comparator.comparingDouble((CandidateChunk c) -> c.score).reversed())
+			// 第一层截断：只保留前 topCandidates 个高分候选。
 			.limit(topCandidates)
+			// 去重：source + text 作为唯一键，只保留第一次出现。
 			.filter(c -> seen.add(c.source + "|" + c.text))
+			// 第二层截断：返回给调用方的最终 TopK。
 			.limit(topK > 0 ? topK : 5)
+			// 转成统一对外结构 TextChunk。
 			.map(this::toTextChunk)
+			// 收集成列表返回。
 			.collect(Collectors.toList());
 	}
 
+	/**
+	 * 将内部候选块转换为统一的 TextChunk 输出结构。
+	 */
 	private TextChunk toTextChunk(CandidateChunk candidate) {
 		Map<String, Object> metadata = new HashMap<>();
 		metadata.put("source", candidate.source);
@@ -91,6 +117,9 @@ public class MemoryRecallService {
 		);
 	}
 
+	/**
+	 * 读取并汇总用户可见的 Markdown 文件候选块。
+	 */
 	private List<CandidateChunk> loadFileCandidates(String userId) {
 		List<Path> files = discoverMemoryFiles(userId);
 		List<CandidateChunk> out = new ArrayList<>();
@@ -100,6 +129,9 @@ public class MemoryRecallService {
 		return out;
 	}
 
+	/**
+	 * 发现可参与检索的文件集合：全局 MEMORY.md + 用户私有 memory 目录。
+	 */
 	private List<Path> discoverMemoryFiles(String userId) {
 		Path root = workspaceRoot();
 		List<Path> files = new ArrayList<>();
@@ -122,6 +154,9 @@ public class MemoryRecallService {
 		return files;
 	}
 
+	/**
+	 * 按文件内容增量加载候选块；命中缓存时直接复用，未命中时重分块并重算向量。
+	 */
 	private List<CandidateChunk> loadOrRefreshFileChunks(Path file) {
 		String abs = file.toAbsolutePath().normalize().toString();
 		String content;
@@ -150,6 +185,9 @@ public class MemoryRecallService {
 		return chunks;
 	}
 
+	/**
+	 * 从当前用户的历史会话消息构建候选块，作为 episodic memory 检索来源。
+	 */
 	private List<CandidateChunk> loadTranscriptCandidates(String userId) {
 		if (!properties.isIncludeTranscripts()) {
 			return new ArrayList<>();
@@ -206,6 +244,9 @@ public class MemoryRecallService {
 		return out;
 	}
 
+	/**
+	 * 按段落优先、超长切片的策略拆分文本块，支持 overlap 保留上下文连续性。
+	 */
 	private List<String> splitIntoChunks(String content) {
 		int maxChars = properties.getMaxChunkChars() > 0 ? properties.getMaxChunkChars() : 800;
 		int overlap = properties.getChunkOverlapChars() > 0 ? properties.getChunkOverlapChars() : 80;
@@ -242,6 +283,9 @@ public class MemoryRecallService {
 		return out;
 	}
 
+	/**
+	 * 对文本列表批量生成向量；发生异常或维度异常时返回空结果以降级。
+	 */
 	private List<List<Double>> embedBatch(List<String> texts) {
 		if (texts == null || texts.isEmpty()) {
 			return new ArrayList<>();
@@ -257,6 +301,9 @@ public class MemoryRecallService {
 		}
 	}
 
+	/**
+	 * 对单条查询文本生成向量；失败时返回 null。
+	 */
 	private List<Double> embedOne(String text) {
 		List<List<Double>> vectors = embedBatch(Collections.singletonList(text));
 		if (vectors.isEmpty()) {
@@ -265,6 +312,9 @@ public class MemoryRecallService {
 		return vectors.get(0);
 	}
 
+	/**
+	 * 安全读取指定下标的向量，越界或空输入时返回 null。
+	 */
 	private List<Double> vectorAt(List<List<Double>> vectors, int idx) {
 		if (vectors == null || idx < 0 || idx >= vectors.size()) {
 			return null;
@@ -272,6 +322,9 @@ public class MemoryRecallService {
 		return vectors.get(idx);
 	}
 
+	/**
+	 * 计算简单关键词命中分数，用于与向量相似度做融合排序。
+	 */
 	private double lexicalScore(String query, String text) {
 		String q = query == null ? "" : query.trim().toLowerCase();
 		String t = text == null ? "" : text.toLowerCase();
@@ -294,6 +347,9 @@ public class MemoryRecallService {
 		return (double) hit / (double) terms.length;
 	}
 
+	/**
+	 * 获取记忆检索使用的工作区根目录。
+	 */
 	private Path workspaceRoot() {
 		String configured = properties.getWorkspaceRoot();
 		if (configured == null || configured.trim().isEmpty()) {
@@ -302,6 +358,9 @@ public class MemoryRecallService {
 		return Paths.get(configured).toAbsolutePath().normalize();
 	}
 
+	/**
+	 * 将绝对路径尽量转换为相对工作区路径，便于展示和去噪。
+	 */
 	private String relPath(Path path) {
 		Path root = workspaceRoot();
 		Path abs = path.toAbsolutePath().normalize();
@@ -312,6 +371,9 @@ public class MemoryRecallService {
 		}
 	}
 
+	/**
+	 * 计算文本 SHA-256，用于文件内容变更判断和缓存失效。
+	 */
 	private String sha256(String text) {
 		try {
 			MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -326,6 +388,9 @@ public class MemoryRecallService {
 		}
 	}
 
+	/**
+	 * 深拷贝候选块列表，避免缓存对象被外部修改。
+	 */
 	private List<CandidateChunk> cloneCandidates(List<CandidateChunk> chunks) {
 		List<CandidateChunk> out = new ArrayList<>();
 		for (CandidateChunk chunk : chunks) {
@@ -338,6 +403,9 @@ public class MemoryRecallService {
 		private final String contentHash;
 		private final List<CandidateChunk> chunks;
 
+		/**
+		 * 保存单个文件的内容指纹和对应候选块缓存。
+		 */
 		private CachedDocument(String contentHash, List<CandidateChunk> chunks) {
 			this.contentHash = contentHash;
 			this.chunks = chunks;
@@ -351,6 +419,9 @@ public class MemoryRecallService {
 		private final List<Double> embedding;
 		private double score;
 
+		/**
+		 * 记忆候选块实体：包含来源、文本、向量与排序分数。
+		 */
 		private CandidateChunk(int index, String source, String text, List<Double> embedding) {
 			this.index = index;
 			this.source = source;

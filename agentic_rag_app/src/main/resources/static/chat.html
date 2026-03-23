@@ -16,6 +16,7 @@
       select, input { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 8px; }
       button { padding: 8px 12px; border: 1px solid #2563eb; background: #2563eb; color: #fff; border-radius: 8px; cursor: pointer; }
       button.secondary { background: #fff; color: #2563eb; }
+      button:disabled { opacity: 0.55; cursor: not-allowed; }
       .chat-box { margin-top: 12px; border: 1px solid #e5e7eb; border-radius: 12px; height: 480px; overflow-y: auto; background: #f9fafb; padding: 12px; }
       .msg { max-width: 80%; padding: 10px 12px; border-radius: 12px; margin: 8px 0; white-space: pre-wrap; line-height: 1.45; }
       .user { margin-left: auto; background: #2563eb; color: #fff; }
@@ -92,10 +93,15 @@
         <div class="tool-box" id="toolBox" style="display: none;">
           <div class="row" style="justify-content: space-between;">
             <strong>当前可用工具</strong>
-            <button class="secondary" id="refreshToolsBtn" style="padding: 6px 10px;">刷新</button>
+            <div class="row">
+              <button class="secondary" id="toggleToolPanelBtn" style="padding: 6px 10px;">展开</button>
+              <button class="secondary" id="refreshToolsBtn" style="padding: 6px 10px;">刷新</button>
+            </div>
           </div>
-          <div class="muted" id="toolHint">仅在 agent + tools 开启时展示</div>
-          <ul class="tool-list" id="toolList"></ul>
+          <div id="toolContentWrap" style="display: none;">
+            <div class="muted" id="toolHint">仅在 agent + tools 开启时展示</div>
+            <ul class="tool-list" id="toolList"></ul>
+          </div>
         </div>
 
         <div class="input-row">
@@ -125,10 +131,14 @@
       const toolList = document.getElementById('toolList');
       const toolHint = document.getElementById('toolHint');
       const refreshToolsBtn = document.getElementById('refreshToolsBtn');
+      const toggleToolPanelBtn = document.getElementById('toggleToolPanelBtn');
+      const toolContentWrap = document.getElementById('toolContentWrap');
       const debugBtn = document.getElementById('debugBtn');
 
       let es = null;
       let currentAssistant = null;
+      let isStreaming = false;
+      let toolsCollapsed = true;
 
       function apiUrl(path) {
         const base = (apiBaseInput.value || '').trim();
@@ -203,6 +213,7 @@
           es.close();
           es = null;
         }
+        setSendingState(false);
       }
 
       function clearChatBox() {
@@ -231,8 +242,41 @@
         }
       }
 
-      async function refreshSessions() {
+      function appendThinkingToMessage(target, text) {
+        if (!target || !text) return;
+        if (target.thinkingTitleEl) {
+          target.thinkingTitleEl.style.display = 'block';
+        }
+        if (!target.thinkingContainer) return;
+        const box = document.createElement('div');
+        box.className = 'thinking-box';
+        const boxContent = document.createElement('div');
+        boxContent.className = 'thinking-content';
+        boxContent.textContent = text || '';
+        box.appendChild(boxContent);
+        target.thinkingContainer.appendChild(box);
+      }
+
+      function setSendingState(sending) {
+        isStreaming = !!sending;
+        if (sendBtn) {
+          sendBtn.disabled = isStreaming;
+        }
+      }
+
+      function setToolsCollapsed(collapsed) {
+        toolsCollapsed = !!collapsed;
+        if (toolContentWrap) {
+          toolContentWrap.style.display = toolsCollapsed ? 'none' : 'block';
+        }
+        if (toggleToolPanelBtn) {
+          toggleToolPanelBtn.textContent = toolsCollapsed ? '展开' : '折叠';
+        }
+      }
+
+      async function refreshSessions(autoLoad = true) {
         if (!historySessionSel) return;
+        const previous = (historySessionSel.value || sessionIdInput.value || '').trim();
         try {
           const query = new URLSearchParams({ userId: currentUserId() });
           const res = await fetch(apiUrl('/api/sessions') + '?' + query.toString());
@@ -240,20 +284,33 @@
           const data = await res.json();
           historySessionSel.innerHTML = '';
           if (Array.isArray(data)) {
+            const ids = [];
             for (const item of data) {
               const opt = document.createElement('option');
               opt.value = item.sessionId || item.id || '';
               opt.textContent = opt.value || 'unknown';
               historySessionSel.appendChild(opt);
+              if (opt.value) ids.push(opt.value);
+            }
+            if (ids.length > 0) {
+              const selected = ids.includes(previous) ? previous : ids[0];
+              historySessionSel.value = selected;
+              sessionIdInput.value = selected;
+              if (autoLoad) {
+                await loadSessionHistoryById(selected);
+              }
+            } else {
+              sessionIdInput.value = '';
+              clearChatBox();
             }
           }
         } catch (_) {
           historySessionSel.innerHTML = '';
+          sessionIdInput.value = '';
         }
       }
 
-      async function loadSessionHistory() {
-        const sid = historySessionSel && historySessionSel.value ? historySessionSel.value : '';
+      async function loadSessionHistoryById(sid) {
         if (!sid) return;
         try {
           const query = new URLSearchParams({ userId: currentUserId() });
@@ -261,15 +318,21 @@
           if (!res.ok) throw new Error('load messages failed: ' + res.status);
           const data = await res.json();
           clearChatBox();
+          let lastAssistantMsg = null;
           if (Array.isArray(data)) {
             for (const msg of data) {
               if (!msg || !msg.type) continue;
               if (msg.type === 'USER') {
                 appendMessage('user', msg.content || '');
+                lastAssistantMsg = null;
               } else if (msg.type === 'ASSISTANT') {
-                appendMessage('assistant', msg.content || '');
+                lastAssistantMsg = appendMessage('assistant', msg.content || '');
               } else if (msg.type === 'THINKING') {
-                appendThinkingOnly(msg.content || '');
+                if (lastAssistantMsg) {
+                  appendThinkingToMessage(lastAssistantMsg, msg.content || '');
+                } else {
+                  appendThinkingOnly(msg.content || '');
+                }
               }
             }
           }
@@ -277,6 +340,11 @@
         } catch (_) {
           // ignore load errors
         }
+      }
+
+      async function loadSessionHistory() {
+        const sid = historySessionSel && historySessionSel.value ? historySessionSel.value : '';
+        await loadSessionHistoryById(sid);
       }
 
       function handleThinkingEvent(data) {
@@ -348,6 +416,7 @@
           return;
         }
         toolBox.style.display = 'block';
+        setToolsCollapsed(true);
         toolHint.textContent = '加载中...';
         toolList.innerHTML = '';
         try {
@@ -372,12 +441,15 @@
       }
 
       function send() {
+        if (isStreaming) return;
         const prompt = (promptInput.value || '').trim();
         if (!prompt) return;
 
         stopStream();
         appendMessage('user', prompt);
         currentAssistant = appendMessage('assistant', '');
+        setSendingState(true);
+        promptInput.value = '';
 
         const provider = providerSel.value;
         const mode = modeSel.value;
@@ -429,23 +501,44 @@
       clearBtn.addEventListener('click', () => { chatBox.innerHTML = ''; });
       refreshSessionsBtn.addEventListener('click', refreshSessions);
       loadSessionBtn.addEventListener('click', loadSessionHistory);
+      historySessionSel.addEventListener('change', loadSessionHistory);
       sendBtn.addEventListener('click', send);
       refreshToolsBtn.addEventListener('click', refreshTools);
-      modeSel.addEventListener('change', refreshTools);
+      toggleToolPanelBtn.addEventListener('click', () => {
+        setToolsCollapsed(!toolsCollapsed);
+      });
+      modeSel.addEventListener('change', () => {
+        if (modeSel.value === 'agent') {
+          providerSel.value = 'minimax';
+        }
+        refreshTools();
+      });
       toolsSel.addEventListener('change', refreshTools);
       debugBtn.addEventListener('click', () => {
         const url = apiUrl('/api/debug/llm');
         window.open(url, '_blank');
       });
       promptInput.addEventListener('keydown', (e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send();
+        if (e.isComposing) return;
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          send();
+        }
       });
       userIdInput.addEventListener('change', async () => {
-        await refreshSessions();
+        stopStream();
+        clearChatBox();
+        sessionIdInput.value = '';
+        await refreshSessions(true);
       });
       userIdInput.value = 'anonymous';
+      setSendingState(false);
+      setToolsCollapsed(true);
+      if (modeSel.value === 'agent') {
+        providerSel.value = 'minimax';
+      }
 
-      createSession();
+      refreshSessions(true);
       refreshTools();
     </script>
   </body>
