@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class PersistentMessageStore {
@@ -64,6 +65,7 @@ public class PersistentMessageStore {
 		return repo.findDistinctSessionIds();
 	}
 
+	@Transactional
 	public void clear(String sessionId) {
 		repo.deleteBySessionId(normalize(sessionId));
 	}

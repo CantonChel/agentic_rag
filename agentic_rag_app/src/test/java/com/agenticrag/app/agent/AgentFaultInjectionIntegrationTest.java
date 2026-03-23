@@ -207,7 +207,7 @@ class AgentFaultInjectionIntegrationTest {
 		Assertions.assertNotNull(events);
 
 		// 检查 session context：SYSTEM 固定在第 0 条，且本轮 user/assistant 能进入会话上下文
-		List<ChatMessage> msgs = contextManager.getContext("s1");
+		List<ChatMessage> msgs = contextManager.getContext("anonymous::s1");
 		Assertions.assertFalse(msgs.isEmpty());
 		Assertions.assertEquals("SYSTEM", msgs.get(0).getType().name());
 		boolean hasUser = false;
