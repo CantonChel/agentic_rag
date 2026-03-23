@@ -3,24 +3,37 @@ package com.agenticrag.app.chat.context;
 import com.agenticrag.app.chat.message.ChatMessage;
 import com.agenticrag.app.chat.message.ChatMessageType;
 import com.agenticrag.app.chat.message.SystemMessage;
+import com.agenticrag.app.memory.MemoryFlushService;
 import com.agenticrag.app.rag.splitter.TokenCounter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
 public class InMemorySessionContextManager implements ContextManager {
 	private final SessionContextProperties props;
 	private final TokenCounter tokenCounter;
+	private final MemoryFlushService memoryFlushService;
 	private final SlidingWindowCompressionStrategy compressionStrategy = new SlidingWindowCompressionStrategy();
 	private final Map<String, List<ChatMessage>> contextsBySessionId = new ConcurrentHashMap<>();
 
 	public InMemorySessionContextManager(SessionContextProperties props, TokenCounter tokenCounter) {
+		this(props, tokenCounter, null);
+	}
+
+	@Autowired
+	public InMemorySessionContextManager(
+		SessionContextProperties props,
+		TokenCounter tokenCounter,
+		MemoryFlushService memoryFlushService
+	) {
 		this.props = props;
 		this.tokenCounter = tokenCounter;
+		this.memoryFlushService = memoryFlushService;
 	}
 
 	@Override
@@ -79,6 +92,9 @@ public class InMemorySessionContextManager implements ContextManager {
 		int tokens = countTokens(list);
 		if (tokens <= maxTokens) {
 			return;
+		}
+		if (memoryFlushService != null) {
+			memoryFlushService.flushPreCompaction(sid, list);
 		}
 
 		List<ChatMessage> compressed = compressionStrategy.compress(list, props != null ? props.getKeepLastMessages() : 20);

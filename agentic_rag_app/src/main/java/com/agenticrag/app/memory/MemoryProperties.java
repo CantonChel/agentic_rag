@@ -9,6 +9,9 @@ public class MemoryProperties {
 	private String userMemoryBaseDir = "memory/users";
 	private boolean includeTranscripts = true;
 	private int transcriptMaxMessagesPerSession = 30;
+	private boolean flushEnabled = true;
+	private boolean preCompactionFlushEnabled = true;
+	private int flushRecentMessages = 12;
 	private int maxChunkChars = 800;
 	private int chunkOverlapChars = 80;
 	private int topKCandidates = 20;
@@ -52,6 +55,30 @@ public class MemoryProperties {
 
 	public void setTranscriptMaxMessagesPerSession(int transcriptMaxMessagesPerSession) {
 		this.transcriptMaxMessagesPerSession = transcriptMaxMessagesPerSession;
+	}
+
+	public boolean isFlushEnabled() {
+		return flushEnabled;
+	}
+
+	public void setFlushEnabled(boolean flushEnabled) {
+		this.flushEnabled = flushEnabled;
+	}
+
+	public boolean isPreCompactionFlushEnabled() {
+		return preCompactionFlushEnabled;
+	}
+
+	public void setPreCompactionFlushEnabled(boolean preCompactionFlushEnabled) {
+		this.preCompactionFlushEnabled = preCompactionFlushEnabled;
+	}
+
+	public int getFlushRecentMessages() {
+		return flushRecentMessages;
+	}
+
+	public void setFlushRecentMessages(int flushRecentMessages) {
+		this.flushRecentMessages = flushRecentMessages;
 	}
 
 	public int getMaxChunkChars() {

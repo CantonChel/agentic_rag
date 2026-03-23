@@ -2,10 +2,12 @@ package com.agenticrag.app.chat.context;
 
 import com.agenticrag.app.chat.message.ChatMessage;
 import com.agenticrag.app.chat.message.UserMessage;
+import com.agenticrag.app.memory.MemoryFlushService;
 import com.agenticrag.app.rag.splitter.TokenCounter;
 import java.util.List;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 class InMemorySessionContextManagerOverflowTest {
 	@Test
@@ -37,5 +39,23 @@ class InMemorySessionContextManagerOverflowTest {
 		}
 		return sb.toString();
 	}
-}
 
+	@Test
+	void triggersPreCompactionFlushBeforeCompression() {
+		SessionContextProperties props = new SessionContextProperties();
+		props.setMaxTokens(120);
+		props.setKeepLastMessages(3);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
+		InMemorySessionContextManager mgr = new InMemorySessionContextManager(props, tokenCounter, memoryFlushService);
+
+		String sid = "u1::s1";
+		mgr.ensureSystemPrompt(sid, "SYSTEM_PROMPT");
+		for (int i = 0; i < 20; i++) {
+			mgr.addMessage(sid, new UserMessage("m" + i + ":" + repeat("x", 30)));
+		}
+
+		Mockito.verify(memoryFlushService, Mockito.atLeastOnce())
+			.flushPreCompaction(Mockito.eq(sid), Mockito.anyList());
+	}
+}
