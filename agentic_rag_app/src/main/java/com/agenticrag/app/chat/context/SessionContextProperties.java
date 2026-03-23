@@ -5,6 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "context.session")
 public class SessionContextProperties {
 	private int maxTokens = 20000;
+	private int maxBytes = 0;
 	private int keepLastMessages = 20;
 
 	public int getMaxTokens() {
@@ -15,6 +16,14 @@ public class SessionContextProperties {
 		this.maxTokens = maxTokens;
 	}
 
+	public int getMaxBytes() {
+		return maxBytes;
+	}
+
+	public void setMaxBytes(int maxBytes) {
+		this.maxBytes = maxBytes;
+	}
+
 	public int getKeepLastMessages() {
 		return keepLastMessages;
 	}
@@ -23,4 +32,3 @@ public class SessionContextProperties {
 		this.keepLastMessages = keepLastMessages;
 	}
 }
-

@@ -13,6 +13,12 @@ public class MemoryProperties {
 	private boolean preCompactionFlushEnabled = true;
 	private boolean sessionResetFlushEnabled = true;
 	private int flushRecentMessages = 12;
+	private String flushProvider = "minimax";
+	private String flushModel = "";
+	private int flushMaxCompletionTokens = 700;
+	private int flushInputMaxChars = 6000;
+	private int sessionSnapshotRecentMessages = 15;
+	private int slugMaxLength = 64;
 	private int maxChunkChars = 800;
 	private int chunkOverlapChars = 80;
 	private int topKCandidates = 20;
@@ -88,6 +94,54 @@ public class MemoryProperties {
 
 	public void setFlushRecentMessages(int flushRecentMessages) {
 		this.flushRecentMessages = flushRecentMessages;
+	}
+
+	public String getFlushProvider() {
+		return flushProvider;
+	}
+
+	public void setFlushProvider(String flushProvider) {
+		this.flushProvider = flushProvider;
+	}
+
+	public String getFlushModel() {
+		return flushModel;
+	}
+
+	public void setFlushModel(String flushModel) {
+		this.flushModel = flushModel;
+	}
+
+	public int getFlushMaxCompletionTokens() {
+		return flushMaxCompletionTokens;
+	}
+
+	public void setFlushMaxCompletionTokens(int flushMaxCompletionTokens) {
+		this.flushMaxCompletionTokens = flushMaxCompletionTokens;
+	}
+
+	public int getFlushInputMaxChars() {
+		return flushInputMaxChars;
+	}
+
+	public void setFlushInputMaxChars(int flushInputMaxChars) {
+		this.flushInputMaxChars = flushInputMaxChars;
+	}
+
+	public int getSessionSnapshotRecentMessages() {
+		return sessionSnapshotRecentMessages;
+	}
+
+	public void setSessionSnapshotRecentMessages(int sessionSnapshotRecentMessages) {
+		this.sessionSnapshotRecentMessages = sessionSnapshotRecentMessages;
+	}
+
+	public int getSlugMaxLength() {
+		return slugMaxLength;
+	}
+
+	public void setSlugMaxLength(int slugMaxLength) {
+		this.slugMaxLength = slugMaxLength;
 	}
 
 	public int getMaxChunkChars() {
