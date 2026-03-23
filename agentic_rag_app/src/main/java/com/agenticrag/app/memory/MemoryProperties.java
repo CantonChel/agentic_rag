@@ -11,6 +11,7 @@ public class MemoryProperties {
 	private int transcriptMaxMessagesPerSession = 30;
 	private boolean flushEnabled = true;
 	private boolean preCompactionFlushEnabled = true;
+	private boolean sessionResetFlushEnabled = true;
 	private int flushRecentMessages = 12;
 	private int maxChunkChars = 800;
 	private int chunkOverlapChars = 80;
@@ -71,6 +72,14 @@ public class MemoryProperties {
 
 	public void setPreCompactionFlushEnabled(boolean preCompactionFlushEnabled) {
 		this.preCompactionFlushEnabled = preCompactionFlushEnabled;
+	}
+
+	public boolean isSessionResetFlushEnabled() {
+		return sessionResetFlushEnabled;
+	}
+
+	public void setSessionResetFlushEnabled(boolean sessionResetFlushEnabled) {
+		this.sessionResetFlushEnabled = sessionResetFlushEnabled;
 	}
 
 	public int getFlushRecentMessages() {
