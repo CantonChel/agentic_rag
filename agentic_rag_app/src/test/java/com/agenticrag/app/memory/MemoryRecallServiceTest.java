@@ -63,6 +63,22 @@ class MemoryRecallServiceTest {
 		Assertions.assertFalse(result.stream().anyMatch(c -> sourceOf(c).contains("session:s2")));
 	}
 
+	@Test
+	void defaultShouldNotSearchTranscriptsUnlessEnabled() {
+		MemoryProperties props = new MemoryProperties();
+		props.setWorkspaceRoot(tempDir.toString());
+		// keep default includeTranscripts=false
+
+		PersistentMessageStore store = Mockito.mock(PersistentMessageStore.class);
+		Mockito.when(store.listSessionIds()).thenReturn(Arrays.asList("u1::s1"));
+		Mockito.when(store.list("u1::s1")).thenReturn(Arrays.asList(msg("USER", "deadline Friday for release")));
+
+		MemoryRecallService service = new MemoryRecallService(props, new FakeEmbeddingModel(), store);
+		List<TextChunk> result = service.search("u1", "deadline", 5);
+
+		Assertions.assertTrue(result.isEmpty());
+	}
+
 	private String sourceOf(TextChunk chunk) {
 		Object source = chunk.getMetadata() != null ? chunk.getMetadata().get("source") : null;
 		return source != null ? source.toString() : "";

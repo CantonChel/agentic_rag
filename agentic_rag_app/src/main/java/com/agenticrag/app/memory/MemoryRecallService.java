@@ -77,7 +77,8 @@ public class MemoryRecallService {
 				vector = CosineSimilarity.cosine(queryEmbedding, candidate.embedding);
 			}
 			// 融合打分：有查询向量时用 0.68*语义 + 0.32*字面，否则仅用字面分。
-			candidate.score = queryEmbedding != null ? (0.68 * vector + 0.32 * lexical) : lexical;
+			double base = queryEmbedding != null ? (0.68 * vector + 0.32 * lexical) : lexical;
+			candidate.score = base + candidate.sourceBoost;
 		}
 
 		// 决定最终返回条数：优先用请求参数，其次配置默认值。
@@ -179,7 +180,7 @@ public class MemoryRecallService {
 		List<CandidateChunk> chunks = new ArrayList<>();
 		String rel = relPath(file);
 		for (int i = 0; i < parts.size(); i++) {
-			chunks.add(new CandidateChunk(i, rel + "#chunk-" + (i + 1), parts.get(i), vectorAt(vectors, i)));
+			chunks.add(new CandidateChunk(i, rel + "#chunk-" + (i + 1), parts.get(i), vectorAt(vectors, i), 0.05));
 		}
 		cacheByFilePath.put(abs, new CachedDocument(hash, cloneCandidates(chunks)));
 		return chunks;
@@ -237,7 +238,8 @@ public class MemoryRecallService {
 					i,
 					"session:" + rawSessionId + "#chunk-" + (i + 1),
 					chunks.get(i),
-					vectorAt(vectors, i)
+					vectorAt(vectors, i),
+					-0.05
 				));
 			}
 		}
@@ -394,7 +396,7 @@ public class MemoryRecallService {
 	private List<CandidateChunk> cloneCandidates(List<CandidateChunk> chunks) {
 		List<CandidateChunk> out = new ArrayList<>();
 		for (CandidateChunk chunk : chunks) {
-			out.add(new CandidateChunk(chunk.index, chunk.source, chunk.text, chunk.embedding));
+			out.add(new CandidateChunk(chunk.index, chunk.source, chunk.text, chunk.embedding, chunk.sourceBoost));
 		}
 		return out;
 	}
@@ -417,16 +419,18 @@ public class MemoryRecallService {
 		private final String source;
 		private final String text;
 		private final List<Double> embedding;
+		private final double sourceBoost;
 		private double score;
 
 		/**
 		 * 记忆候选块实体：包含来源、文本、向量与排序分数。
 		 */
-		private CandidateChunk(int index, String source, String text, List<Double> embedding) {
+		private CandidateChunk(int index, String source, String text, List<Double> embedding, double sourceBoost) {
 			this.index = index;
 			this.source = source;
 			this.text = text;
 			this.embedding = embedding;
+			this.sourceBoost = sourceBoost;
 		}
 	}
 }

@@ -7,7 +7,7 @@ public class MemoryProperties {
 	private boolean enabled = true;
 	private String workspaceRoot = "..";
 	private String userMemoryBaseDir = "memory/users";
-	private boolean includeTranscripts = true;
+	private boolean includeTranscripts = false;
 	private int transcriptMaxMessagesPerSession = 30;
 	private boolean flushEnabled = true;
 	private boolean preCompactionFlushEnabled = true;
