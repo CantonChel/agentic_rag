@@ -5,6 +5,7 @@ import unittest
 from unittest import mock
 
 from parser import _build_markdown_with_image_mapping
+from parser import _compose_markdown_pages_with_images
 from parser import _extract_markdown_data_uri_images
 from parser import _extract_text
 from parser import parse_to_chunks
@@ -91,6 +92,22 @@ class ParserDocxTest(unittest.TestCase):
         self.assertIn("段落1", markdown)
         self.assertIn("![](images/demo.png)", markdown)
         self.assertIn("段落2", markdown)
+
+    def test_compose_markdown_pages_with_images(self) -> None:
+        markdown, refs = _compose_markdown_pages_with_images(
+            ["p1 text", "p2 text"],
+            [[(b"img1", "png")], [(b"img2", "jpg"), (b"img3", "png")]],
+        )
+        self.assertEqual(3, len(refs))
+        self.assertIn("p1 text", markdown)
+        self.assertIn("p2 text", markdown)
+        self.assertGreaterEqual(markdown.count("![](images/"), 3)
+
+    def test_compose_markdown_pages_without_images(self) -> None:
+        markdown, refs = _compose_markdown_pages_with_images(["a", "b"], [])
+        self.assertEqual([], refs)
+        self.assertIn("a", markdown)
+        self.assertIn("b", markdown)
 
 
 if __name__ == "__main__":

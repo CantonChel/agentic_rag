@@ -63,6 +63,16 @@ def _extract_pdf_text_pymupdf(pdf_bytes: bytes) -> str:
     return "\n".join(text_parts).strip()
 
 
+def _extract_pdf_page_texts_pymupdf(pdf_bytes: bytes) -> List[str]:
+    import fitz  # type: ignore
+
+    pages: List[str] = []
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        for page in doc:
+            pages.append((page.get_text("text") or "").strip())
+    return pages
+
+
 def _extract_pdf_text_pdfplumber(pdf_bytes: bytes) -> str:
     import io
     import pdfplumber  # type: ignore
@@ -228,6 +238,74 @@ def _extract_pdf_markdown(pdf_bytes: bytes) -> str:
             return _extract_pdf_text_pdfplumber(pdf_bytes)
         except Exception as exc:
             raise ParseError("corrupted_file", f"pdf parse failed: {exc}")
+
+
+def _extract_pdf_page_images_pymupdf(pdf_bytes: bytes) -> List[List[Tuple[bytes, str]]]:
+    import fitz  # type: ignore
+
+    pages: List[List[Tuple[bytes, str]]] = []
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        for page in doc:
+            image_items: List[Tuple[bytes, str]] = []
+            images = page.get_images(full=True)
+            for img in images:
+                try:
+                    xref = img[0]
+                    extracted = doc.extract_image(xref)
+                    payload = extracted.get("image")
+                    if not payload:
+                        continue
+                    ext = str(extracted.get("ext") or "png").lower()
+                    image_items.append((payload, ext))
+                except Exception:
+                    continue
+            pages.append(image_items)
+    return pages
+
+
+def _compose_markdown_pages_with_images(
+    page_texts: List[str],
+    page_images: List[List[Tuple[bytes, str]]],
+) -> Tuple[str, List[Tuple[str, bytes, str]]]:
+    refs: List[Tuple[str, bytes, str]] = []
+    if not page_images:
+        return "\n\n\f\n\n".join((t or "").strip() for t in page_texts if (t or "").strip()), refs
+
+    max_pages = max(len(page_texts), len(page_images))
+    if max_pages <= 0:
+        max_pages = 1
+
+    merged_pages: List[str] = []
+    for page_idx in range(max_pages):
+        text = (page_texts[page_idx] if page_idx < len(page_texts) else "") or ""
+        images = page_images[page_idx] if page_idx < len(page_images) else []
+        blocks: List[str] = []
+        if text.strip():
+            blocks.append(text.strip())
+        for payload, ext in images:
+            image_ref = f"images/{uuid.uuid4().hex}.{ext}"
+            refs.append((image_ref, payload, ext))
+            blocks.append(f"![]({image_ref})")
+        page_md = "\n\n".join(blocks).strip()
+        if page_md:
+            merged_pages.append(page_md)
+    return "\n\n\f\n\n".join(merged_pages), refs
+
+
+def _inject_pdf_fallback_images(markdown: str, pdf_bytes: bytes) -> Tuple[str, List[Tuple[str, bytes, str]]]:
+    page_images = _extract_pdf_page_images_pymupdf(pdf_bytes)
+    has_any_image = any(items for items in page_images)
+    if not has_any_image:
+        return markdown, []
+
+    page_texts = [seg.strip() for seg in (markdown or "").split("\f")]
+    if len(page_texts) < len(page_images):
+        page_texts = _extract_pdf_page_texts_pymupdf(pdf_bytes)
+
+    composed, refs = _compose_markdown_pages_with_images(page_texts, page_images)
+    if composed.strip():
+        return composed, refs
+    return markdown, refs
 
 
 def _extract_text(source_bytes: bytes, ext: str) -> str:
@@ -408,6 +486,8 @@ async def parse_to_chunks(job_id: str, file_url: str, options: dict) -> List[Chu
         text = await asyncio.to_thread(_extract_text, source_bytes, ext)
         if ext == ".pdf":
             text, inline_images = await asyncio.to_thread(_extract_markdown_data_uri_images, text)
+            if not inline_images:
+                text, inline_images = await asyncio.to_thread(_inject_pdf_fallback_images, text, source_bytes)
 
     if not text.strip():
         raise ParseError("corrupted_file", "empty extracted text")
