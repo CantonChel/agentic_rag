@@ -428,12 +428,7 @@ fi
 # 启动 docreader（Python 文档解析服务）
 # ----------------------------------------------------------------------------
 echo "Starting docreader_service (port ${DOCREADER_PORT})"
-<<<<<<< HEAD
-
-# 确保依赖已安装
-=======
 echo "==> docreader python: ${DOCREADER_PYTHON_BIN}"
->>>>>>> 181ac3a (Add docx upload support with markitdown parser)
 ensure_docreader_dependency
 
 # 使用子 shell ( ) 启动服务，避免污染当前 shell 的环境变量
@@ -446,15 +441,11 @@ ensure_docreader_dependency
   export MINIO_SECRET_KEY="${MINIO_SECRET_KEY}"
   export MINIO_BUCKET="${MINIO_BUCKET}"
   export MINIO_SECURE="${MINIO_SECURE}"
-<<<<<<< HEAD
   
   # 使用 uvicorn 启动 FastAPI 应用
   # main:app 表示 main.py 文件中的 app 对象
   # --host 0.0.0.0 允许外部访问
-  nohup /usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port "${DOCREADER_PORT}" > "${LOG_DIR}/docreader.log" 2>&1 &
-=======
   nohup "${DOCREADER_PYTHON_BIN}" -m uvicorn main:app --host 0.0.0.0 --port "${DOCREADER_PORT}" > "${LOG_DIR}/docreader.log" 2>&1 &
->>>>>>> 181ac3a (Add docx upload support with markitdown parser)
 )
 
 # ----------------------------------------------------------------------------
