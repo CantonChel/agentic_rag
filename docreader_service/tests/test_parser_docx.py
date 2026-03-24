@@ -68,6 +68,21 @@ class ParserDocxTest(unittest.TestCase):
         self.assertEqual(b"hello", refs[0][1])
         self.assertEqual("png", refs[0][2])
 
+    def test_extract_markdown_data_uri_images_with_angle_brackets(self) -> None:
+        source = "![cap](<data:image/jpeg;base64,aGVsbG8=>)"
+        replaced, refs = _extract_markdown_data_uri_images(source)
+        self.assertIn("images/", replaced)
+        self.assertEqual(1, len(refs))
+        self.assertEqual("jpeg", refs[0][2])
+
+    def test_extract_html_data_uri_images(self) -> None:
+        source = '<p>x</p><img alt="demo" src="data:image/webp;base64,aGVsbG8=" /><p>y</p>'
+        replaced, refs = _extract_markdown_data_uri_images(source)
+        self.assertIn("images/", replaced)
+        self.assertEqual(1, len(refs))
+        self.assertEqual(b"hello", refs[0][1])
+        self.assertEqual("webp", refs[0][2])
+
 
 if __name__ == "__main__":
     unittest.main()

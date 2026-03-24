@@ -1,3 +1,4 @@
+import io
 import os
 import tempfile
 from typing import Any
@@ -33,14 +34,30 @@ def convert_file_to_markdown(file_bytes: bytes, file_ext: str, keep_data_uris: b
     except Exception as exc:
         raise RuntimeError(f"markitdown import failed: {exc}")
 
+    converter = MarkItDown()
+    suffix = _normalize_ext(file_ext) or ".bin"
+
+    # Prefer stream + file_extension to align with MarkItDown best practice.
+    try:
+        result = converter.convert(
+            io.BytesIO(file_bytes),
+            file_extension=suffix,
+            keep_data_uris=keep_data_uris,
+        )
+        return _extract_markdown_text(result).strip()
+    except TypeError:
+        # Backward-compatible fallback for older MarkItDown signatures.
+        pass
+    except Exception:
+        # Fall through to tempfile-based compatibility path.
+        pass
+
     temp_path = ""
     try:
-        suffix = _normalize_ext(file_ext) or ".bin"
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp.write(file_bytes)
             temp_path = tmp.name
 
-        converter = MarkItDown()
         try:
             # Keep inline data URI images for pdf/image-rich markdown flow.
             result = converter.convert(temp_path, keep_data_uris=keep_data_uris)
