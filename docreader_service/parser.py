@@ -81,6 +81,135 @@ def _extract_docx_markdown(docx_bytes: bytes) -> str:
         raise ParseError("corrupted_file", f"docx to markdown failed: {exc}")
 
 
+def _local_name(tag: str) -> str:
+    if not tag:
+        return ""
+    if "}" in tag:
+        return tag.rsplit("}", 1)[-1]
+    return tag
+
+
+def _guess_image_ext(content_type: str, part_name: str) -> str:
+    ctype = (content_type or "").lower()
+    name = (part_name or "").lower()
+    if "png" in ctype or name.endswith(".png"):
+        return "png"
+    if "jpeg" in ctype or "jpg" in ctype or name.endswith(".jpeg") or name.endswith(".jpg"):
+        return "jpg"
+    if "webp" in ctype or name.endswith(".webp"):
+        return "webp"
+    if "gif" in ctype or name.endswith(".gif"):
+        return "gif"
+    if "bmp" in ctype or name.endswith(".bmp"):
+        return "bmp"
+    if "tiff" in ctype or "tif" in ctype or name.endswith(".tiff") or name.endswith(".tif"):
+        return "tiff"
+    return "png"
+
+
+def _build_markdown_with_image_mapping(
+    content_sequence: List[Tuple[str, str]],
+    image_replacement_mapping: dict,
+) -> str:
+    if not content_sequence:
+        return ""
+
+    markdown_parts: List[str] = []
+    for item_type, value in content_sequence:
+        if item_type == "text":
+            text = (value or "").strip()
+            if text:
+                markdown_parts.append(text)
+            continue
+        if item_type == "image":
+            marker = (value or "").strip()
+            if marker:
+                markdown_parts.append(f"![]({marker})")
+
+    markdown = "\n\n".join(markdown_parts).strip()
+    if not markdown or not image_replacement_mapping:
+        return markdown
+
+    for marker, image_ref in image_replacement_mapping.items():
+        markdown = markdown.replace(f"({marker})", f"({image_ref})")
+    return markdown
+
+
+def _extract_docx_markdown_and_images(docx_bytes: bytes) -> Tuple[str, List[Tuple[str, bytes, str]]]:
+    try:
+        from docx import Document  # type: ignore
+    except Exception as exc:
+        raise ParseError("corrupted_file", f"python-docx import failed: {exc}")
+
+    try:
+        doc = Document(io.BytesIO(docx_bytes))
+    except Exception as exc:
+        # Keep compatibility with previous behavior on malformed docx.
+        return _extract_docx_markdown(docx_bytes), []
+
+    rel_embed_key = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
+    rel_link_key = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}link"
+
+    content_sequence: List[Tuple[str, str]] = []
+    image_replacement_mapping: dict = {}
+    extracted_images: List[Tuple[str, bytes, str]] = []
+    image_idx = 0
+
+    body = doc.element.body
+    for paragraph in body.iter():
+        if _local_name(getattr(paragraph, "tag", "")) != "p":
+            continue
+
+        paragraph_text_parts: List[str] = []
+        for node in paragraph.iter():
+            node_name = _local_name(getattr(node, "tag", ""))
+            if node_name == "t":
+                if node.text:
+                    paragraph_text_parts.append(node.text)
+                continue
+            if node_name in ("tab",):
+                paragraph_text_parts.append("\t")
+                continue
+            if node_name in ("br", "cr"):
+                paragraph_text_parts.append("\n")
+                continue
+            if node_name != "blip":
+                continue
+
+            rel_id = node.get(rel_embed_key) or node.get(rel_link_key)
+            if not rel_id:
+                continue
+            part = doc.part.related_parts.get(rel_id)
+            payload = getattr(part, "blob", None) if part is not None else None
+            if not payload:
+                continue
+
+            part_name = str(getattr(part, "partname", "") or "")
+            content_type = str(getattr(part, "content_type", "") or "")
+            image_ext = _guess_image_ext(content_type, part_name)
+            image_ref = f"images/{uuid.uuid4().hex}.{image_ext}"
+            marker = f"__DOCX_IMAGE_{image_idx}__"
+            image_idx += 1
+
+            text_before_image = "".join(paragraph_text_parts).strip()
+            if text_before_image:
+                content_sequence.append(("text", text_before_image))
+            paragraph_text_parts = []
+
+            content_sequence.append(("image", marker))
+            image_replacement_mapping[marker] = image_ref
+            extracted_images.append((image_ref, payload, image_ext))
+
+        paragraph_text = "".join(paragraph_text_parts).strip()
+        if paragraph_text:
+            content_sequence.append(("text", paragraph_text))
+
+    markdown = _build_markdown_with_image_mapping(content_sequence, image_replacement_mapping).strip()
+    if not markdown:
+        markdown = _extract_docx_markdown(docx_bytes)
+    return markdown, extracted_images
+
+
 def _extract_pdf_markdown(pdf_bytes: bytes) -> str:
     # Primary path: use MarkItDown and keep inline image data URIs so we can
     # preserve image position in markdown.
@@ -272,10 +401,13 @@ async def parse_to_chunks(job_id: str, file_url: str, options: dict) -> List[Chu
     knowledge_id = _safe_token(str(safe_options.get("knowledge_id") or safe_options.get("knowledgeId") or "unknown"), "unknown")
 
     source_bytes, ext = await asyncio.to_thread(_read_source_bytes, file_url)
-    text = await asyncio.to_thread(_extract_text, source_bytes, ext)
     inline_images: List[Tuple[str, bytes, str]] = []
-    if ext == ".pdf":
-        text, inline_images = await asyncio.to_thread(_extract_markdown_data_uri_images, text)
+    if ext == ".docx":
+        text, inline_images = await asyncio.to_thread(_extract_docx_markdown_and_images, source_bytes)
+    else:
+        text = await asyncio.to_thread(_extract_text, source_bytes, ext)
+        if ext == ".pdf":
+            text, inline_images = await asyncio.to_thread(_extract_markdown_data_uri_images, text)
 
     if not text.strip():
         raise ParseError("corrupted_file", "empty extracted text")
@@ -302,11 +434,15 @@ async def parse_to_chunks(job_id: str, file_url: str, options: dict) -> List[Chu
                 metadata={"source_ext": ext or "unknown", "user_id": user_id},
             )
         )
-    if ext == ".pdf":
+    if ext in (".pdf", ".docx"):
         image_infos = await asyncio.to_thread(_upload_inline_images, job_id, knowledge_id, user_id, inline_images)
         if image_infos:
             if chunks:
-                chunks[0].image_info.extend(image_infos)
+                if ext == ".docx":
+                    for chunk in chunks:
+                        chunk.image_info.extend(image_infos)
+                else:
+                    chunks[0].image_info.extend(image_infos)
             else:
                 chunks.append(
                     ChunkPayload(

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from parser import _build_markdown_with_image_mapping
 from parser import _extract_markdown_data_uri_images
 from parser import _extract_text
 from parser import parse_to_chunks
@@ -82,6 +83,14 @@ class ParserDocxTest(unittest.TestCase):
         self.assertEqual(1, len(refs))
         self.assertEqual(b"hello", refs[0][1])
         self.assertEqual("webp", refs[0][2])
+
+    def test_build_markdown_with_image_mapping(self) -> None:
+        sequence = [("text", "段落1"), ("image", "__DOCX_IMAGE_0__"), ("text", "段落2")]
+        mapping = {"__DOCX_IMAGE_0__": "images/demo.png"}
+        markdown = _build_markdown_with_image_mapping(sequence, mapping)
+        self.assertIn("段落1", markdown)
+        self.assertIn("![](images/demo.png)", markdown)
+        self.assertIn("段落2", markdown)
 
 
 if __name__ == "__main__":
