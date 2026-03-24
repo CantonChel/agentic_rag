@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from parser import _extract_markdown_data_uri_images
 from parser import _extract_text
 from parser import parse_to_chunks
 
@@ -36,6 +37,36 @@ class ParserDocxTest(unittest.TestCase):
         self.assertEqual(".docx", chunks[0].metadata.get("source_ext"))
         self.assertEqual("u-1", chunks[0].metadata.get("user_id"))
         self.assertIn("# h1", chunks[0].content)
+
+    def test_parse_to_chunks_from_local_txt_file_should_not_split_in_docreader(self) -> None:
+        long_text = "A" * 1200
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tmp:
+            tmp.write(long_text.encode("utf-8"))
+            path = tmp.name
+
+        try:
+            chunks = asyncio.run(
+                parse_to_chunks(
+                    job_id="job-txt-1",
+                    file_url=path,
+                    options={"chunk_size": 100, "chunk_overlap": 20, "user_id": "u-2"},
+                )
+            )
+        finally:
+            os.remove(path)
+
+        self.assertEqual(1, len(chunks))
+        self.assertEqual(".txt", chunks[0].metadata.get("source_ext"))
+        self.assertEqual("u-2", chunks[0].metadata.get("user_id"))
+        self.assertEqual(long_text, chunks[0].content)
+
+    def test_extract_markdown_data_uri_images(self) -> None:
+        source = "head\n\n![](data:image/png;base64,aGVsbG8=)\n\ntail"
+        replaced, refs = _extract_markdown_data_uri_images(source)
+        self.assertIn("images/", replaced)
+        self.assertEqual(1, len(refs))
+        self.assertEqual(b"hello", refs[0][1])
+        self.assertEqual("png", refs[0][2])
 
 
 if __name__ == "__main__":

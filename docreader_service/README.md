@@ -8,7 +8,9 @@
 - `GET /healthz`：健康检查。
 - 清洗完成后回调业务端（支持 `HMAC-SHA256` 签名）。
 - 支持解析：`pdf`、`docx`、`txt`、`md`、`csv`、`json`、`html/htm`。
-- `docx` 会通过 `markitdown` 统一转换为 Markdown 后再分块。
+- `docx` 会通过 `markitdown` 统一转换为 Markdown 后在 `docreader` 内分块。
+- 非 `docx` 文件在 `docreader` 端默认返回整篇内容（单 chunk），由 `rag_app` 统一分块。
+- `pdf` 解析会尽量保留 Markdown 中图片原始位置（先占位，再在业务侧替换为存储路径）。
 
 ## 任务输入（`POST /jobs`）
 ```json
@@ -24,6 +26,8 @@
   }
 }
 ```
+
+说明：`chunk_size/chunk_overlap` 目前仅用于 `docx` 在 `docreader` 端的切分。
 
 ## 回调输出（成功）
 ```json
