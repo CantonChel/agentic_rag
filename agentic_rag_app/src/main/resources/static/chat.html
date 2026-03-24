@@ -32,6 +32,7 @@
       .tool-box { margin-top: 10px; padding: 8px; border: 1px dashed #d1d5db; border-radius: 10px; background: #fff; }
       .tool-list { margin: 6px 0 0; padding: 0; list-style: none; }
       .tool-item { padding: 6px 8px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 6px; background: #f9fafb; font-size: 12px; }
+      .memory-content { margin-top: 8px; padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; min-height: 120px; max-height: 280px; overflow-y: auto; white-space: pre-wrap; line-height: 1.45; }
       @media (max-width: 760px) { .chat-box { height: 420px; } .msg { max-width: 92%; } }
     </style>
   </head>
@@ -104,6 +105,21 @@
           </div>
         </div>
 
+        <div class="tool-box" id="memoryBox">
+          <div class="row" style="justify-content: space-between;">
+            <strong>记忆文档</strong>
+            <div class="row">
+              <button class="secondary" id="refreshMemoryBtn" style="padding: 6px 10px;">刷新</button>
+              <button class="secondary" id="openMemoryBtn" style="padding: 6px 10px;">打开</button>
+            </div>
+          </div>
+          <div class="row" style="margin-top: 8px;">
+            <select id="memoryFileSelect" style="min-width: 280px; flex: 1;"></select>
+          </div>
+          <div class="muted" id="memoryMeta">暂无记忆文档</div>
+          <pre id="memoryContent" class="memory-content"></pre>
+        </div>
+
         <div class="input-row">
           <textarea id="promptInput" placeholder="输入问题，例如：用两句话解释 RAG"></textarea>
           <button id="sendBtn">发送</button>
@@ -134,11 +150,17 @@
       const toggleToolPanelBtn = document.getElementById('toggleToolPanelBtn');
       const toolContentWrap = document.getElementById('toolContentWrap');
       const debugBtn = document.getElementById('debugBtn');
+      const refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
+      const openMemoryBtn = document.getElementById('openMemoryBtn');
+      const memoryFileSelect = document.getElementById('memoryFileSelect');
+      const memoryMeta = document.getElementById('memoryMeta');
+      const memoryContent = document.getElementById('memoryContent');
 
       let es = null;
       let currentAssistant = null;
       let isStreaming = false;
       let toolsCollapsed = true;
+      let streamDone = false;
 
       function apiUrl(path) {
         const base = (apiBaseInput.value || '').trim();
@@ -151,6 +173,21 @@
 
       function currentUserId() {
         return (userIdInput && userIdInput.value ? userIdInput.value : '').trim() || 'anonymous';
+      }
+
+      function formatBytes(n) {
+        const v = Number(n || 0);
+        if (!Number.isFinite(v) || v <= 0) return '0 B';
+        if (v < 1024) return v + ' B';
+        if (v < 1024 * 1024) return (v / 1024).toFixed(1) + ' KB';
+        return (v / (1024 * 1024)).toFixed(1) + ' MB';
+      }
+
+      function formatTime(iso) {
+        if (!iso) return '';
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return iso;
+        return d.toLocaleString();
       }
 
       function appendMessage(role, text) {
@@ -310,6 +347,64 @@
         }
       }
 
+      async function refreshMemoryFiles(autoOpen = false) {
+        if (!memoryFileSelect || !memoryMeta || !memoryContent) return;
+        memoryMeta.textContent = '正在加载记忆文件...';
+        memoryContent.textContent = '';
+        memoryFileSelect.innerHTML = '';
+        try {
+          const query = new URLSearchParams({ userId: currentUserId(), includeGlobal: 'true' });
+          const res = await fetch(apiUrl('/api/memory/files') + '?' + query.toString());
+          if (!res.ok) throw new Error('list memory files failed: ' + res.status);
+          const data = await res.json();
+          if (!Array.isArray(data) || data.length === 0) {
+            memoryMeta.textContent = '暂无记忆文档';
+            return;
+          }
+          for (const file of data) {
+            const opt = document.createElement('option');
+            opt.value = file.id || '';
+            const kind = file.kind || 'memory';
+            opt.textContent = (file.path || file.id || 'unknown') + ' [' + kind + ']';
+            memoryFileSelect.appendChild(opt);
+          }
+          memoryMeta.textContent = '已加载 ' + data.length + ' 个记忆文档';
+          if (autoOpen) {
+            await openMemoryFile();
+          }
+        } catch (_) {
+          memoryMeta.textContent = '记忆文件加载失败';
+        }
+      }
+
+      async function openMemoryFile() {
+        if (!memoryFileSelect || !memoryMeta || !memoryContent) return;
+        const id = (memoryFileSelect.value || '').trim();
+        if (!id) {
+          memoryMeta.textContent = '请先选择一个记忆文档';
+          return;
+        }
+        memoryMeta.textContent = '正在读取文档...';
+        memoryContent.textContent = '';
+        try {
+          const query = new URLSearchParams({ userId: currentUserId(), id });
+          const res = await fetch(apiUrl('/api/memory/file') + '?' + query.toString());
+          if (!res.ok) throw new Error('open memory file failed: ' + res.status);
+          const data = await res.json();
+          memoryContent.textContent = data.content || '';
+          memoryMeta.textContent =
+            (data.path || id) +
+            ' · ' +
+            (data.kind || 'memory') +
+            ' · ' +
+            formatBytes(data.size) +
+            ' · ' +
+            formatTime(data.updatedAt);
+        } catch (_) {
+          memoryMeta.textContent = '读取记忆文档失败';
+        }
+      }
+
       async function loadSessionHistoryById(sid) {
         if (!sid) return;
         try {
@@ -404,6 +499,7 @@
         clearChatBox();
         appendMessage('assistant', '已切换到新会话：' + newSessionId);
         refreshSessions(false);
+        refreshMemoryFiles(false);
       }
 
       function handleSseMessage(evt) {
@@ -458,6 +554,11 @@
         if (isStreaming) return;
         const prompt = (promptInput.value || '').trim();
         if (!prompt) return;
+        const encodedPromptLen = encodeURIComponent(prompt).length;
+        if (encodedPromptLen > 12000) {
+          appendMessage('assistant', '[error] 输入过长，当前 SSE 使用 GET 查询参数，URL 超长会被服务端拒绝。请拆分后再发送。');
+          return;
+        }
 
         stopStream();
         appendMessage('user', prompt);
@@ -476,6 +577,7 @@
         const path = basePath + provider + '/stream';
         const query = new URLSearchParams({ userId, sessionId, prompt, tools: String(toolsEnabled) });
         const url = apiUrl(path) + '?' + query.toString();
+        streamDone = false;
 
         es = new EventSource(url);
 
@@ -492,14 +594,22 @@
         });
 
         es.addEventListener('done', () => {
+          streamDone = true;
           stopStream();
         });
 
         es.addEventListener('session_switched', (evt) => {
+          streamDone = true;
           handleSseMessage(evt);
         });
 
         es.addEventListener('error', (evt) => {
+          const hasPayload = evt && typeof evt.data === 'string' && evt.data.trim().length > 0;
+          // Safari/Chrome may emit error event when SSE stream naturally closes.
+          if (!hasPayload && (streamDone || !isStreaming)) {
+            stopStream();
+            return;
+          }
           try {
             const data = JSON.parse(evt.data);
             const msg = data && data.content ? data.content : 'stream error';
@@ -522,6 +632,9 @@
       historySessionSel.addEventListener('change', loadSessionHistory);
       sendBtn.addEventListener('click', send);
       refreshToolsBtn.addEventListener('click', refreshTools);
+      refreshMemoryBtn.addEventListener('click', () => refreshMemoryFiles(false));
+      openMemoryBtn.addEventListener('click', openMemoryFile);
+      memoryFileSelect.addEventListener('change', openMemoryFile);
       toggleToolPanelBtn.addEventListener('click', () => {
         setToolsCollapsed(!toolsCollapsed);
       });
@@ -548,6 +661,7 @@
         clearChatBox();
         sessionIdInput.value = '';
         await refreshSessions(true);
+        await refreshMemoryFiles(false);
       });
       userIdInput.value = 'anonymous';
       setSendingState(false);
@@ -558,6 +672,7 @@
 
       refreshSessions(true);
       refreshTools();
+      refreshMemoryFiles(false);
     </script>
   </body>
 </html>

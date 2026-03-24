@@ -8,12 +8,15 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.stream.Collectors;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 
 @Service
 public class MemoryLlmExtractor {
 	private static final Pattern CODE_FENCE_START = Pattern.compile("^```[a-zA-Z]*\\s*");
+	private static final Pattern THINK_BLOCK = Pattern.compile("(?is)<think>.*?</think>");
+	private static final Pattern TAG_BLOCK = Pattern.compile("(?is)<[^>]+>");
 	private static final Pattern SLUG_INVALID = Pattern.compile("[^a-z0-9-]");
 	private static final Pattern DASHES = Pattern.compile("-{2,}");
 
@@ -45,7 +48,9 @@ public class MemoryLlmExtractor {
 		String systemPrompt = "You are a durable-memory extractor."
 			+ " Keep only long-term useful facts, preferences, decisions, deadlines, and constraints."
 			+ " Ignore short-lived chatter and duplicate items."
-			+ " Output plain markdown bullet points only. No code fences.";
+			+ " Output only concise markdown bullets starting with '- '."
+			+ " Never output <think> tags, analysis text, or direct replies to user."
+			+ " If there is no durable memory, output exactly: NO_DURABLE_MEMORY.";
 		String userPrompt = "user_id=" + safe(userId) + "\n"
 			+ "session_id=" + safe(sessionId) + "\n"
 			+ "reason=" + safe(reason) + "\n"
@@ -154,7 +159,44 @@ public class MemoryLlmExtractor {
 				out = out.substring(0, out.length() - 3).trim();
 			}
 		}
-		return out;
+		out = THINK_BLOCK.matcher(out).replaceAll("");
+		out = TAG_BLOCK.matcher(out).replaceAll("");
+		if (out.toUpperCase(Locale.ROOT).contains("NO_DURABLE_MEMORY")) {
+			return "";
+		}
+		String bullets = toBulletOnly(out);
+		return bullets;
+	}
+
+	private String toBulletOnly(String raw) {
+		if (raw == null || raw.trim().isEmpty()) {
+			return "";
+		}
+		List<String> lines = new ArrayList<>();
+		for (String line : raw.split("\\r?\\n")) {
+			if (line == null) {
+				continue;
+			}
+			String t = line.trim();
+			if (t.isEmpty()) {
+				continue;
+			}
+			if (t.startsWith("- ")) {
+				lines.add(t);
+				continue;
+			}
+			if (t.startsWith("* ")) {
+				lines.add("- " + t.substring(2).trim());
+				continue;
+			}
+			if (t.matches("^\\d+[\\.、]\\s+.*")) {
+				String norm = t.replaceFirst("^\\d+[\\.、]\\s+", "").trim();
+				if (!norm.isEmpty()) {
+					lines.add("- " + norm);
+				}
+			}
+		}
+		return lines.stream().distinct().collect(Collectors.joining("\n")).trim();
 	}
 
 	private String normalizeSlug(String raw, int maxLen) {
