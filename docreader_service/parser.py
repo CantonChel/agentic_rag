@@ -158,9 +158,25 @@ def _content_type_from_ext(ext: str) -> str:
     return ext_map.get((ext or "").lower(), "application/octet-stream")
 
 
-_DATA_URI_IMAGE_PATTERN = re.compile(
-    r"!\[([^\]]*)\]\(data:image/([a-zA-Z0-9]+)\+?[a-zA-Z0-9-]*;base64,([^)]+)\)"
+_MARKDOWN_DATA_URI_IMAGE_PATTERN = re.compile(
+    r"!\[([^\]]*)\]\(\s*<?data:image/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)>?\s*\)",
+    flags=re.IGNORECASE,
 )
+
+_HTML_DATA_URI_IMAGE_PATTERN = re.compile(
+    r"(<img\b[^>]*\bsrc\s*=\s*)([\"'])data:image/([a-zA-Z0-9.+-]+);base64,([^\"']+)\2([^>]*>)",
+    flags=re.IGNORECASE,
+)
+
+
+def _decode_base64_payload(raw_b64: str) -> bytes:
+    if not raw_b64:
+        return b""
+    normalized = re.sub(r"\s+", "", raw_b64)
+    try:
+        return base64.b64decode(normalized)
+    except Exception:
+        return b""
 
 
 def _extract_markdown_data_uri_images(markdown: str) -> Tuple[str, List[Tuple[str, bytes, str]]]:
@@ -169,18 +185,10 @@ def _extract_markdown_data_uri_images(markdown: str) -> Tuple[str, List[Tuple[st
 
     refs: List[Tuple[str, bytes, str]] = []
 
-    def _replace(match: re.Match) -> str:
+    def _replace_markdown(match: re.Match) -> str:
         alt_text = match.group(1) or ""
         image_ext = (match.group(2) or "png").lower()
-        raw_b64 = (match.group(3) or "").strip()
-        if not raw_b64:
-            return match.group(0)
-
-        normalized_b64 = re.sub(r"\s+", "", raw_b64)
-        try:
-            payload = base64.b64decode(normalized_b64)
-        except Exception:
-            return match.group(0)
+        payload = _decode_base64_payload(match.group(3) or "")
         if not payload:
             return match.group(0)
 
@@ -188,7 +196,21 @@ def _extract_markdown_data_uri_images(markdown: str) -> Tuple[str, List[Tuple[st
         refs.append((image_ref, payload, image_ext))
         return f"![{alt_text}]({image_ref})"
 
-    replaced = _DATA_URI_IMAGE_PATTERN.sub(_replace, markdown)
+    def _replace_html(match: re.Match) -> str:
+        prefix = match.group(1) or ""
+        quote = match.group(2) or "\""
+        image_ext = (match.group(3) or "png").lower()
+        payload = _decode_base64_payload(match.group(4) or "")
+        suffix = match.group(5) or ">"
+        if not payload:
+            return match.group(0)
+
+        image_ref = f"images/{uuid.uuid4().hex}.{image_ext}"
+        refs.append((image_ref, payload, image_ext))
+        return f"{prefix}{quote}{image_ref}{quote}{suffix}"
+
+    replaced = _MARKDOWN_DATA_URI_IMAGE_PATTERN.sub(_replace_markdown, markdown)
+    replaced = _HTML_DATA_URI_IMAGE_PATTERN.sub(_replace_html, replaced)
     return replaced, refs
 
 
