@@ -103,6 +103,14 @@ DOTENV_PATH="${ROOT_DIR}/.env"
 
 REDIS_MODE="$(printf '%s' "${REDIS_MODE_RAW}" | tr '[:upper:]' '[:lower:]')"
 PG_MODE="$(printf '%s' "${PG_MODE_RAW}" | tr '[:upper:]' '[:lower:]')"
+DOCREADER_PYTHON_BIN="${DOCREADER_PYTHON_BIN:-}"
+if [[ -z "${DOCREADER_PYTHON_BIN}" ]]; then
+  if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
+    DOCREADER_PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
+  else
+    DOCREADER_PYTHON_BIN="/usr/bin/python3"
+  fi
+fi
 
 # ============================================================================
 # 工具函数定义
@@ -156,21 +164,37 @@ java_major() {
 
 # 确保 docreader 的 Python 依赖已安装
 ensure_docreader_dependency() {
-  # 检查 minio 模块是否可导入
-  if /usr/bin/python3 -c "import minio" >/dev/null 2>&1; then
+  local missing=()
+  local in_venv=0
+  if "${DOCREADER_PYTHON_BIN}" -c 'import sys; raise SystemExit(0 if sys.prefix != getattr(sys, "base_prefix", sys.prefix) else 1)'; then
+    in_venv=1
+  fi
+  if ! "${DOCREADER_PYTHON_BIN}" -c "import minio" >/dev/null 2>&1; then
+    missing+=("minio==7.2.12")
+  fi
+  if ! "${DOCREADER_PYTHON_BIN}" -c "import markitdown" >/dev/null 2>&1; then
+    if "${DOCREADER_PYTHON_BIN}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+      missing+=("markitdown[docx,pdf,xls,xlsx]>=0.1.3")
+    else
+      echo "Warning: ${DOCREADER_PYTHON_BIN} < Python 3.10, cannot auto-install markitdown. docx->md parsing requires Python 3.10+."
+    fi
+  fi
+  if [[ ${#missing[@]} -eq 0 ]]; then
     return 0
   fi
-  
-  echo "Installing python dependency for docreader: minio==7.2.12"
-  
-  # 确保 pip 可用
-  if ! /usr/bin/python3 -m pip --version >/dev/null 2>&1; then
-    # ensurepip 是 Python 内置的 pip 安装器
-    /usr/bin/python3 -m ensurepip --user >/dev/null 2>&1 || true
+  echo "Installing python dependency for docreader: ${missing[*]}"
+  if ! "${DOCREADER_PYTHON_BIN}" -m pip --version >/dev/null 2>&1; then
+    if [[ "${in_venv}" -eq 1 ]]; then
+      "${DOCREADER_PYTHON_BIN}" -m ensurepip >/dev/null 2>&1 || true
+    else
+      "${DOCREADER_PYTHON_BIN}" -m ensurepip --user >/dev/null 2>&1 || true
+    fi
   fi
-  
-  # 安装 minio 客户端库
-  /usr/bin/python3 -m pip install --user minio==7.2.12 >/dev/null
+  if [[ "${in_venv}" -eq 1 ]]; then
+    "${DOCREADER_PYTHON_BIN}" -m pip install "${missing[@]}" >/dev/null
+  else
+    "${DOCREADER_PYTHON_BIN}" -m pip install --user "${missing[@]}" >/dev/null
+  fi
 }
 
 # ============================================================================
@@ -404,8 +428,12 @@ fi
 # 启动 docreader（Python 文档解析服务）
 # ----------------------------------------------------------------------------
 echo "Starting docreader_service (port ${DOCREADER_PORT})"
+<<<<<<< HEAD
 
 # 确保依赖已安装
+=======
+echo "==> docreader python: ${DOCREADER_PYTHON_BIN}"
+>>>>>>> 181ac3a (Add docx upload support with markitdown parser)
 ensure_docreader_dependency
 
 # 使用子 shell ( ) 启动服务，避免污染当前 shell 的环境变量
@@ -418,11 +446,15 @@ ensure_docreader_dependency
   export MINIO_SECRET_KEY="${MINIO_SECRET_KEY}"
   export MINIO_BUCKET="${MINIO_BUCKET}"
   export MINIO_SECURE="${MINIO_SECURE}"
+<<<<<<< HEAD
   
   # 使用 uvicorn 启动 FastAPI 应用
   # main:app 表示 main.py 文件中的 app 对象
   # --host 0.0.0.0 允许外部访问
   nohup /usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port "${DOCREADER_PORT}" > "${LOG_DIR}/docreader.log" 2>&1 &
+=======
+  nohup "${DOCREADER_PYTHON_BIN}" -m uvicorn main:app --host 0.0.0.0 --port "${DOCREADER_PORT}" > "${LOG_DIR}/docreader.log" 2>&1 &
+>>>>>>> 181ac3a (Add docx upload support with markitdown parser)
 )
 
 # ----------------------------------------------------------------------------

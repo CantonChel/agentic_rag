@@ -77,6 +77,8 @@ public class MinioKnowledgeFileStorageService implements KnowledgeFileStorageSer
 		switch (ext) {
 			case "pdf":
 				return "application/pdf";
+			case "docx":
+				return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 			case "txt":
 				return "text/plain";
 			case "md":

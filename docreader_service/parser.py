@@ -8,6 +8,7 @@ import httpx
 from minio import Minio
 
 from config import settings
+from markitdown_parser import convert_docx_to_markdown
 from models import ChunkPayload, ImageInfo
 
 
@@ -70,6 +71,13 @@ def _extract_pdf_text_pdfplumber(pdf_bytes: bytes) -> str:
     return "\n".join(text_parts).strip()
 
 
+def _extract_docx_markdown(docx_bytes: bytes) -> str:
+    try:
+        return convert_docx_to_markdown(docx_bytes)
+    except Exception as exc:
+        raise ParseError("corrupted_file", f"docx to markdown failed: {exc}")
+
+
 def _extract_text(source_bytes: bytes, ext: str) -> str:
     if ext == ".pdf":
         try:
@@ -79,6 +87,9 @@ def _extract_text(source_bytes: bytes, ext: str) -> str:
                 return _extract_pdf_text_pdfplumber(source_bytes)
             except Exception as exc:
                 raise ParseError("corrupted_file", f"pdf parse failed: {exc}")
+
+    if ext == ".docx":
+        return _extract_docx_markdown(source_bytes)
 
     if ext in (".txt", ".md", ".csv", ".json", ".html", ".htm", ""):
         try:

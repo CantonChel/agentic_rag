@@ -7,6 +7,8 @@
 - `GET /jobs/{remote_job_id}`：查询任务状态。
 - `GET /healthz`：健康检查。
 - 清洗完成后回调业务端（支持 `HMAC-SHA256` 签名）。
+- 支持解析：`pdf`、`docx`、`txt`、`md`、`csv`、`json`、`html/htm`。
+- `docx` 会通过 `markitdown` 统一转换为 Markdown 后再分块。
 
 ## 任务输入（`POST /jobs`）
 ```json
