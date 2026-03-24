@@ -1,6 +1,9 @@
 import asyncio
+import base64
 import io
 import os
+import re
+import uuid
 from typing import List, Tuple
 from urllib.parse import urlparse
 
@@ -8,7 +11,7 @@ import httpx
 from minio import Minio
 
 from config import settings
-from markitdown_parser import convert_docx_to_markdown
+from markitdown_parser import convert_docx_to_markdown, convert_file_to_markdown
 from models import ChunkPayload, ImageInfo
 
 
@@ -78,15 +81,29 @@ def _extract_docx_markdown(docx_bytes: bytes) -> str:
         raise ParseError("corrupted_file", f"docx to markdown failed: {exc}")
 
 
+def _extract_pdf_markdown(pdf_bytes: bytes) -> str:
+    # Primary path: use MarkItDown and keep inline image data URIs so we can
+    # preserve image position in markdown.
+    try:
+        markdown = convert_file_to_markdown(pdf_bytes, ".pdf", keep_data_uris=True)
+        if markdown and markdown.strip():
+            return markdown
+    except Exception:
+        pass
+
+    # Fallback path keeps legacy behavior for text-only extraction.
+    try:
+        return _extract_pdf_text_pymupdf(pdf_bytes)
+    except Exception:
+        try:
+            return _extract_pdf_text_pdfplumber(pdf_bytes)
+        except Exception as exc:
+            raise ParseError("corrupted_file", f"pdf parse failed: {exc}")
+
+
 def _extract_text(source_bytes: bytes, ext: str) -> str:
     if ext == ".pdf":
-        try:
-            return _extract_pdf_text_pymupdf(source_bytes)
-        except Exception:
-            try:
-                return _extract_pdf_text_pdfplumber(source_bytes)
-            except Exception as exc:
-                raise ParseError("corrupted_file", f"pdf parse failed: {exc}")
+        return _extract_pdf_markdown(source_bytes)
 
     if ext == ".docx":
         return _extract_docx_markdown(source_bytes)
@@ -141,25 +158,49 @@ def _content_type_from_ext(ext: str) -> str:
     return ext_map.get((ext or "").lower(), "application/octet-stream")
 
 
-def _extract_pdf_images(pdf_bytes: bytes) -> List[Tuple[int, int, bytes, str]]:
-    import fitz  # type: ignore
-
-    out: List[Tuple[int, int, bytes, str]] = []
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
-        for page_idx, page in enumerate(doc):
-            images = page.get_images(full=True)
-            for image_idx, img in enumerate(images):
-                xref = img[0]
-                extracted = doc.extract_image(xref)
-                payload = extracted.get("image")
-                if not payload:
-                    continue
-                ext = str(extracted.get("ext") or "png").lower()
-                out.append((page_idx + 1, image_idx + 1, payload, ext))
-    return out
+_DATA_URI_IMAGE_PATTERN = re.compile(
+    r"!\[([^\]]*)\]\(data:image/([a-zA-Z0-9]+)\+?[a-zA-Z0-9-]*;base64,([^)]+)\)"
+)
 
 
-def _upload_pdf_images(job_id: str, knowledge_id: str, user_id: str, pdf_bytes: bytes) -> List[ImageInfo]:
+def _extract_markdown_data_uri_images(markdown: str) -> Tuple[str, List[Tuple[str, bytes, str]]]:
+    if not markdown:
+        return "", []
+
+    refs: List[Tuple[str, bytes, str]] = []
+
+    def _replace(match: re.Match) -> str:
+        alt_text = match.group(1) or ""
+        image_ext = (match.group(2) or "png").lower()
+        raw_b64 = (match.group(3) or "").strip()
+        if not raw_b64:
+            return match.group(0)
+
+        normalized_b64 = re.sub(r"\s+", "", raw_b64)
+        try:
+            payload = base64.b64decode(normalized_b64)
+        except Exception:
+            return match.group(0)
+        if not payload:
+            return match.group(0)
+
+        image_ref = f"images/{uuid.uuid4().hex}.{image_ext}"
+        refs.append((image_ref, payload, image_ext))
+        return f"![{alt_text}]({image_ref})"
+
+    replaced = _DATA_URI_IMAGE_PATTERN.sub(_replace, markdown)
+    return replaced, refs
+
+
+def _upload_inline_images(
+    job_id: str,
+    knowledge_id: str,
+    user_id: str,
+    extracted_images: List[Tuple[str, bytes, str]],
+) -> List[ImageInfo]:
+    if not extracted_images:
+        return []
+
     try:
         client = Minio(
             settings.minio_endpoint,
@@ -173,10 +214,9 @@ def _upload_pdf_images(job_id: str, knowledge_id: str, user_id: str, pdf_bytes: 
     except Exception as exc:
         raise ParseError("service_unavailable", f"minio init failed: {exc}")
 
-    extracted = _extract_pdf_images(pdf_bytes)
     out: List[ImageInfo] = []
-    for page_no, image_no, payload, ext in extracted:
-        key = f"{user_id}/{knowledge_id}/parsed-images/{job_id}/page-{page_no}/img-{image_no}.{ext}"
+    for idx, (original_ref, payload, ext) in enumerate(extracted_images, start=1):
+        key = f"{user_id}/{knowledge_id}/parsed-images/{job_id}/img-{idx}.{ext}"
         try:
             client.put_object(
                 bucket_name=bucket,
@@ -187,6 +227,8 @@ def _upload_pdf_images(job_id: str, knowledge_id: str, user_id: str, pdf_bytes: 
             )
             out.append(
                 ImageInfo(
+                    url=f"minio://{bucket}/{key}",
+                    original_url=original_ref,
                     storage_bucket=bucket,
                     storage_key=key,
                     start_pos=None,
@@ -209,10 +251,21 @@ async def parse_to_chunks(job_id: str, file_url: str, options: dict) -> List[Chu
 
     source_bytes, ext = await asyncio.to_thread(_read_source_bytes, file_url)
     text = await asyncio.to_thread(_extract_text, source_bytes, ext)
+    inline_images: List[Tuple[str, bytes, str]] = []
+    if ext == ".pdf":
+        text, inline_images = await asyncio.to_thread(_extract_markdown_data_uri_images, text)
+
     if not text.strip():
         raise ParseError("corrupted_file", "empty extracted text")
 
-    splits = await asyncio.to_thread(_split_text, text, chunk_size, chunk_overlap)
+    # Keep docx behavior as-is in docreader. All other file types are returned
+    # as a single full-document chunk and split later in rag_app.
+    if ext == ".docx":
+        splits = await asyncio.to_thread(_split_text, text, chunk_size, chunk_overlap)
+    else:
+        content = text.strip()
+        splits = [(0, len(text), content)] if content else []
+
     chunks: List[ChunkPayload] = []
     for idx, (start, end, content) in enumerate(splits):
         chunks.append(
@@ -228,7 +281,7 @@ async def parse_to_chunks(job_id: str, file_url: str, options: dict) -> List[Chu
             )
         )
     if ext == ".pdf":
-        image_infos = await asyncio.to_thread(_upload_pdf_images, job_id, knowledge_id, user_id, source_bytes)
+        image_infos = await asyncio.to_thread(_upload_inline_images, job_id, knowledge_id, user_id, inline_images)
         if image_infos:
             if chunks:
                 chunks[0].image_info.extend(image_infos)
