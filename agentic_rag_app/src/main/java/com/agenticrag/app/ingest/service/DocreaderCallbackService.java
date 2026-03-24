@@ -14,17 +14,22 @@ import com.agenticrag.app.rag.embedding.EmbeddingModel;
 import com.agenticrag.app.rag.embedding.OpenAiEmbeddingProperties;
 import com.agenticrag.app.rag.embedding.RagEmbeddingProperties;
 import com.agenticrag.app.rag.embedding.SiliconFlowEmbeddingProperties;
+import com.agenticrag.app.rag.model.Document;
 import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.splitter.TextSplitter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -33,12 +38,14 @@ import org.springframework.stereotype.Service;
 @Service
 public class DocreaderCallbackService {
 	private static final Logger log = LoggerFactory.getLogger(DocreaderCallbackService.class);
+	private static final Pattern MARKDOWN_IMAGE_PATTERN = Pattern.compile("!\\[([^\\]]*)\\]\\(([^)]+)\\)");
 
 	private final CallbackEventRepository callbackEventRepository;
 	private final ParseJobService parseJobService;
 	private final DocumentParseQueue documentParseQueue;
 	private final FailureClassifier failureClassifier;
 	private final EmbeddingModel embeddingModel;
+	private final TextSplitter textSplitter;
 	private final KnowledgeChunkPersistenceService chunkPersistenceService;
 	private final ObjectMapper objectMapper;
 	private final RagEmbeddingProperties ragEmbeddingProperties;
@@ -51,6 +58,7 @@ public class DocreaderCallbackService {
 		DocumentParseQueue documentParseQueue,
 		FailureClassifier failureClassifier,
 		EmbeddingModel embeddingModel,
+		TextSplitter textSplitter,
 		KnowledgeChunkPersistenceService chunkPersistenceService,
 		ObjectMapper objectMapper,
 		RagEmbeddingProperties ragEmbeddingProperties,
@@ -62,6 +70,7 @@ public class DocreaderCallbackService {
 		this.documentParseQueue = documentParseQueue;
 		this.failureClassifier = failureClassifier;
 		this.embeddingModel = embeddingModel;
+		this.textSplitter = textSplitter;
 		this.chunkPersistenceService = chunkPersistenceService;
 		this.objectMapper = objectMapper;
 		this.ragEmbeddingProperties = ragEmbeddingProperties;
@@ -158,29 +167,71 @@ public class DocreaderCallbackService {
 	private Assembly assembleChunks(String knowledgeId, List<DocreaderCallbackRequest.ChunkPayload> incoming) {
 		List<DocreaderCallbackRequest.ChunkPayload> source = incoming != null ? incoming : new ArrayList<>();
 		List<MainChunkRef> mainRefs = new ArrayList<>();
+		int generatedIndex = 0;
 		for (int i = 0; i < source.size(); i++) {
 			DocreaderCallbackRequest.ChunkPayload payload = source.get(i);
 			if (payload == null) {
 				continue;
 			}
-			ChunkEntity entity = new ChunkEntity();
-			entity.setChunkId(normalizeChunkId(payload.getChunkId(), knowledgeId, i));
-			entity.setKnowledgeId(knowledgeId);
-			entity.setChunkType(parseChunkType(payload.getType()));
-			entity.setChunkIndex(payload.getSeq() != null ? payload.getSeq() : i);
-			entity.setStartAt(payload.getStart());
-			entity.setEndAt(payload.getEnd());
-			entity.setParentChunkId(null);
-			entity.setContent(payload.getContent() != null ? payload.getContent() : "");
-			entity.setImageInfoJson(toJson(payload.getImageInfo()));
-			entity.setMetadataJson(toJson(payload.getMetadata()));
-			entity.setCreatedAt(Instant.now());
-			entity.setUpdatedAt(Instant.now());
-			mainRefs.add(new MainChunkRef(entity, payload));
+			ChunkType chunkType = parseChunkType(payload.getType());
+			if (chunkType != ChunkType.TEXT) {
+				ChunkEntity entity = createBaseEntity(knowledgeId, payload, normalizeChunkId(payload.getChunkId(), knowledgeId, i), i);
+				entity.setChunkType(chunkType);
+				mainRefs.add(new MainChunkRef(entity, payload.getImageInfo()));
+				continue;
+			}
+
+			Map<String, Object> baseMetadata = copyMetadata(payload.getMetadata());
+			String sourceExt = sourceExt(baseMetadata);
+			List<DocreaderCallbackRequest.ImageInfoPayload> images = payload.getImageInfo() != null
+				? payload.getImageInfo()
+				: Collections.emptyList();
+			String content = payload.getContent() != null ? payload.getContent() : "";
+
+			if (shouldSplitInRagApp(sourceExt)) {
+				String resolvedContent = replaceImageRefs(content, images);
+				String baseChunkId = normalizeChunkId(payload.getChunkId(), knowledgeId, i);
+				Document doc = new Document(baseChunkId, resolvedContent, baseMetadata);
+				List<TextChunk> splitChunks = textSplitter != null ? textSplitter.split(doc) : new ArrayList<>();
+				if (splitChunks == null || splitChunks.isEmpty()) {
+					ChunkEntity single = createBaseEntity(knowledgeId, payload, baseChunkId, generatedIndex++);
+					single.setContent(resolvedContent);
+					single.setMetadataJson(toJson(baseMetadata));
+					single.setImageInfoJson(toJson(images));
+					mainRefs.add(new MainChunkRef(single, images));
+					continue;
+				}
+
+				for (int j = 0; j < splitChunks.size(); j++) {
+					TextChunk split = splitChunks.get(j);
+					if (split == null) {
+						continue;
+					}
+					Map<String, Object> splitMetadata = split.getMetadata() != null ? split.getMetadata() : baseMetadata;
+					String chunkId = split.getChunkId() != null && !split.getChunkId().trim().isEmpty()
+						? split.getChunkId().trim()
+						: baseChunkId + ":" + j;
+					ChunkEntity entity = createBaseEntity(knowledgeId, payload, chunkId, generatedIndex++);
+					entity.setStartAt(null);
+					entity.setEndAt(null);
+					entity.setContent(split.getText() != null ? split.getText() : "");
+					entity.setMetadataJson(toJson(splitMetadata));
+					entity.setImageInfoJson(j == 0 ? toJson(images) : null);
+					mainRefs.add(new MainChunkRef(entity, j == 0 ? images : Collections.emptyList()));
+				}
+				continue;
+			}
+
+			ChunkEntity entity = createBaseEntity(knowledgeId, payload, normalizeChunkId(payload.getChunkId(), knowledgeId, i), i);
+			entity.setContent(replaceImageRefs(content, images));
+			entity.setMetadataJson(toJson(baseMetadata));
+			entity.setImageInfoJson(toJson(images));
+			mainRefs.add(new MainChunkRef(entity, images));
 		}
 
 		for (int i = 0; i < mainRefs.size(); i++) {
 			ChunkEntity current = mainRefs.get(i).entity;
+			current.setChunkIndex(i);
 			ChunkEntity prev = i > 0 ? mainRefs.get(i - 1).entity : null;
 			ChunkEntity next = i + 1 < mainRefs.size() ? mainRefs.get(i + 1).entity : null;
 			current.setPreChunkId(prev != null ? prev.getChunkId() : null);
@@ -190,7 +241,7 @@ public class DocreaderCallbackService {
 		List<ChunkEntity> all = new ArrayList<>();
 		for (MainChunkRef ref : mainRefs) {
 			all.add(ref.entity);
-			List<DocreaderCallbackRequest.ImageInfoPayload> images = ref.payload.getImageInfo();
+			List<DocreaderCallbackRequest.ImageInfoPayload> images = ref.images;
 			if (images == null || images.isEmpty()) {
 				continue;
 			}
@@ -241,6 +292,111 @@ public class DocreaderCallbackService {
 			indexChunks.add(new TextChunk(chunk.getChunkId(), knowledgeId, chunk.getContent(), null, metadata));
 		}
 		return new Assembly(all, indexChunks);
+	}
+
+	private ChunkEntity createBaseEntity(
+		String knowledgeId,
+		DocreaderCallbackRequest.ChunkPayload payload,
+		String chunkId,
+		int fallbackIndex
+	) {
+		ChunkEntity entity = new ChunkEntity();
+		entity.setChunkId(chunkId);
+		entity.setKnowledgeId(knowledgeId);
+		entity.setChunkType(parseChunkType(payload.getType()));
+		entity.setChunkIndex(payload.getSeq() != null ? payload.getSeq() : fallbackIndex);
+		entity.setStartAt(payload.getStart());
+		entity.setEndAt(payload.getEnd());
+		entity.setParentChunkId(null);
+		entity.setPreChunkId(null);
+		entity.setNextChunkId(null);
+		entity.setContent(payload.getContent() != null ? payload.getContent() : "");
+		entity.setImageInfoJson(toJson(payload.getImageInfo()));
+		entity.setMetadataJson(toJson(payload.getMetadata()));
+		entity.setCreatedAt(Instant.now());
+		entity.setUpdatedAt(Instant.now());
+		return entity;
+	}
+
+	private Map<String, Object> copyMetadata(Map<String, Object> metadata) {
+		Map<String, Object> out = new HashMap<>();
+		if (metadata != null) {
+			out.putAll(metadata);
+		}
+		return out;
+	}
+
+	private boolean shouldSplitInRagApp(String sourceExt) {
+		String ext = sourceExt != null ? sourceExt.trim().toLowerCase(Locale.ROOT) : "";
+		if (ext.isEmpty()) {
+			return true;
+		}
+		if (!ext.startsWith(".")) {
+			ext = "." + ext;
+		}
+		return !".docx".equals(ext);
+	}
+
+	private String sourceExt(Map<String, Object> metadata) {
+		if (metadata == null || metadata.isEmpty()) {
+			return "";
+		}
+		Object ext = metadata.get("source_ext");
+		if (ext == null) {
+			ext = metadata.get("sourceExt");
+		}
+		return ext != null ? String.valueOf(ext) : "";
+	}
+
+	private String replaceImageRefs(String content, List<DocreaderCallbackRequest.ImageInfoPayload> images) {
+		if (content == null || content.trim().isEmpty() || images == null || images.isEmpty()) {
+			return content != null ? content : "";
+		}
+		Map<String, String> replacements = new HashMap<>();
+		for (DocreaderCallbackRequest.ImageInfoPayload image : images) {
+			if (image == null) {
+				continue;
+			}
+			String original = image.getOriginalUrl();
+			String target = resolveImageUrl(image);
+			if (original == null || original.trim().isEmpty() || target == null || target.trim().isEmpty()) {
+				continue;
+			}
+			replacements.put(original.trim(), target.trim());
+		}
+		if (replacements.isEmpty()) {
+			return content;
+		}
+		StringBuffer sb = new StringBuffer();
+		Matcher matcher = MARKDOWN_IMAGE_PATTERN.matcher(content);
+		while (matcher.find()) {
+			String alt = matcher.group(1);
+			String path = matcher.group(2);
+			String replacement = replacements.get(path);
+			if (replacement == null) {
+				matcher.appendReplacement(sb, Matcher.quoteReplacement(matcher.group(0)));
+				continue;
+			}
+			String replacedMarkdown = "![" + alt + "](" + replacement + ")";
+			matcher.appendReplacement(sb, Matcher.quoteReplacement(replacedMarkdown));
+		}
+		matcher.appendTail(sb);
+		return sb.toString();
+	}
+
+	private String resolveImageUrl(DocreaderCallbackRequest.ImageInfoPayload image) {
+		if (image == null) {
+			return null;
+		}
+		if (image.getUrl() != null && !image.getUrl().trim().isEmpty()) {
+			return image.getUrl().trim();
+		}
+		String bucket = image.getStorageBucket();
+		String key = image.getStorageKey();
+		if (bucket != null && !bucket.trim().isEmpty() && key != null && !key.trim().isEmpty()) {
+			return "minio://" + bucket.trim() + "/" + key.trim();
+		}
+		return null;
 	}
 
 	private List<EmbeddingEntity> buildEmbeddings(String knowledgeId, List<ChunkEntity> chunks, List<TextChunk> indexChunks) {
@@ -363,11 +519,11 @@ public class DocreaderCallbackService {
 
 	private static class MainChunkRef {
 		private final ChunkEntity entity;
-		private final DocreaderCallbackRequest.ChunkPayload payload;
+		private final List<DocreaderCallbackRequest.ImageInfoPayload> images;
 
-		private MainChunkRef(ChunkEntity entity, DocreaderCallbackRequest.ChunkPayload payload) {
+		private MainChunkRef(ChunkEntity entity, List<DocreaderCallbackRequest.ImageInfoPayload> images) {
 			this.entity = entity;
-			this.payload = payload;
+			this.images = images != null ? images : Collections.emptyList();
 		}
 	}
 
