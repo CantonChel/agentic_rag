@@ -35,3 +35,5 @@ memory/users/
 
 .venv/
 venv/
+
+node_modules/
