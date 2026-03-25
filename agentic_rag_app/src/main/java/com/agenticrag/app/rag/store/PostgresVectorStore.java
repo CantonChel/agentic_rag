@@ -7,6 +7,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -16,6 +18,7 @@ import org.springframework.stereotype.Service;
 @Primary
 @ConditionalOnProperty(name = "rag.vector-store.postgres.enabled", havingValue = "true")
 public class PostgresVectorStore implements VectorStore {
+	private static final Logger log = LoggerFactory.getLogger(PostgresVectorStore.class);
 	private final JdbcTemplate jdbcTemplate;
 	private final EmbeddingRepository embeddingRepository;
 
@@ -31,9 +34,14 @@ public class PostgresVectorStore implements VectorStore {
 
 	@Override
 	public List<TextChunk> similaritySearch(List<Double> queryEmbedding, int topK) {
+		return similaritySearch(queryEmbedding, topK, "n/a");
+	}
+
+	public List<TextChunk> similaritySearch(List<Double> queryEmbedding, int topK, String traceId) {
 		if (queryEmbedding == null || queryEmbedding.isEmpty() || topK <= 0) {
 			return new ArrayList<>();
 		}
+		long startNs = System.nanoTime();
 
 		String vecLiteral = toPgvectorLiteral(queryEmbedding);
 		String sql = ""
@@ -45,6 +53,14 @@ public class PostgresVectorStore implements VectorStore {
 		try {
 			List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, vecLiteral, topK);
 			if (rows == null || rows.isEmpty()) {
+				long durationMs = (System.nanoTime() - startNs) / 1_000_000;
+				log.info(
+					"event=pg_vector_search traceId={} topK={} queryVectorDim={} candidateRows=0 durationMs={}",
+					traceId,
+					topK,
+					queryEmbedding.size(),
+					durationMs
+				);
 				return new ArrayList<>();
 			}
 			List<String> chunkIds = new ArrayList<>();
@@ -64,6 +80,15 @@ public class PostgresVectorStore implements VectorStore {
 				}
 			}
 			if (chunkIds.isEmpty()) {
+				long durationMs = (System.nanoTime() - startNs) / 1_000_000;
+				log.info(
+					"event=pg_vector_search traceId={} topK={} queryVectorDim={} candidateRows={} resolvedChunkIds=0 durationMs={}",
+					traceId,
+					topK,
+					queryEmbedding.size(),
+					rows.size(),
+					durationMs
+				);
 				return new ArrayList<>();
 			}
 			List<Object[]> embeddings = embeddingRepository.listChunkContentByChunkIds(chunkIds);
@@ -87,8 +112,30 @@ public class PostgresVectorStore implements VectorStore {
 				String knowledgeId = knowledgeByChunk.getOrDefault(chunkId, fallbackKnowledgeByChunk.get(chunkId));
 				out.add(new TextChunk(chunkId, knowledgeId, contentByChunk.get(chunkId), null, Collections.emptyMap()));
 			}
+			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
+			log.info(
+				"event=pg_vector_search traceId={} topK={} queryVectorDim={} candidateRows={} resolvedChunkIds={} contentRows={} resultCount={} durationMs={}",
+				traceId,
+				topK,
+				queryEmbedding.size(),
+				rows.size(),
+				chunkIds.size(),
+				embeddings.size(),
+				out.size(),
+				durationMs
+			);
 			return out;
 		} catch (Exception e) {
+			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
+			log.warn(
+				"event=pg_vector_search_error traceId={} topK={} queryVectorDim={} durationMs={} type={} message={}",
+				traceId,
+				topK,
+				queryEmbedding != null ? queryEmbedding.size() : 0,
+				durationMs,
+				e.getClass().getSimpleName(),
+				e.getMessage()
+			);
 			return new ArrayList<>();
 		}
 	}

@@ -8,11 +8,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 @Service
 public class HybridRetriever {
+	private static final Logger log = LoggerFactory.getLogger(HybridRetriever.class);
 	private final DenseVectorRetriever denseRetriever;
 	private final LuceneBm25Retriever bm25Retriever;
 	private final ObjectProvider<PostgresBm25Retriever> postgresBm25Retriever;
@@ -31,9 +34,14 @@ public class HybridRetriever {
 	}
 
 	public List<TextChunk> retrieve(String query, int recallTopK, int rerankTopK) {
+		return retrieve(query, recallTopK, rerankTopK, "n/a");
+	}
+
+	public List<TextChunk> retrieve(String query, int recallTopK, int rerankTopK, String traceId) {
 		if (query == null || query.trim().isEmpty()) {
 			return new ArrayList<>();
 		}
+		long startNs = System.nanoTime();
 
 		int recall = recallTopK > 0 ? recallTopK : 20;
 		int rerank = rerankTopK > 0 ? rerankTopK : 5;
@@ -45,14 +53,33 @@ public class HybridRetriever {
 
 		final Retriever bm25RetrieverResolved = bm25Candidate;
 
-		CompletableFuture<List<TextChunk>> denseF = CompletableFuture.supplyAsync(() -> denseRetriever.retrieve(query, recall));
-		CompletableFuture<List<TextChunk>> bm25F = CompletableFuture.supplyAsync(() -> bm25RetrieverResolved.retrieve(query, recall));
+		CompletableFuture<List<TextChunk>> denseF = CompletableFuture.supplyAsync(() -> denseRetriever.retrieve(query, recall, traceId));
+		CompletableFuture<List<TextChunk>> bm25F = CompletableFuture.supplyAsync(() -> {
+			if (bm25RetrieverResolved instanceof PostgresBm25Retriever) {
+				return ((PostgresBm25Retriever) bm25RetrieverResolved).retrieve(query, recall, traceId);
+			}
+			return bm25RetrieverResolved.retrieve(query, recall);
+		});
 
 		List<TextChunk> dense = denseF.join();
 		List<TextChunk> bm25Chunks = bm25F.join();
 
 		List<TextChunk> fused = fuseRrf(dense, bm25Chunks, recall, 60);
-		return reranker.rerank(query, fused, rerank);
+		List<TextChunk> reranked = reranker.rerank(query, fused, rerank);
+		long durationMs = (System.nanoTime() - startNs) / 1_000_000;
+		log.info(
+			"event=hybrid_retrieve traceId={} query={} recallTopK={} rerankTopK={} denseCount={} bm25Count={} fusedCount={} rerankedCount={} durationMs={}",
+			traceId,
+			query,
+			recall,
+			rerank,
+			dense != null ? dense.size() : 0,
+			bm25Chunks != null ? bm25Chunks.size() : 0,
+			fused != null ? fused.size() : 0,
+			reranked != null ? reranked.size() : 0,
+			durationMs
+		);
+		return reranked;
 	}
 
 	private List<TextChunk> fuseRrf(List<TextChunk> a, List<TextChunk> b, int topK, int k) {

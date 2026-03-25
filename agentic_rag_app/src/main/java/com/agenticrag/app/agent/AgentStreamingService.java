@@ -21,6 +21,7 @@ import com.agenticrag.app.prompt.SystemPromptManager;
 import com.agenticrag.app.session.ChatSession;
 import com.agenticrag.app.session.SessionManager;
 import com.agenticrag.app.session.SessionScope;
+import com.agenticrag.app.trace.TraceIdUtil;
 import com.agenticrag.app.tool.ToolDefinition;
 import com.agenticrag.app.tool.ToolArgumentValidator;
 import com.agenticrag.app.tool.ToolExecutionContext;
@@ -53,12 +54,15 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
 @Service
 public class AgentStreamingService {
+	private static final Logger log = LoggerFactory.getLogger(AgentStreamingService.class);
 	private final OpenAIClient openAiClient;
 	private final OpenAIClient minimaxClient;
 	private final OpenAiClientProperties openAiProperties;
@@ -151,7 +155,7 @@ public class AgentStreamingService {
 		boolean includeTools,
 		LlmToolChoiceMode toolChoiceMode
 	) {
-		return stream(provider, "anonymous", sessionId, prompt, includeTools, toolChoiceMode);
+		return stream(provider, "anonymous", sessionId, prompt, includeTools, toolChoiceMode, null);
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -162,11 +166,34 @@ public class AgentStreamingService {
 		boolean includeTools,
 		LlmToolChoiceMode toolChoiceMode
 	) {
+		return stream(provider, userId, sessionId, prompt, includeTools, toolChoiceMode, null);
+	}
+
+	public Flux<LlmStreamEvent> stream(
+		LlmProvider provider,
+		String userId,
+		String sessionId,
+		String prompt,
+		boolean includeTools,
+		LlmToolChoiceMode toolChoiceMode,
+		String traceId
+	) {
 		String uid = SessionScope.normalizeUserId(userId);
 		String sid = SessionScope.normalizeSessionId(sessionId);
 		String scopedSid = SessionScope.scopedSessionId(uid, sid);
+		String effectiveTraceId = TraceIdUtil.normalizeOrGenerate(traceId);
 		int maxIterations = agentProperties.getMaxIterations() > 0 ? agentProperties.getMaxIterations() : 6;
 		long toolTimeoutSeconds = agentProperties.getToolTimeoutSeconds() > 0 ? agentProperties.getToolTimeoutSeconds() : 30;
+		log.info(
+			"event=agent_stream_start traceId={} provider={} userId={} sessionId={} includeTools={} toolChoice={} promptChars={}",
+			effectiveTraceId,
+			provider,
+			uid,
+			sid,
+			includeTools,
+			toolChoiceMode,
+			prompt != null ? prompt.length() : 0
+		);
 
 		return Flux.create(sink -> {
 			Future<?> future = streamExecutor.submit(() -> {
@@ -177,6 +204,14 @@ public class AgentStreamingService {
 					OpenAiMessageAdapter adapter = new OpenAiMessageAdapter(objectMapper);
 
 					if (isSessionSwitchCommand(prompt)) {
+						log.info(
+							"event=agent_session_switch traceId={} provider={} userId={} sessionId={} command={}",
+							effectiveTraceId,
+							provider,
+							uid,
+							sid,
+							normalizeSwitchReason(prompt)
+						);
 						if (memoryFlushService != null) {
 							memoryFlushService.flushOnSessionSwitchCommand(
 								scopedSid,
@@ -350,6 +385,18 @@ public class AgentStreamingService {
 							}
 							final String toolCallId = callId;
 							final JsonNode toolArgs = call.getArguments();
+							long toolStartNs = System.nanoTime();
+							log.info(
+								"event=tool_call_start traceId={} provider={} userId={} sessionId={} iteration={} tool={} toolCallId={} argsChars={}",
+								effectiveTraceId,
+								provider,
+								uid,
+								sid,
+								iterationFinal,
+								toolName,
+								toolCallId,
+								toolArgs != null ? toolArgs.toString().length() : 0
+							);
 
 							ToolResult toolResult = null;
 							try {
@@ -360,7 +407,7 @@ public class AgentStreamingService {
 											String err = "Error: 参数解析失败。请检查并重新调用工具。细节: " + String.join("; ", vr.getErrors());
 											return ToolResult.error(err);
 										}
-										return t.execute(toolArgs, new ToolExecutionContext(toolCallId, uid, sid))
+										return t.execute(toolArgs, new ToolExecutionContext(toolCallId, uid, sid, effectiveTraceId))
 											.block(Duration.ofSeconds(toolTimeoutSeconds));
 									})
 									.orElse(ToolResult.error("Tool not found: " + toolName));
@@ -371,20 +418,35 @@ public class AgentStreamingService {
 							if (toolResult == null) {
 								toolResult = ToolResult.error("Tool execution returned null: " + toolName);
 							}
+							long toolDurationMs = (System.nanoTime() - toolStartNs) / 1_000_000;
+							log.info(
+								"event=tool_call_end traceId={} provider={} userId={} sessionId={} iteration={} tool={} toolCallId={} success={} durationMs={} outputChars={} error={}",
+								effectiveTraceId,
+								provider,
+								uid,
+								sid,
+								iterationFinal,
+								toolName,
+								toolCallId,
+								toolResult.isSuccess(),
+								toolDurationMs,
+								toolResult.getOutput() != null ? toolResult.getOutput().length() : 0,
+								toolResult.getError()
+							);
 
-								if ("thinking".equals(toolName) && toolResult.isSuccess()) {
-									String thought = toolResult.getOutput();
-									if (thought != null && !thought.trim().isEmpty()) {
-										sink.next(LlmStreamEvent.thinking(
-											thought,
-											"thinking_tool",
-											originModelRef.get(),
-											iterationFinal
-										));
-										recordThinkingMessage(scopedSid, thought);
-										hasToolThinking = true;
-									}
+							if ("thinking".equals(toolName) && toolResult.isSuccess()) {
+								String thought = toolResult.getOutput();
+								if (thought != null && !thought.trim().isEmpty()) {
+									sink.next(LlmStreamEvent.thinking(
+										thought,
+										"thinking_tool",
+										originModelRef.get(),
+										iterationFinal
+									));
+									recordThinkingMessage(scopedSid, thought);
+									hasToolThinking = true;
 								}
+							}
 
 							ToolResultMessage trm = new ToolResultMessage(
 								toolName,
@@ -416,11 +478,46 @@ public class AgentStreamingService {
 					if (!finished) {
 						sink.next(LlmStreamEvent.done("max_iterations", null));
 					}
+					log.info(
+						"event=agent_stream_complete traceId={} provider={} userId={} sessionId={} finished={} maxIterations={}",
+						effectiveTraceId,
+						provider,
+						uid,
+						sid,
+						finished,
+						maxIterations
+					);
 				} catch (UnauthorizedException e) {
+					log.warn(
+						"event=agent_stream_error traceId={} provider={} userId={} sessionId={} type=UnauthorizedException message={}",
+						effectiveTraceId,
+						provider,
+						uid,
+						sid,
+						e.getMessage()
+					);
 					sink.next(LlmStreamEvent.error("Unauthorized: check API key for provider=" + provider + " (401)"));
 				} catch (OpenAIException e) {
+					log.warn(
+						"event=agent_stream_error traceId={} provider={} userId={} sessionId={} type={} message={}",
+						effectiveTraceId,
+						provider,
+						uid,
+						sid,
+						e.getClass().getSimpleName(),
+						e.getMessage()
+					);
 					sink.next(LlmStreamEvent.error("OpenAI SDK error: " + e.getClass().getSimpleName() + ": " + e.getMessage()));
 				} catch (Exception e) {
+					log.warn(
+						"event=agent_stream_error traceId={} provider={} userId={} sessionId={} type={} message={}",
+						effectiveTraceId,
+						provider,
+						uid,
+						sid,
+						e.getClass().getSimpleName(),
+						e.getMessage()
+					);
 					sink.next(LlmStreamEvent.error("Agent loop failed: " + e.getClass().getSimpleName() + ": " + e.getMessage()));
 				}
 

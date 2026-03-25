@@ -4,9 +4,12 @@ import com.agenticrag.app.agent.AgentStreamingService;
 import com.agenticrag.app.llm.LlmProvider;
 import com.agenticrag.app.llm.LlmStreamEvent;
 import com.agenticrag.app.llm.LlmToolChoiceMode;
+import com.agenticrag.app.trace.TraceIdUtil;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -27,9 +30,13 @@ public class AgentController {
 		@RequestParam(value = "sessionId", defaultValue = "default") String sessionId,
 		@RequestParam("prompt") String prompt,
 		@RequestParam(value = "tools", defaultValue = "true") boolean tools,
-		@RequestParam(value = "toolChoice", defaultValue = "AUTO") LlmToolChoiceMode toolChoice
+		@RequestParam(value = "toolChoice", defaultValue = "AUTO") LlmToolChoiceMode toolChoice,
+		@RequestHeader(value = TraceIdUtil.HEADER_NAME, required = false) String traceIdHeader,
+		ServerHttpResponse response
 	) {
-		return agentStreamingService.stream(LlmProvider.OPENAI, userId, sessionId, prompt, tools, toolChoice)
+		String traceId = TraceIdUtil.normalizeOrGenerate(traceIdHeader);
+		response.getHeaders().set(TraceIdUtil.HEADER_NAME, traceId);
+		return agentStreamingService.stream(LlmProvider.OPENAI, userId, sessionId, prompt, tools, toolChoice, traceId)
 			.map(e -> ServerSentEvent.builder(e).event(e.getType()).build());
 	}
 
@@ -39,9 +46,13 @@ public class AgentController {
 		@RequestParam(value = "sessionId", defaultValue = "default") String sessionId,
 		@RequestParam("prompt") String prompt,
 		@RequestParam(value = "tools", defaultValue = "true") boolean tools,
-		@RequestParam(value = "toolChoice", defaultValue = "AUTO") LlmToolChoiceMode toolChoice
+		@RequestParam(value = "toolChoice", defaultValue = "AUTO") LlmToolChoiceMode toolChoice,
+		@RequestHeader(value = TraceIdUtil.HEADER_NAME, required = false) String traceIdHeader,
+		ServerHttpResponse response
 	) {
-		return agentStreamingService.stream(LlmProvider.MINIMAX, userId, sessionId, prompt, tools, toolChoice)
+		String traceId = TraceIdUtil.normalizeOrGenerate(traceIdHeader);
+		response.getHeaders().set(TraceIdUtil.HEADER_NAME, traceId);
+		return agentStreamingService.stream(LlmProvider.MINIMAX, userId, sessionId, prompt, tools, toolChoice, traceId)
 			.map(e -> ServerSentEvent.builder(e).event(e.getType()).build());
 	}
 }

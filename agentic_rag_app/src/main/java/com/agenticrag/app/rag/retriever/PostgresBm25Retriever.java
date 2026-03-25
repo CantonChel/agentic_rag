@@ -3,11 +3,11 @@ package com.agenticrag.app.rag.retriever;
 import com.agenticrag.app.rag.model.TextChunk;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.springframework.dao.DataAccessException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.ResultSetExtractor;
@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 @Service
 @ConditionalOnProperty(name = "rag.retriever.postgres.enabled", havingValue = "true")
 public class PostgresBm25Retriever implements Retriever {
+	private static final Logger log = LoggerFactory.getLogger(PostgresBm25Retriever.class);
 	private final JdbcTemplate jdbcTemplate;
 	private final ObjectMapper objectMapper;
 
@@ -26,9 +27,14 @@ public class PostgresBm25Retriever implements Retriever {
 
 	@Override
 	public List<TextChunk> retrieve(String query, int topK) {
+		return retrieve(query, topK, "n/a");
+	}
+
+	public List<TextChunk> retrieve(String query, int topK, String traceId) {
 		if (query == null || query.trim().isEmpty() || topK <= 0) {
 			return new ArrayList<>();
 		}
+		long startNs = System.nanoTime();
 
 		String sql = ""
 			+ "select chunk_id, knowledge_id, content, metadata_json "
@@ -47,10 +53,39 @@ public class PostgresBm25Retriever implements Retriever {
 			ResultSetExtractor<List<TextChunk>> extractor = rs -> mapRows(rs);
 			List<TextChunk> primary = jdbcTemplate.query(sql, extractor, query, query, topK);
 			if (!primary.isEmpty()) {
+				long durationMs = (System.nanoTime() - startNs) / 1_000_000;
+				log.info(
+					"event=pg_bm25_retrieve traceId={} query={} topK={} primaryCount={} fallbackUsed=false durationMs={}",
+					traceId,
+					query,
+					topK,
+					primary.size(),
+					durationMs
+				);
 				return primary;
 			}
-			return jdbcTemplate.query(fuzzySql, extractor, query, query, topK);
+			List<TextChunk> fuzzy = jdbcTemplate.query(fuzzySql, extractor, query, query, topK);
+			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
+			log.info(
+				"event=pg_bm25_retrieve traceId={} query={} topK={} primaryCount=0 fallbackUsed=true fallbackCount={} durationMs={}",
+				traceId,
+				query,
+				topK,
+				fuzzy != null ? fuzzy.size() : 0,
+				durationMs
+			);
+			return fuzzy;
 		} catch (Exception e) {
+			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
+			log.warn(
+				"event=pg_bm25_retrieve_error traceId={} query={} topK={} durationMs={} type={} message={}",
+				traceId,
+				query,
+				topK,
+				durationMs,
+				e.getClass().getSimpleName(),
+				e.getMessage()
+			);
 			return new ArrayList<>();
 		}
 	}
