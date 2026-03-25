@@ -31,6 +31,8 @@ CONTEXT_BLOCK_PATTERN = re.compile(
     re.DOTALL,
 )
 CODE_BLOCK_PATTERN = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+THINK_BLOCK_PATTERN = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+THINK_TAG_PATTERN = re.compile(r"</?think>", re.IGNORECASE)
 
 PROMPT_SIGNATURE_CONTEXT_PRECISION = "Given question, answer and context verify if the context was useful"
 PROMPT_SIGNATURE_FAITHFULNESS_NLI = "Your task is to judge the faithfulness of a series of statements based on a given context."
@@ -413,6 +415,43 @@ def parse_json_payload(raw_text: str) -> Tuple[Optional[Any], Optional[str], Opt
     return None, None, "json_not_found"
 
 
+def extract_first_json_candidate(text: str) -> Optional[str]:
+    decoder = json.JSONDecoder()
+    for idx, ch in enumerate(text):
+        if ch not in "{[":
+            continue
+        try:
+            _, end = decoder.raw_decode(text[idx:])
+            return text[idx : idx + end]
+        except Exception:
+            continue
+    return None
+
+
+def sanitize_judge_output(raw_text: str) -> Tuple[str, bool]:
+    text = str(raw_text or "")
+    had_think = bool(THINK_TAG_PATTERN.search(text))
+    cleaned = THINK_BLOCK_PATTERN.sub("", text)
+
+    dangling_end = re.search(r"</think>", cleaned, re.IGNORECASE)
+    if dangling_end:
+        cleaned = cleaned[dangling_end.end() :]
+
+    cleaned = THINK_TAG_PATTERN.sub("", cleaned).strip()
+
+    if had_think:
+        block = CODE_BLOCK_PATTERN.search(cleaned)
+        if block:
+            payload = block.group(1).strip()
+            return f"```json\n{payload}\n```", True
+
+        candidate = extract_first_json_candidate(cleaned)
+        if candidate:
+            return candidate.strip(), True
+
+    return cleaned, had_think
+
+
 def _is_int_like(value: Any) -> bool:
     if isinstance(value, bool):
         return False
@@ -618,13 +657,43 @@ def run_ragas(records: List[EvalRecord], output_dir: Path, trace_ragas_judge: bo
             super().__init__(langchain_llm)
             self._writer = writer
 
+        def _sanitize_result_outputs(self, result: Any) -> Tuple[List[str], List[str], int]:
+            raw_outputs: List[str] = []
+            sanitized_outputs: List[str] = []
+            stripped_count = 0
+
+            generations = getattr(result, "generations", None) or []
+            if not (generations and isinstance(generations, list)):
+                return raw_outputs, sanitized_outputs, stripped_count
+
+            first = generations[0]
+            if not isinstance(first, list):
+                return raw_outputs, sanitized_outputs, stripped_count
+
+            for item in first:
+                raw_text = str(getattr(item, "text", ""))
+                sanitized_text, had_think = sanitize_judge_output(raw_text)
+                raw_outputs.append(raw_text)
+                sanitized_outputs.append(sanitized_text)
+                if had_think:
+                    stripped_count += 1
+                if sanitized_text != raw_text:
+                    try:
+                        item.text = sanitized_text
+                    except Exception:
+                        pass
+
+            return raw_outputs, sanitized_outputs, stripped_count
+
         def _record(
             self,
             prompt: Any,
             n: int,
             temperature: Optional[float],
             stop: Optional[List[str]],
-            result: Any,
+            outputs_raw: List[str],
+            outputs_sanitized: List[str],
+            think_stripped_count: int,
             mode: str,
         ) -> None:
             if self._writer is None:
@@ -634,13 +703,6 @@ def run_ragas(records: List[EvalRecord], output_dir: Path, trace_ragas_judge: bo
                 prompt_text = prompt.to_string()
             except Exception:
                 prompt_text = str(prompt)
-
-            outputs: List[str] = []
-            generations = getattr(result, "generations", None) or []
-            if generations and isinstance(generations, list):
-                first = generations[0]
-                if isinstance(first, list):
-                    outputs = [str(getattr(item, "text", "")) for item in first]
 
             model_name = str(
                 getattr(self.langchain_llm, "model_name", None)
@@ -657,7 +719,9 @@ def run_ragas(records: List[EvalRecord], output_dir: Path, trace_ragas_judge: bo
                     "stop": stop,
                     "expected_schema": classify_ragas_prompt(prompt_text),
                     "prompt": prompt_text,
-                    "outputs": outputs,
+                    "outputs": outputs_sanitized,
+                    "outputs_raw": outputs_raw,
+                    "think_stripped_count": think_stripped_count,
                 }
             )
 
@@ -676,7 +740,17 @@ def run_ragas(records: List[EvalRecord], output_dir: Path, trace_ragas_judge: bo
                 stop=stop,
                 callbacks=callbacks,
             )
-            self._record(prompt, n, temperature, stop, result, mode="sync")
+            outputs_raw, outputs_sanitized, stripped_count = self._sanitize_result_outputs(result)
+            self._record(
+                prompt,
+                n,
+                temperature,
+                stop,
+                outputs_raw,
+                outputs_sanitized,
+                stripped_count,
+                mode="sync",
+            )
             return result
 
         async def agenerate_text(
@@ -694,7 +768,17 @@ def run_ragas(records: List[EvalRecord], output_dir: Path, trace_ragas_judge: bo
                 stop=stop,
                 callbacks=callbacks,
             )
-            self._record(prompt, n, temperature, stop, result, mode="async")
+            outputs_raw, outputs_sanitized, stripped_count = self._sanitize_result_outputs(result)
+            self._record(
+                prompt,
+                n,
+                temperature,
+                stop,
+                outputs_raw,
+                outputs_sanitized,
+                stripped_count,
+                mode="async",
+            )
             return result
 
     judge_llm = ChatOpenAI(
