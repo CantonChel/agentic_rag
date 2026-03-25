@@ -24,10 +24,12 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
@@ -207,6 +209,8 @@ public class DocreaderCallbackService {
 					if (split == null) {
 						continue;
 					}
+					String splitContent = split.getText() != null ? split.getText() : "";
+					List<DocreaderCallbackRequest.ImageInfoPayload> splitImages = imagesForContent(splitContent, images);
 					Map<String, Object> splitMetadata = split.getMetadata() != null ? split.getMetadata() : baseMetadata;
 					String chunkId = split.getChunkId() != null && !split.getChunkId().trim().isEmpty()
 						? split.getChunkId().trim()
@@ -214,10 +218,10 @@ public class DocreaderCallbackService {
 					ChunkEntity entity = createBaseEntity(knowledgeId, payload, chunkId, generatedIndex++);
 					entity.setStartAt(null);
 					entity.setEndAt(null);
-					entity.setContent(split.getText() != null ? split.getText() : "");
+					entity.setContent(splitContent);
 					entity.setMetadataJson(toJson(splitMetadata));
-					entity.setImageInfoJson(j == 0 ? toJson(images) : null);
-					mainRefs.add(new MainChunkRef(entity, j == 0 ? images : Collections.emptyList()));
+					entity.setImageInfoJson(splitImages.isEmpty() ? null : toJson(splitImages));
+					mainRefs.add(new MainChunkRef(entity, splitImages));
 				}
 				continue;
 			}
@@ -382,6 +386,54 @@ public class DocreaderCallbackService {
 		}
 		matcher.appendTail(sb);
 		return sb.toString();
+	}
+
+	private List<DocreaderCallbackRequest.ImageInfoPayload> imagesForContent(
+		String content,
+		List<DocreaderCallbackRequest.ImageInfoPayload> images
+	) {
+		if (content == null || content.trim().isEmpty() || images == null || images.isEmpty()) {
+			return Collections.emptyList();
+		}
+		Set<String> refs = extractMarkdownImageRefs(content);
+		if (refs.isEmpty()) {
+			return Collections.emptyList();
+		}
+		List<DocreaderCallbackRequest.ImageInfoPayload> out = new ArrayList<>();
+		for (DocreaderCallbackRequest.ImageInfoPayload image : images) {
+			if (image == null) {
+				continue;
+			}
+			String resolved = normalizeRef(resolveImageUrl(image));
+			String original = normalizeRef(image.getOriginalUrl());
+			if ((resolved != null && refs.contains(resolved)) || (original != null && refs.contains(original))) {
+				out.add(image);
+			}
+		}
+		return out;
+	}
+
+	private Set<String> extractMarkdownImageRefs(String content) {
+		Set<String> refs = new HashSet<>();
+		if (content == null || content.trim().isEmpty()) {
+			return refs;
+		}
+		Matcher matcher = MARKDOWN_IMAGE_PATTERN.matcher(content);
+		while (matcher.find()) {
+			String ref = normalizeRef(matcher.group(2));
+			if (ref != null) {
+				refs.add(ref);
+			}
+		}
+		return refs;
+	}
+
+	private String normalizeRef(String value) {
+		if (value == null) {
+			return null;
+		}
+		String out = value.trim();
+		return out.isEmpty() ? null : out;
 	}
 
 	private String resolveImageUrl(DocreaderCallbackRequest.ImageInfoPayload image) {
