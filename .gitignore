@@ -3,6 +3,7 @@
 .LSOverride
 
 *.log
+.logs/
 
 .env
 .env.*
@@ -32,7 +33,7 @@ agentic项目技术总结/
 
 test-doc/
 memory/users/
-node_modules
-**/node_modules/
 .venv/
-.logs/
+venv/
+node_modules/
+**/node_modules/

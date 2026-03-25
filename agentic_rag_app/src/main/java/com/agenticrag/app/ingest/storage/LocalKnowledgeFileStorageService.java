@@ -41,6 +41,18 @@ public class LocalKnowledgeFileStorageService implements KnowledgeFileStorageSer
 		return filePath;
 	}
 
+	@Override
+	public void delete(String filePath) {
+		if (filePath == null || filePath.trim().isEmpty()) {
+			return;
+		}
+		try {
+			Path file = Paths.get(filePath).toAbsolutePath().normalize();
+			Files.deleteIfExists(file);
+		} catch (Exception ignored) {
+		}
+	}
+
 	private String sanitizeFileName(String input) {
 		if (input == null || input.trim().isEmpty()) {
 			return "upload.bin";

@@ -14,6 +14,10 @@ import org.springframework.data.repository.query.Param;
 public interface ParseJobRepository extends JpaRepository<ParseJobEntity, String> {
 	Optional<ParseJobEntity> findByIdempotencyKey(String idempotencyKey);
 
+	List<ParseJobEntity> findByKnowledgeId(String knowledgeId);
+
+	long deleteByKnowledgeId(String knowledgeId);
+
 	List<ParseJobEntity> findTop100ByStatusAndNextRetryAtLessThanEqualOrderByNextRetryAtAsc(ParseJobStatus status, Instant now);
 
 	List<ParseJobEntity> findTop100ByStatusInAndLeaseUntilLessThanEqualOrderByLeaseUntilAsc(Collection<ParseJobStatus> statuses, Instant leaseUntil);

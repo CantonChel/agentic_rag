@@ -9,14 +9,17 @@ import com.agenticrag.app.tool.ToolDefinition;
 import com.agenticrag.app.tool.ToolResult;
 import com.agenticrag.app.tool.ToolRouter;
 import com.agenticrag.app.session.SessionScope;
+import com.agenticrag.app.trace.TraceIdUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.http.MediaType;
+import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -51,12 +54,16 @@ public class ToolController {
 	public Mono<ToolResult> execute(
 		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "sessionId", defaultValue = "default") String sessionId,
-		@RequestBody ExecuteToolRequest request
+		@RequestBody ExecuteToolRequest request,
+		@RequestHeader(value = TraceIdUtil.HEADER_NAME, required = false) String traceIdHeader,
+		ServerHttpResponse response
 	) {
 		String uid = SessionScope.normalizeUserId(userId);
 		String sid = SessionScope.normalizeSessionId(sessionId);
+		String traceId = TraceIdUtil.normalizeOrGenerate(traceIdHeader);
+		response.getHeaders().set(TraceIdUtil.HEADER_NAME, traceId);
 		String scopedSid = SessionScope.scopedSessionId(uid, sid);
-		ToolExecutionContext context = new ToolExecutionContext(UUID.randomUUID().toString(), uid, sid);
+		ToolExecutionContext context = new ToolExecutionContext(UUID.randomUUID().toString(), uid, sid, traceId);
 		return toolRouter.getTool(request.getName())
 			.map(t -> {
 				ToolArgumentValidator.ValidationResult vr = toolArgumentValidator.validate(t.parametersSchema(), request.getArguments());

@@ -3,126 +3,845 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>知识库与上传页面</title>
+    <title>知识库管理系统</title>
     <style>
-      body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f4f6f9; color: #111827; }
-      .container { max-width: 1100px; margin: 0 auto; padding: 16px; }
-      .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-      .topbar a { color: #2563eb; text-decoration: none; }
-      .panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
-      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-      .col { display: flex; flex-direction: column; gap: 6px; }
-      label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #4b5563; }
-      input, textarea, button { font: inherit; }
-      input, textarea { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 8px; }
-      textarea { min-height: 88px; }
-      button { padding: 8px 12px; border: 1px solid #2563eb; background: #2563eb; color: #fff; border-radius: 8px; cursor: pointer; }
-      button.secondary { background: #fff; color: #2563eb; }
-      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-      pre { background: #0b1020; color: #c8d1ff; padding: 10px; border-radius: 8px; overflow: auto; min-height: 96px; white-space: pre-wrap; word-break: break-word; }
-      .status-badge { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 12px; background: #e5e7eb; color: #111827; }
-      .status-success { background: #dcfce7; color: #166534; }
-      .status-failed, .status-dead_letter { background: #fee2e2; color: #991b1b; }
-      .status-running { background: #dbeafe; color: #1e40af; }
-      .layout { display: grid; grid-template-columns: 340px 1fr; gap: 12px; }
-      .kb-tree { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; max-height: 560px; overflow: auto; background: #fafafa; }
-      .kb-item { border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px 8px; margin-bottom: 8px; background: #fff; }
-      .kb-item summary { cursor: pointer; font-weight: 600; }
-      .doc-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
-      .doc-btn { text-align: left; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; color: #111827; padding: 8px; cursor: pointer; }
-      .doc-btn:hover { border-color: #93c5fd; background: #eff6ff; }
-      .doc-name { font-weight: 600; }
-      .doc-meta { font-size: 12px; color: #6b7280; margin-top: 4px; }
-      .chunk-list { display: flex; flex-direction: column; gap: 10px; }
-      .chunk-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; background: #fff; }
-      .chunk-header { font-size: 12px; color: #4b5563; margin-bottom: 8px; }
-      .chunk-content { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; white-space: pre-wrap; }
-      .images { margin-top: 10px; border-top: 1px dashed #d1d5db; padding-top: 8px; }
-      .image-item { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; margin-top: 6px; background: #fafafa; }
-      .image-item img { max-width: 220px; max-height: 160px; border: 1px solid #d1d5db; border-radius: 6px; display: block; margin-top: 6px; }
-      .muted { color: #6b7280; font-size: 12px; }
-      @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .kb-tree { max-height: none; } }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        color: #1f2937;
+      }
+
+      .app-container {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .header {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        padding: 16px 24px;
+        box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
+      }
+
+      .header-content {
+        max-width: 1400px;
+        margin: 0 auto;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .logo {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .logo-icon {
+        width: 40px;
+        height: 40px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 24px;
+        font-weight: bold;
+      }
+
+      .logo-text h1 {
+        font-size: 20px;
+        font-weight: 600;
+        color: #1f2937;
+      }
+
+      .logo-text p {
+        font-size: 12px;
+        color: #6b7280;
+      }
+
+      .nav-links {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+      }
+
+      .nav-link {
+        padding: 8px 16px;
+        background: white;
+        color: #667eea;
+        text-decoration: none;
+        border-radius: 8px;
+        border: 1px solid #667eea;
+        transition: all 0.3s ease;
+        font-weight: 500;
+      }
+
+      .nav-link:hover {
+        background: #667eea;
+        color: white;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+      }
+
+      .main-content {
+        flex: 1;
+        padding: 24px;
+        max-width: 1400px;
+        width: 100%;
+        margin: 0 auto;
+      }
+
+      .panel {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        transition: all 0.3s ease;
+      }
+
+      .panel:hover {
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+      }
+
+      .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 2px solid #f3f4f6;
+      }
+
+      .panel-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #1f2937;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .panel-title::before {
+        content: '';
+        width: 4px;
+        height: 20px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 2px;
+      }
+
+      .row {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        align-items: flex-end;
+      }
+
+      .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        flex: 1;
+        min-width: 200px;
+      }
+
+      .form-group label {
+        font-size: 13px;
+        font-weight: 500;
+        color: #6b7280;
+      }
+
+      .form-control {
+        padding: 10px 14px;
+        border: 2px solid #e5e7eb;
+        border-radius: 10px;
+        font-size: 14px;
+        transition: all 0.3s ease;
+        background: #f9fafb;
+      }
+
+      .form-control:focus {
+        outline: none;
+        border-color: #667eea;
+        background: white;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+      }
+
+      select.form-control {
+        cursor: pointer;
+      }
+
+      textarea.form-control {
+        min-height: 88px;
+        resize: vertical;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+
+      .btn {
+        padding: 10px 18px;
+        border: none;
+        border-radius: 10px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+      }
+
+      .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+      }
+
+      .btn-secondary {
+        background: white;
+        color: #667eea;
+        border: 2px solid #e5e7eb;
+      }
+
+      .btn-secondary:hover {
+        border-color: #667eea;
+        background: #f9fafb;
+      }
+
+      .btn-danger {
+        background: #ef4444;
+        color: white;
+      }
+
+      .btn-danger:hover {
+        background: #dc2626;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+      }
+
+      .btn-success {
+        background: #10b981;
+        color: white;
+      }
+
+      .btn-success:hover {
+        background: #059669;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+      }
+
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none !important;
+      }
+
+      .btn-group {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+      }
+
+      .output-box {
+        margin-top: 16px;
+        padding: 14px;
+        background: #0f172a;
+        color: #c8d1ff;
+        border-radius: 10px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 13px;
+        overflow: auto;
+        max-height: 200px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.5;
+      }
+
+      .output-box:empty {
+        display: none;
+      }
+
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        background: #f3f4f6;
+        color: #4b5563;
+      }
+
+      .status-success {
+        background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+        color: #166534;
+      }
+
+      .status-failed, .status-dead_letter {
+        background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+        color: #991b1b;
+      }
+
+      .status-running {
+        background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+        color: #1e40af;
+        animation: pulse 2s infinite;
+      }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 380px 1fr;
+        gap: 20px;
+      }
+
+      .kb-tree {
+        background: #fafafa;
+        border: 2px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 14px;
+        max-height: 600px;
+        overflow-y: auto;
+      }
+
+      .kb-item {
+        border: 2px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 12px;
+        margin-bottom: 12px;
+        background: white;
+        transition: all 0.3s ease;
+      }
+
+      .kb-item:hover {
+        border-color: #667eea;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+      }
+
+      .kb-item summary {
+        cursor: pointer;
+        font-weight: 600;
+        color: #1f2937;
+        font-size: 14px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .kb-item summary::before {
+        content: '📁';
+        font-size: 16px;
+      }
+
+      .kb-item[open] summary::before {
+        content: '📂';
+      }
+
+      .kb-meta {
+        margin-top: 8px;
+        font-size: 12px;
+        color: #6b7280;
+        padding-left: 24px;
+      }
+
+      .doc-list {
+        margin-top: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding-left: 4px;
+      }
+
+      .doc-btn {
+        text-align: left;
+        border: 2px solid #e5e7eb;
+        border-radius: 10px;
+        background: white;
+        color: #1f2937;
+        padding: 12px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      .doc-btn:hover {
+        border-color: #667eea;
+        background: linear-gradient(135deg, #f0f4ff 0%, #f5f3ff 100%);
+        transform: translateX(4px);
+      }
+
+      .doc-name {
+        font-weight: 600;
+        font-size: 14px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .doc-name::before {
+        content: '📄';
+      }
+
+      .doc-meta {
+        font-size: 12px;
+        color: #6b7280;
+        margin-top: 4px;
+        padding-left: 20px;
+      }
+
+      .doc-detail-panel {
+        background: white;
+        border: 2px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+
+      .doc-detail-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+        padding-bottom: 12px;
+        border-bottom: 2px solid #f3f4f6;
+      }
+
+      .doc-detail-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #1f2937;
+      }
+
+      .doc-detail-meta {
+        font-size: 13px;
+        color: #6b7280;
+      }
+
+      .chunk-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .chunk-card {
+        border: 2px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 16px;
+        background: white;
+        transition: all 0.3s ease;
+      }
+
+      .chunk-card:hover {
+        border-color: #667eea;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+      }
+
+      .chunk-header {
+        font-size: 12px;
+        color: #6b7280;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .chunk-header::before {
+        content: '📝';
+      }
+
+      .chunk-content {
+        background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 12px;
+        white-space: pre-wrap;
+        font-size: 13px;
+        line-height: 1.6;
+        color: #374151;
+      }
+
+      .images-section {
+        margin-top: 12px;
+        border-top: 2px dashed #e5e7eb;
+        padding-top: 12px;
+      }
+
+      .images-title {
+        font-size: 12px;
+        color: #6b7280;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .images-title::before {
+        content: '🖼️';
+      }
+
+      .image-item {
+        border: 2px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 12px;
+        margin-top: 8px;
+        background: #fafafa;
+      }
+
+      .image-item img {
+        max-width: 280px;
+        max-height: 180px;
+        border: 2px solid #e5e7eb;
+        border-radius: 8px;
+        display: block;
+        margin-top: 8px;
+        transition: all 0.3s ease;
+      }
+
+      .image-item img:hover {
+        transform: scale(1.02);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      }
+
+      .file-upload-area {
+        border: 2px dashed #d1d5db;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        transition: all 0.3s ease;
+        background: #fafafa;
+      }
+
+      .file-upload-area:hover {
+        border-color: #667eea;
+        background: linear-gradient(135deg, #f0f4ff 0%, #f5f3ff 100%);
+      }
+
+      .file-upload-area input[type="file"] {
+        display: none;
+      }
+
+      .file-upload-label {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        color: #6b7280;
+      }
+
+      .file-upload-label::before {
+        content: '📎';
+        font-size: 32px;
+      }
+
+      .file-name {
+        margin-top: 12px;
+        font-size: 13px;
+        color: #667eea;
+        font-weight: 500;
+      }
+
+      .muted {
+        color: #9ca3af;
+        font-size: 13px;
+      }
+
+      .success-text {
+        color: #10b981;
+      }
+
+      .error-text {
+        color: #ef4444;
+      }
+
+      .scrollbar-thin::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      .scrollbar-thin::-webkit-scrollbar-track {
+        background: #f3f4f6;
+        border-radius: 4px;
+      }
+
+      .scrollbar-thin::-webkit-scrollbar-thumb {
+        background: #d1d5db;
+        border-radius: 4px;
+      }
+
+      .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+        background: #9ca3af;
+      }
+
+      @media (max-width: 1024px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .kb-tree {
+          max-height: 400px;
+        }
+      }
+
+      @media (max-width: 768px) {
+        .header-content {
+          flex-direction: column;
+          gap: 16px;
+        }
+
+        .row {
+          flex-direction: column;
+        }
+
+        .form-group {
+          min-width: 100%;
+        }
+
+        .btn-group {
+          flex-direction: column;
+        }
+
+        .btn {
+          width: 100%;
+          justify-content: center;
+        }
+      }
+
+      .loading-spinner {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid #e5e7eb;
+        border-top-color: #667eea;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 40px 20px;
+        color: #9ca3af;
+      }
+
+      .empty-state-icon {
+        font-size: 48px;
+        margin-bottom: 12px;
+      }
+
+      .empty-state-text {
+        font-size: 14px;
+      }
+
+      .tip-text {
+        background: linear-gradient(135deg, #eff6ff 0%, #f0f4ff 100%);
+        border: 1px solid #bfdbfe;
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-size: 13px;
+        color: #1e40af;
+        margin-top: 12px;
+      }
     </style>
   </head>
   <body>
-    <div class="container">
-      <div class="topbar">
-        <h2 style="margin: 0;">知识库与文档上传页面</h2>
-        <a href="/chat.html">去聊天页面</a>
-      </div>
-
-      <div class="panel">
-        <h3 style="margin-top: 0;">基础配置</h3>
-        <div class="row">
-          <label>
-            API Base URL
-            <input id="apiBase" class="mono" placeholder="留空表示同源" style="width: 240px;" />
-          </label>
-          <label>
-            Knowledge Base ID
-            <select id="kbIdSelect" style="width: 220px; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 8px;">
-              <option value="kb-demo">kb-demo</option>
-              <option value="__custom__">手动输入</option>
-            </select>
-          </label>
-          <label>
-            自定义 Knowledge Base ID
-            <input id="kbIdCustom" class="mono" placeholder="仅当选择手动输入时生效" style="width: 220px;" />
-          </label>
-          <span class="muted" id="kbLoadTip">知识库列表加载中...</span>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h3 style="margin-top: 0;">上传文档（创建异步任务）</h3>
-        <div class="row">
-          <label style="flex: 1; min-width: 280px;">
-            metadata (JSON)
-            <textarea id="metadata" class="mono">{"source":"web-ui","tags":["demo"]}</textarea>
-          </label>
-        </div>
-        <div class="row">
-          <input id="fileInput" type="file" />
-          <button id="uploadBtn">上传并创建任务</button>
-        </div>
-        <div class="row" style="margin-top: 8px;">
-          <label>
-            最新 jobId
-            <input id="jobId" class="mono" style="width: 360px;" />
-          </label>
-          <span id="statusBadge" class="status-badge">unknown</span>
-        </div>
-        <div class="row">
-          <button class="secondary" id="queryBtn">查询一次</button>
-          <button class="secondary" id="startPollBtn">开始轮询</button>
-          <button class="secondary" id="stopPollBtn">停止轮询</button>
-          <button class="secondary" id="retryBtn">手动重试</button>
-        </div>
-        <pre id="uploadOut" class="mono"></pre>
-        <pre id="jobOut" class="mono"></pre>
-      </div>
-
-      <div class="panel">
-        <h3 style="margin-top: 0;">知识库 / 折叠 / 文档 / 分块</h3>
-        <div class="row" style="margin-bottom: 8px;">
-          <button class="secondary" id="refreshKbBtn">刷新知识库树</button>
-          <span class="muted">展开知识库可查看文档，点击文档可查看分块和图片信息。</span>
-        </div>
-
-        <div class="layout">
-          <div>
-            <div class="kb-tree" id="kbTree"></div>
-          </div>
-
-          <div>
-            <div class="col" style="margin-bottom: 8px;">
-              <strong id="selectedDocTitle">未选择文档</strong>
-              <span class="muted" id="selectedDocMeta">请在左侧点击一个文档查看分块。</span>
+    <div class="app-container">
+      <header class="header">
+        <div class="header-content">
+          <div class="logo">
+            <div class="logo-icon">KB</div>
+            <div class="logo-text">
+              <h1>知识库管理系统</h1>
+              <p>文档上传、知识库管理与分块浏览</p>
             </div>
-            <div class="chunk-list" id="chunkList"></div>
+          </div>
+          <nav class="nav-links">
+            <a href="/chat.html" class="nav-link">💬 聊天页面</a>
+            <a href="/index.html" class="nav-link">🏠 首页</a>
+          </nav>
+        </div>
+      </header>
+
+      <main class="main-content">
+        <div class="panel">
+          <div class="panel-header">
+            <h2 class="panel-title">基础配置</h2>
+            <span id="kbLoadTip" class="muted">知识库列表加载中...</span>
+          </div>
+          <div class="row">
+            <div class="form-group">
+              <label>API Base URL</label>
+              <input id="apiBase" class="form-control" placeholder="留空表示同源" />
+            </div>
+            <div class="form-group">
+              <label>当前知识库</label>
+              <select id="kbIdSelect" class="form-control">
+                <option value="kb-demo">kb-demo</option>
+                <option value="__custom__">手动输入</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>自定义 KB ID</label>
+              <input id="kbIdCustom" class="form-control" placeholder="仅当选择手动输入时生效" />
+            </div>
           </div>
         </div>
-      </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2 class="panel-title">知识库管理</h2>
+          </div>
+          <div class="row">
+            <div class="form-group">
+              <label>新建 KB ID</label>
+              <input id="createKbId" class="form-control" placeholder="例如 kb-sales" />
+            </div>
+            <div class="form-group">
+              <label>名称</label>
+              <input id="kbName" class="form-control" placeholder="知识库名称" />
+            </div>
+            <div class="form-group" style="flex: 2;">
+              <label>描述</label>
+              <input id="kbDescription" class="form-control" placeholder="知识库描述" />
+            </div>
+            <div class="form-group" style="flex: 0.5; min-width: 120px;">
+              <label>启用状态</label>
+              <select id="kbEnabled" class="form-control">
+                <option value="true">启用</option>
+                <option value="false">禁用</option>
+              </select>
+            </div>
+          </div>
+          <div class="btn-group">
+            <button id="createKbBtn" class="btn btn-primary">➕ 创建知识库</button>
+            <button id="loadKbProfileBtn" class="btn btn-secondary">📖 读取当前知识库</button>
+            <button id="updateKbBtn" class="btn btn-secondary">✏️ 更新知识库</button>
+            <button id="deleteKbBtn" class="btn btn-danger">🗑️ 删除知识库</button>
+          </div>
+          <pre id="kbOpOut" class="output-box scrollbar-thin"></pre>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2 class="panel-title">文档上传</h2>
+            <span id="statusBadge" class="status-badge">等待上传</span>
+          </div>
+          <div class="row">
+            <div class="form-group" style="flex: 1;">
+              <label>文档元数据 (JSON)</label>
+              <textarea id="metadata" class="form-control">{"source":"web-ui","tags":["demo"]}</textarea>
+            </div>
+          </div>
+          <div class="row" style="margin-top: 16px;">
+            <div class="file-upload-area" style="flex: 1;">
+              <label class="file-upload-label">
+                <span>点击或拖拽文件到此处上传</span>
+                <input id="fileInput" type="file" />
+              </label>
+              <div id="fileName" class="file-name"></div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <button id="uploadBtn" class="btn btn-success" style="min-width: 160px;">📤 上传并创建任务</button>
+              <button id="queryBtn" class="btn btn-secondary">🔍 查询状态</button>
+            </div>
+          </div>
+          <div class="row" style="margin-top: 12px;">
+            <div class="form-group">
+              <label>任务 ID</label>
+              <input id="jobId" class="form-control" placeholder="上传后自动填充" readonly />
+            </div>
+            <div class="btn-group" style="margin-top: 0;">
+              <button id="startPollBtn" class="btn btn-secondary">▶️ 开始轮询</button>
+              <button id="stopPollBtn" class="btn btn-secondary">⏹️ 停止轮询</button>
+              <button id="retryBtn" class="btn btn-secondary">🔄 手动重试</button>
+            </div>
+          </div>
+          <pre id="uploadOut" class="output-box scrollbar-thin"></pre>
+          <pre id="jobOut" class="output-box scrollbar-thin"></pre>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2 class="panel-title">知识库浏览</h2>
+            <button id="refreshKbBtn" class="btn btn-primary">🔄 刷新知识库树</button>
+          </div>
+          <div class="tip-text">
+            💡 展开知识库可查看文档，点击文档可查看和编辑文档详情，并浏览文档分块内容。
+          </div>
+
+          <div class="layout" style="margin-top: 16px;">
+            <div class="kb-tree scrollbar-thin" id="kbTree">
+              <div class="empty-state">
+                <div class="empty-state-icon">📚</div>
+                <div class="empty-state-text">点击"刷新知识库树"加载数据</div>
+              </div>
+            </div>
+
+            <div>
+              <div class="doc-detail-panel">
+                <div class="doc-detail-header">
+                  <span class="doc-detail-title" id="selectedDocTitle">未选择文档</span>
+                </div>
+                <div class="doc-detail-meta" id="selectedDocMeta">请在左侧点击一个文档查看详情</div>
+                <div class="row" style="margin-top: 16px;">
+                  <div class="form-group">
+                    <label>文档 ID</label>
+                    <input id="docKnowledgeId" class="form-control" readonly />
+                  </div>
+                  <div class="form-group">
+                    <label>所属 KB</label>
+                    <input id="docKbId" class="form-control" />
+                  </div>
+                  <div class="form-group">
+                    <label>文件名</label>
+                    <input id="docFileName" class="form-control" />
+                  </div>
+                  <div class="form-group" style="flex: 0.5; min-width: 120px;">
+                    <label>启用状态</label>
+                    <select id="docEnableStatus" class="form-control">
+                      <option value="enabled">启用</option>
+                      <option value="disabled">禁用</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="row" style="margin-top: 12px;">
+                  <div class="form-group">
+                    <label>文档元数据 (JSON)</label>
+                    <textarea id="docMetadata" class="form-control" style="min-height: 74px;"></textarea>
+                  </div>
+                </div>
+                <div class="btn-group">
+                  <button id="updateDocBtn" class="btn btn-primary">💾 更新文档</button>
+                  <button id="deleteDocBtn" class="btn btn-danger">🗑️ 删除文档</button>
+                </div>
+                <pre id="docOpOut" class="output-box scrollbar-thin"></pre>
+              </div>
+              <div class="chunk-list" id="chunkList"></div>
+            </div>
+          </div>
+        </div>
+      </main>
     </div>
 
     <script>
@@ -130,8 +849,20 @@
       const kbIdSelect = document.getElementById('kbIdSelect');
       const kbIdCustom = document.getElementById('kbIdCustom');
       const kbLoadTip = document.getElementById('kbLoadTip');
+
+      const createKbIdInput = document.getElementById('createKbId');
+      const kbNameInput = document.getElementById('kbName');
+      const kbDescriptionInput = document.getElementById('kbDescription');
+      const kbEnabledSelect = document.getElementById('kbEnabled');
+      const createKbBtn = document.getElementById('createKbBtn');
+      const loadKbProfileBtn = document.getElementById('loadKbProfileBtn');
+      const updateKbBtn = document.getElementById('updateKbBtn');
+      const deleteKbBtn = document.getElementById('deleteKbBtn');
+      const kbOpOut = document.getElementById('kbOpOut');
+
       const metadataInput = document.getElementById('metadata');
       const fileInput = document.getElementById('fileInput');
+      const fileNameDiv = document.getElementById('fileName');
       const uploadBtn = document.getElementById('uploadBtn');
       const jobIdInput = document.getElementById('jobId');
       const statusBadge = document.getElementById('statusBadge');
@@ -141,13 +872,33 @@
       const startPollBtn = document.getElementById('startPollBtn');
       const stopPollBtn = document.getElementById('stopPollBtn');
       const retryBtn = document.getElementById('retryBtn');
+
       const refreshKbBtn = document.getElementById('refreshKbBtn');
       const kbTree = document.getElementById('kbTree');
+
       const selectedDocTitle = document.getElementById('selectedDocTitle');
       const selectedDocMeta = document.getElementById('selectedDocMeta');
+      const docKnowledgeIdInput = document.getElementById('docKnowledgeId');
+      const docKbIdInput = document.getElementById('docKbId');
+      const docFileNameInput = document.getElementById('docFileName');
+      const docEnableStatusSelect = document.getElementById('docEnableStatus');
+      const docMetadataInput = document.getElementById('docMetadata');
+      const updateDocBtn = document.getElementById('updateDocBtn');
+      const deleteDocBtn = document.getElementById('deleteDocBtn');
+      const docOpOut = document.getElementById('docOpOut');
       const chunkList = document.getElementById('chunkList');
 
       let pollTimer = null;
+      let currentSelectedDoc = null;
+
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files[0];
+        if (file) {
+          fileNameDiv.textContent = '已选择: ' + file.name + ' (' + formatBytes(file.size) + ')';
+        } else {
+          fileNameDiv.textContent = '';
+        }
+      });
 
       function apiUrl(path) {
         const base = (apiBaseInput.value || '').trim();
@@ -169,7 +920,7 @@
             if (!id) continue;
             const option = document.createElement('option');
             option.value = id;
-            option.textContent = id;
+            option.textContent = id + (kb.name ? ' (' + kb.name + ')' : '');
             kbIdSelect.appendChild(option);
           }
         }
@@ -200,102 +951,20 @@
         statusBadge.textContent = s;
       }
 
-      async function uploadFile() {
-        const kbId = getSelectedKbId();
-        const file = fileInput.files && fileInput.files[0];
-        if (!kbId) {
-          uploadOut.textContent = 'kbId 不能为空';
-          return;
-        }
-        if (!file) {
-          uploadOut.textContent = '请先选择文件';
-          return;
-        }
-
-        const fd = new FormData();
-        fd.append('file', file);
-        fd.append('metadata', metadataInput.value || '{}');
-
-        const url = apiUrl('/api/knowledge-bases/' + encodeURIComponent(kbId) + '/knowledge/file');
-        const res = await fetch(url, { method: 'POST', body: fd });
-        const text = await res.text();
-        uploadOut.textContent = text;
-
-        if (!res.ok) {
-          setStatusBadge('failed');
-          return;
-        }
-
-        try {
-          const data = JSON.parse(text);
-          if (data.jobId) jobIdInput.value = data.jobId;
-          setStatusBadge(data.status || 'queued');
-        } catch (_) {
-          setStatusBadge('unknown');
-        }
-
-        refreshKnowledgeBases();
-      }
-
-      async function queryJob() {
-        const jobId = (jobIdInput.value || '').trim();
-        if (!jobId) {
-          jobOut.textContent = 'jobId 不能为空';
-          return;
-        }
-
-        const url = apiUrl('/api/jobs/' + encodeURIComponent(jobId));
-        const res = await fetch(url);
-        const text = await res.text();
-        jobOut.textContent = text;
-
-        if (!res.ok) {
-          setStatusBadge('failed');
-          return;
-        }
-
-        try {
-          const data = JSON.parse(text);
-          setStatusBadge(data.status || 'unknown');
-          const terminal = ['success', 'failed', 'dead_letter'];
-          if (terminal.includes((data.status || '').toLowerCase())) {
-            stopPolling();
-            refreshKnowledgeBases();
-          }
-        } catch (_) {}
-      }
-
-      function startPolling() {
-        stopPolling();
-        queryJob();
-        pollTimer = setInterval(queryJob, 2000);
-      }
-
-      function stopPolling() {
-        if (pollTimer) {
-          clearInterval(pollTimer);
-          pollTimer = null;
-        }
-      }
-
-      async function retryJob() {
-        const jobId = (jobIdInput.value || '').trim();
-        if (!jobId) {
-          jobOut.textContent = 'jobId 不能为空';
-          return;
-        }
-        const url = apiUrl('/api/jobs/' + encodeURIComponent(jobId) + '/retry');
-        const res = await fetch(url, { method: 'POST' });
-        const text = await res.text();
-        jobOut.textContent = text;
-      }
-
       function formatBytes(bytes) {
         if (bytes == null || Number.isNaN(Number(bytes))) return '-';
         const n = Number(bytes);
         if (n < 1024) return n + ' B';
         if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
         return (n / (1024 * 1024)).toFixed(1) + ' MB';
+      }
+
+      function formatJson(data) {
+        try {
+          return JSON.stringify(data, null, 2);
+        } catch (_) {
+          return String(data);
+        }
       }
 
       function isPreviewable(url) {
@@ -327,18 +996,22 @@
         a.target = '_blank';
         a.rel = 'noopener noreferrer';
         a.textContent = url;
+        a.style.color = '#667eea';
+        a.style.textDecoration = 'none';
+        a.style.wordBreak = 'break-all';
         div.appendChild(a);
         root.appendChild(div);
       }
 
       async function refreshKnowledgeBases() {
-        kbTree.textContent = '加载中...';
+        kbTree.innerHTML = '<div class="empty-state"><div class="loading-spinner"></div><div class="empty-state-text">加载中...</div></div>';
         kbLoadTip.textContent = '知识库列表加载中...';
+        
         const res = await fetch(apiUrl('/api/knowledge-bases'));
         const text = await res.text();
         if (!res.ok) {
-          kbLoadTip.textContent = '知识库列表加载失败：' + text;
-          kbTree.textContent = '加载失败: ' + text;
+          kbLoadTip.textContent = '知识库列表加载失败';
+          kbTree.innerHTML = '<div class="empty-state"><div class="empty-state-icon">❌</div><div class="empty-state-text">加载失败: ' + text + '</div></div>';
           return;
         }
 
@@ -347,16 +1020,16 @@
           bases = JSON.parse(text) || [];
         } catch (_) {
           kbLoadTip.textContent = '知识库列表解析失败';
-          kbTree.textContent = '返回不是合法 JSON';
+          kbTree.innerHTML = '<div class="empty-state"><div class="empty-state-icon">❌</div><div class="empty-state-text">返回不是合法 JSON</div></div>';
           return;
         }
 
-        kbTree.innerHTML = '';
         setKbOptions(bases);
-        kbLoadTip.textContent = bases.length ? '已加载知识库列表' : '暂无知识库';
+        kbLoadTip.textContent = bases.length ? '已加载 ' + bases.length + ' 个知识库' : '暂无知识库';
+        kbTree.innerHTML = '';
+        
         if (!bases.length) {
-          kbLoadTip.textContent = '暂无知识库';
-          kbTree.textContent = '暂无知识库';
+          kbTree.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📭</div><div class="empty-state-text">暂无知识库</div></div>';
           return;
         }
 
@@ -365,23 +1038,30 @@
           details.className = 'kb-item';
 
           const summary = document.createElement('summary');
-          summary.textContent = (kb.knowledgeBaseId || 'unknown') + ' (' + (kb.documentCount || 0) + ')';
+          summary.textContent = (kb.knowledgeBaseId || 'unknown') + ' (' + (kb.documentCount || 0) + ' 文档)';
           details.appendChild(summary);
+
+          const meta = document.createElement('div');
+          meta.className = 'kb-meta';
+          meta.innerHTML = '名称: ' + (kb.name || '-') + '<br>状态: ' + (kb.enabled !== false ? '<span class="success-text">启用</span>' : '<span class="error-text">禁用</span>');
+          details.appendChild(meta);
 
           const docList = document.createElement('div');
           docList.className = 'doc-list';
-          docList.textContent = '展开后加载文档...';
+          docList.innerHTML = '<div class="muted">展开后加载文档...</div>';
           details.appendChild(docList);
 
           details.addEventListener('toggle', async () => {
             if (!details.open || details.dataset.loaded === '1') return;
             details.dataset.loaded = '1';
-            docList.textContent = '文档加载中...';
+            docList.innerHTML = '<div class="empty-state"><div class="loading-spinner"></div></div>';
             await loadDocuments(kb.knowledgeBaseId, docList);
           });
 
           kbTree.appendChild(details);
         }
+
+        await loadCurrentKnowledgeBaseProfile();
       }
 
       async function loadDocuments(kbId, docListEl) {
@@ -389,7 +1069,7 @@
         const res = await fetch(url);
         const text = await res.text();
         if (!res.ok) {
-          docListEl.textContent = '加载失败: ' + text;
+          docListEl.innerHTML = '<div class="error-text">加载失败: ' + text + '</div>';
           return;
         }
 
@@ -397,13 +1077,13 @@
         try {
           docs = JSON.parse(text) || [];
         } catch (_) {
-          docListEl.textContent = '返回不是合法 JSON';
+          docListEl.innerHTML = '<div class="error-text">返回不是合法 JSON</div>';
           return;
         }
 
         docListEl.innerHTML = '';
         if (!docs.length) {
-          docListEl.textContent = '暂无文档';
+          docListEl.innerHTML = '<div class="muted">暂无文档</div>';
           return;
         }
 
@@ -418,27 +1098,68 @@
 
           const meta = document.createElement('div');
           meta.className = 'doc-meta';
-          meta.textContent = 'status=' + (doc.parseStatus || '-') + ', size=' + formatBytes(doc.fileSize) + ', id=' + (doc.knowledgeId || '-');
+          meta.textContent = '状态: ' + (doc.parseStatus || '-') + ' | 大小: ' + formatBytes(doc.fileSize) + ' | ID: ' + (doc.knowledgeId || '-');
           btn.appendChild(meta);
 
-          btn.addEventListener('click', () => loadChunks(doc));
+          btn.addEventListener('click', () => loadDocumentAndChunks(doc));
           docListEl.appendChild(btn);
         }
+      }
+
+      async function loadDocumentAndChunks(doc) {
+        const knowledgeId = doc && doc.knowledgeId ? String(doc.knowledgeId) : '';
+        if (!knowledgeId) return;
+        currentSelectedDoc = doc;
+        await loadDocumentDetail(knowledgeId, doc);
+        await loadChunks(doc);
+      }
+
+      async function loadDocumentDetail(knowledgeId, fallbackDoc) {
+        selectedDocTitle.textContent = (fallbackDoc && fallbackDoc.fileName ? fallbackDoc.fileName : '文档') + ' (' + knowledgeId + ')';
+        selectedDocMeta.textContent = '详情加载中...';
+        
+        const res = await fetch(apiUrl('/api/knowledge/' + encodeURIComponent(knowledgeId)));
+        const text = await res.text();
+        if (!res.ok) {
+          selectedDocMeta.textContent = '详情加载失败: ' + text;
+          return;
+        }
+
+        let detail = null;
+        try {
+          detail = JSON.parse(text);
+        } catch (_) {
+          selectedDocMeta.textContent = '详情返回不是合法 JSON';
+          return;
+        }
+
+        currentSelectedDoc = detail;
+        docKnowledgeIdInput.value = detail.knowledgeId || knowledgeId;
+        docKbIdInput.value = detail.knowledgeBaseId || '';
+        docFileNameInput.value = detail.fileName || '';
+        docEnableStatusSelect.value = detail.enabled === false ? 'disabled' : 'enabled';
+        
+        try {
+          docMetadataInput.value = JSON.stringify(detail.metadata || {}, null, 2);
+        } catch (_) {
+          docMetadataInput.value = '{}';
+        }
+
+        selectedDocMeta.innerHTML = '大小: ' + formatBytes(detail.fileSize) + 
+          ' | 状态: ' + (detail.parseStatus || '-') + 
+          ' | 创建时间: ' + (detail.createdAt || '-');
       }
 
       async function loadChunks(doc) {
         const knowledgeId = doc && doc.knowledgeId ? String(doc.knowledgeId) : '';
         if (!knowledgeId) return;
-
-        selectedDocTitle.textContent = (doc.fileName || 'unknown') + ' (' + knowledgeId + ')';
-        selectedDocMeta.textContent = 'parseStatus=' + (doc.parseStatus || '-') + ', updatedAt=' + (doc.updatedAt || '-');
-        chunkList.textContent = '分块加载中...';
-
-        const url = apiUrl('/api/knowledge/' + encodeURIComponent(knowledgeId) + '/chunks');
-        const res = await fetch(url);
+        
+        chunkList.innerHTML = '<div class="empty-state"><div class="loading-spinner"></div><div class="empty-state-text">加载分块中...</div></div>';
+        
+        const res = await fetch(apiUrl('/api/knowledge/' + encodeURIComponent(knowledgeId) + '/chunks'));
         const text = await res.text();
         if (!res.ok) {
-          chunkList.textContent = '加载失败: ' + text;
+          chunkList.innerHTML = '<div class="chunk-card"><div class="error-text">加载分块失败: ' + text + '</div></div>';
           return;
         }
 
@@ -446,82 +1167,359 @@
         try {
           chunks = JSON.parse(text) || [];
         } catch (_) {
-          chunkList.textContent = '返回不是合法 JSON';
+          chunkList.innerHTML = '<div class="chunk-card"><div class="error-text">返回不是合法 JSON</div></div>';
           return;
         }
 
         chunkList.innerHTML = '';
         if (!chunks.length) {
-          chunkList.textContent = '该文档暂无分块';
+          chunkList.innerHTML = '<div class="chunk-card"><div class="muted">暂无分块</div></div>';
           return;
         }
 
-        for (const chunk of chunks) {
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i];
           const card = document.createElement('div');
           card.className = 'chunk-card';
 
           const header = document.createElement('div');
-          header.className = 'chunk-header mono';
-          header.textContent = 'chunkId=' + (chunk.chunkId || '-') + ' | type=' + (chunk.chunkType || '-') + ' | index=' + (chunk.chunkIndex ?? '-') + ' | range=[' + (chunk.startAt ?? '-') + ',' + (chunk.endAt ?? '-') + ']';
+          header.className = 'chunk-header';
+          header.textContent = '分块 #' + (i + 1) + ' | ID: ' + (chunk.chunkId || '-').substring(0, 8) + '... | 类型: ' + (chunk.chunkType || '-');
           card.appendChild(header);
 
           const content = document.createElement('div');
           content.className = 'chunk-content';
-          content.textContent = chunk.content || '';
+          content.textContent = chunk.content || '(空内容)';
           card.appendChild(content);
 
-          const images = Array.isArray(chunk.imageInfos) ? chunk.imageInfos : [];
-          if (images.length > 0) {
-            const imagesWrap = document.createElement('div');
-            imagesWrap.className = 'images';
+          if (chunk.images && chunk.images.length > 0) {
+            const imagesSection = document.createElement('div');
+            imagesSection.className = 'images-section';
 
             const imagesTitle = document.createElement('div');
-            imagesTitle.innerHTML = '<strong>图片信息</strong>';
-            imagesWrap.appendChild(imagesTitle);
+            imagesTitle.className = 'images-title';
+            imagesTitle.textContent = '关联图片 (' + chunk.images.length + ')';
+            imagesSection.appendChild(imagesTitle);
 
-            for (const info of images) {
-              const item = document.createElement('div');
-              item.className = 'image-item mono';
+            for (const img of chunk.images) {
+              const imageItem = document.createElement('div');
+              imageItem.className = 'image-item';
 
-              addLinkLine(item, 'url', info.url);
-              addLinkLine(item, 'originalUrl', info.originalUrl);
-              addLinkLine(item, 'storageBucket', info.storageBucket);
-              addLinkLine(item, 'storageKey', info.storageKey);
+              const imgUrl = buildImageApiUrl(img);
+              addLinkLine(imageItem, '图片链接', imgUrl);
 
-              const caption = document.createElement('div');
-              caption.textContent = 'caption: ' + (info.caption || '-');
-              item.appendChild(caption);
-
-              const ocr = document.createElement('div');
-              ocr.textContent = 'ocrText: ' + (info.ocrText || '-');
-              item.appendChild(ocr);
-
-              const apiImageUrl = buildImageApiUrl(info);
-              const previewUrl = apiImageUrl || (isPreviewable(info.url) ? info.url : (isPreviewable(info.originalUrl) ? info.originalUrl : ''));
-              if (previewUrl) {
-                const img = document.createElement('img');
-                img.src = previewUrl;
-                img.alt = 'image preview';
-                item.appendChild(img);
+              if (isPreviewable(imgUrl)) {
+                const imgEl = document.createElement('img');
+                imgEl.src = imgUrl;
+                imgEl.alt = 'Chunk Image';
+                imgEl.loading = 'lazy';
+                imageItem.appendChild(imgEl);
               }
 
-              imagesWrap.appendChild(item);
+              imagesSection.appendChild(imageItem);
             }
 
-            card.appendChild(imagesWrap);
+            card.appendChild(imagesSection);
           }
 
           chunkList.appendChild(card);
         }
       }
 
-      uploadBtn.addEventListener('click', uploadFile);
+      async function loadCurrentKnowledgeBaseProfile() {
+        const kbId = getSelectedKbId();
+        if (!kbId) return;
+        
+        const res = await fetch(apiUrl('/api/knowledge-bases/' + encodeURIComponent(kbId)));
+        const text = await res.text();
+        if (res.ok) {
+          try {
+            const profile = JSON.parse(text);
+            createKbIdInput.value = profile.knowledgeBaseId || '';
+            kbNameInput.value = profile.name || '';
+            kbDescriptionInput.value = profile.description || '';
+            kbEnabledSelect.value = profile.enabled !== false ? 'true' : 'false';
+          } catch (_) {}
+        }
+      }
+
+      createKbBtn.addEventListener('click', async () => {
+        const id = (createKbIdInput.value || '').trim();
+        if (!id) {
+          kbOpOut.textContent = '请输入知识库 ID';
+          return;
+        }
+        
+        let metadata = {};
+        try {
+          metadata = JSON.parse(metadataInput.value || '{}');
+        } catch (_) {}
+
+        const body = {
+          knowledgeBaseId: id,
+          name: kbNameInput.value || '',
+          description: kbDescriptionInput.value || '',
+          enabled: kbEnabledSelect.value === 'true',
+          metadata: metadata
+        };
+
+        kbOpOut.textContent = '创建中...';
+        const res = await fetch(apiUrl('/api/knowledge-bases'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const text = await res.text();
+        kbOpOut.textContent = '状态: ' + res.status + '\n' + text;
+        
+        if (res.ok) {
+          await refreshKnowledgeBases();
+        }
+      });
+
+      loadKbProfileBtn.addEventListener('click', async () => {
+        const kbId = getSelectedKbId();
+        if (!kbId) {
+          kbOpOut.textContent = '请选择知识库';
+          return;
+        }
+        
+        kbOpOut.textContent = '加载中...';
+        const res = await fetch(apiUrl('/api/knowledge-bases/' + encodeURIComponent(kbId)));
+        const text = await res.text();
+        kbOpOut.textContent = '状态: ' + res.status + '\n' + text;
+        
+        if (res.ok) {
+          try {
+            const profile = JSON.parse(text);
+            createKbIdInput.value = profile.knowledgeBaseId || '';
+            kbNameInput.value = profile.name || '';
+            kbDescriptionInput.value = profile.description || '';
+            kbEnabledSelect.value = profile.enabled !== false ? 'true' : 'false';
+          } catch (_) {}
+        }
+      });
+
+      updateKbBtn.addEventListener('click', async () => {
+        const kbId = getSelectedKbId();
+        if (!kbId) {
+          kbOpOut.textContent = '请选择知识库';
+          return;
+        }
+        
+        let metadata = {};
+        try {
+          metadata = JSON.parse(metadataInput.value || '{}');
+        } catch (_) {}
+
+        const body = {
+          name: kbNameInput.value || '',
+          description: kbDescriptionInput.value || '',
+          enabled: kbEnabledSelect.value === 'true',
+          metadata: metadata
+        };
+
+        kbOpOut.textContent = '更新中...';
+        const res = await fetch(apiUrl('/api/knowledge-bases/' + encodeURIComponent(kbId)), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const text = await res.text();
+        kbOpOut.textContent = '状态: ' + res.status + '\n' + text;
+      });
+
+      deleteKbBtn.addEventListener('click', async () => {
+        const kbId = getSelectedKbId();
+        if (!kbId) {
+          kbOpOut.textContent = '请选择知识库';
+          return;
+        }
+        
+        if (!confirm('确定要删除知识库 ' + kbId + ' 吗？此操作将级联删除所有关联文档！')) {
+          return;
+        }
+        
+        kbOpOut.textContent = '删除中...';
+        const res = await fetch(apiUrl('/api/knowledge-bases/' + encodeURIComponent(kbId)), {
+          method: 'DELETE'
+        });
+        const text = await res.text();
+        kbOpOut.textContent = '状态: ' + res.status + '\n' + text;
+        
+        if (res.ok) {
+          await refreshKnowledgeBases();
+        }
+      });
+
+      uploadBtn.addEventListener('click', async () => {
+        const file = fileInput.files[0];
+        if (!file) {
+          uploadOut.textContent = '请先选择文件';
+          return;
+        }
+        
+        const kbId = getSelectedKbId();
+        if (!kbId) {
+          uploadOut.textContent = '请先选择知识库';
+          return;
+        }
+
+        let metadata = {};
+        try {
+          metadata = JSON.parse(metadataInput.value || '{}');
+        } catch (_) {}
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('knowledgeBaseId', kbId);
+        formData.append('metadata', JSON.stringify(metadata));
+
+        uploadOut.textContent = '上传中...';
+        uploadBtn.disabled = true;
+        
+        const res = await fetch(apiUrl('/api/knowledge/upload'), {
+          method: 'POST',
+          body: formData
+        });
+        const text = await res.text();
+        uploadOut.textContent = '状态: ' + res.status + '\n' + text;
+        uploadBtn.disabled = false;
+        
+        if (res.ok) {
+          try {
+            const data = JSON.parse(text);
+            if (data.jobId) {
+              jobIdInput.value = data.jobId;
+              setStatusBadge(data.status || 'queued');
+            }
+          } catch (_) {}
+        }
+      });
+
+      async function queryJob() {
+        const jobId = (jobIdInput.value || '').trim();
+        if (!jobId) {
+          jobOut.textContent = '请输入任务 ID';
+          return;
+        }
+        
+        const res = await fetch(apiUrl('/api/parse-jobs/' + encodeURIComponent(jobId)));
+        const text = await res.text();
+        jobOut.textContent = '状态: ' + res.status + '\n' + text;
+        
+        if (res.ok) {
+          try {
+            const data = JSON.parse(text);
+            setStatusBadge(data.status || 'unknown');
+          } catch (_) {}
+        }
+      }
+
       queryBtn.addEventListener('click', queryJob);
-      startPollBtn.addEventListener('click', startPolling);
-      stopPollBtn.addEventListener('click', stopPolling);
-      retryBtn.addEventListener('click', retryJob);
+
+      startPollBtn.addEventListener('click', () => {
+        if (pollTimer) return;
+        pollTimer = setInterval(queryJob, 3000);
+        startPollBtn.disabled = true;
+        stopPollBtn.disabled = false;
+        queryJob();
+      });
+
+      stopPollBtn.addEventListener('click', () => {
+        if (pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+        startPollBtn.disabled = false;
+        stopPollBtn.disabled = true;
+      });
+
+      retryBtn.addEventListener('click', async () => {
+        const jobId = (jobIdInput.value || '').trim();
+        if (!jobId) {
+          jobOut.textContent = '请输入任务 ID';
+          return;
+        }
+        
+        const res = await fetch(apiUrl('/api/parse-jobs/' + encodeURIComponent(jobId) + '/retry'), {
+          method: 'POST'
+        });
+        const text = await res.text();
+        jobOut.textContent = '状态: ' + res.status + '\n' + text;
+        
+        if (res.ok) {
+          setStatusBadge('queued');
+        }
+      });
+
       refreshKbBtn.addEventListener('click', refreshKnowledgeBases);
-      window.addEventListener('beforeunload', stopPolling);
+
+      updateDocBtn.addEventListener('click', async () => {
+        const knowledgeId = (docKnowledgeIdInput.value || '').trim();
+        if (!knowledgeId) {
+          docOpOut.textContent = '请先选择文档';
+          return;
+        }
+        
+        let metadata = {};
+        try {
+          metadata = JSON.parse(docMetadataInput.value || '{}');
+        } catch (_) {}
+
+        const body = {
+          knowledgeBaseId: docKbIdInput.value || '',
+          fileName: docFileNameInput.value || '',
+          enabled: docEnableStatusSelect.value === 'enabled',
+          metadata: metadata
+        };
+
+        docOpOut.textContent = '更新中...';
+        const res = await fetch(apiUrl('/api/knowledge/' + encodeURIComponent(knowledgeId)), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const text = await res.text();
+        docOpOut.textContent = '状态: ' + res.status + '\n' + text;
+      });
+
+      deleteDocBtn.addEventListener('click', async () => {
+        const knowledgeId = (docKnowledgeIdInput.value || '').trim();
+        if (!knowledgeId) {
+          docOpOut.textContent = '请先选择文档';
+          return;
+        }
+        
+        if (!confirm('确定要删除文档 ' + knowledgeId + ' 吗？此操作将级联删除所有分块！')) {
+          return;
+        }
+        
+        docOpOut.textContent = '删除中...';
+        const res = await fetch(apiUrl('/api/knowledge/' + encodeURIComponent(knowledgeId)), {
+          method: 'DELETE'
+        });
+        const text = await res.text();
+        docOpOut.textContent = '状态: ' + res.status + '\n' + text;
+        
+        if (res.ok) {
+          currentSelectedDoc = null;
+          selectedDocTitle.textContent = '未选择文档';
+          selectedDocMeta.textContent = '请在左侧点击一个文档查看详情';
+          docKnowledgeIdInput.value = '';
+          docKbIdInput.value = '';
+          docFileNameInput.value = '';
+          docMetadataInput.value = '{}';
+          chunkList.innerHTML = '';
+          await refreshKnowledgeBases();
+        }
+      });
+
+      kbIdSelect.addEventListener('change', async () => {
+        if (kbIdSelect.value !== '__custom__') {
+          await loadCurrentKnowledgeBaseProfile();
+        }
+      });
 
       refreshKnowledgeBases();
     </script>

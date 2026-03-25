@@ -2,11 +2,17 @@
 -- Run as a superuser or a role with CREATE EXTENSION privilege.
 
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- Full-text index for BM25 (used by PostgresBm25Retriever)
 CREATE INDEX IF NOT EXISTS idx_chunk_fts
 ON chunk
 USING GIN (to_tsvector('simple', content));
+
+-- Trigram index for SQL LIKE style keyword retrieval
+CREATE INDEX IF NOT EXISTS idx_chunk_content_trgm
+ON chunk
+USING GIN (content gin_trgm_ops);
 
 -- Vector index for pgvector (used by PostgresVectorStore)
 -- NOTE: ivfflat requires ANALYZE after bulk load to build optimal lists.

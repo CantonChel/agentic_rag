@@ -4,6 +4,7 @@ import com.agenticrag.app.ingest.queue.DocumentParseQueue;
 import com.agenticrag.app.ingest.repo.CallbackEventRepository;
 import com.agenticrag.app.ingest.repo.ChunkRepository;
 import com.agenticrag.app.ingest.repo.EmbeddingRepository;
+import com.agenticrag.app.ingest.repo.KnowledgeBaseRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeRepository;
 import com.agenticrag.app.ingest.repo.ParseJobRepository;
 import com.agenticrag.app.ingest.service.ParseJobService;
@@ -56,6 +57,9 @@ class KnowledgeIngestSearchE2eIntegrationTest {
 	private KnowledgeRepository knowledgeRepository;
 
 	@Autowired
+	private KnowledgeBaseRepository knowledgeBaseRepository;
+
+	@Autowired
 	private ParseJobRepository parseJobRepository;
 
 	@Autowired
@@ -80,6 +84,7 @@ class KnowledgeIngestSearchE2eIntegrationTest {
 		chunkRepository.deleteAll();
 		parseJobRepository.deleteAll();
 		knowledgeRepository.deleteAll();
+		knowledgeBaseRepository.deleteAll();
 
 		Mockito.when(embeddingModel.embedTexts(Mockito.anyList())).thenAnswer(invocation -> {
 			List<?> texts = invocation.getArgument(0);

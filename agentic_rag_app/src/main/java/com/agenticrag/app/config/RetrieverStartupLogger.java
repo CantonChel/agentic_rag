@@ -67,6 +67,12 @@ public class RetrieverStartupLogger implements ApplicationRunner {
 		log.info("Retriever selection: bm25={}, vector={}",
 			pgBm25 ? "postgres" : "lucene(in-memory)",
 			pgVector ? "postgres(pgvector)" : "memory");
+		long chunkCount = chunkRepository.count();
+		long embeddingCount = embeddingRepository.count();
+		log.info("Retriever data stats: chunks={}, embeddings={}", chunkCount, embeddingCount);
+		if (chunkCount > 0 && embeddingCount == 0) {
+			log.warn("Retriever data warning: chunk table has data but embedding table is empty. Dense retrieval will always return empty.");
+		}
 		if (!pgBm25) {
 			log.warn("BM25 retriever is in-memory (Lucene). It will reset on every restart.");
 		}

@@ -15,12 +15,12 @@ import org.springframework.stereotype.Service;
 
 @Service
 @ConditionalOnProperty(name = "rag.retriever.postgres.enabled", havingValue = "true")
-public class PostgresBm25Retriever implements Retriever {
-	private static final Logger log = LoggerFactory.getLogger(PostgresBm25Retriever.class);
+public class PostgresKeywordLikeRetriever implements Retriever {
+	private static final Logger log = LoggerFactory.getLogger(PostgresKeywordLikeRetriever.class);
 	private final JdbcTemplate jdbcTemplate;
 	private final ObjectMapper objectMapper;
 
-	public PostgresBm25Retriever(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+	public PostgresKeywordLikeRetriever(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.objectMapper = objectMapper;
 	}
@@ -35,52 +35,50 @@ public class PostgresBm25Retriever implements Retriever {
 			return new ArrayList<>();
 		}
 		long startNs = System.nanoTime();
+		String normalized = query.trim();
+		String likePattern = "%" + escapeLike(normalized) + "%";
 
 		String sql = ""
 			+ "select chunk_id, knowledge_id, content, metadata_json "
 			+ "from chunk "
-			+ "where to_tsvector('simple', content) @@ plainto_tsquery('simple', ?) "
-			+ "order by ts_rank(to_tsvector('simple', content), plainto_tsquery('simple', ?)) desc "
-			+ "limit ?";
-		String fuzzySql = ""
-			+ "select chunk_id, knowledge_id, content, metadata_json "
-			+ "from chunk "
-			+ "where word_similarity(?, content) > 0.3 "
-			+ "order by word_similarity(?, content) desc "
+			+ "where content ilike ? escape '\\' "
+			+ "   or to_tsvector('simple', content) @@ plainto_tsquery('simple', ?) "
+			+ "   or content % ? "
+			+ "order by "
+			+ "   (case when content ilike ? escape '\\' then 2.0 else 0.0 end) "
+			+ " + ts_rank_cd(to_tsvector('simple', content), plainto_tsquery('simple', ?)) "
+			+ " + similarity(content, ?) desc "
 			+ "limit ?";
 
 		try {
 			ResultSetExtractor<List<TextChunk>> extractor = rs -> mapRows(rs);
-			List<TextChunk> primary = jdbcTemplate.query(sql, extractor, query, query, topK);
-			if (!primary.isEmpty()) {
-				long durationMs = (System.nanoTime() - startNs) / 1_000_000;
-				log.info(
-					"event=pg_bm25_retrieve traceId={} query={} topK={} primaryCount={} fallbackUsed=false durationMs={}",
-					traceId,
-					query,
-					topK,
-					primary.size(),
-					durationMs
-				);
-				return primary;
-			}
-			List<TextChunk> fuzzy = jdbcTemplate.query(fuzzySql, extractor, query, query, topK);
+			List<TextChunk> rows = jdbcTemplate.query(
+				sql,
+				extractor,
+				likePattern,
+				normalized,
+				normalized,
+				likePattern,
+				normalized,
+				normalized,
+				topK
+			);
 			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 			log.info(
-				"event=pg_bm25_retrieve traceId={} query={} topK={} primaryCount=0 fallbackUsed=true fallbackCount={} durationMs={}",
+				"event=pg_keyword_like_retrieve traceId={} query={} topK={} resultCount={} durationMs={}",
 				traceId,
-				query,
+				normalized,
 				topK,
-				fuzzy != null ? fuzzy.size() : 0,
+				rows != null ? rows.size() : 0,
 				durationMs
 			);
-			return fuzzy;
+			return rows != null ? rows : new ArrayList<>();
 		} catch (Exception e) {
 			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 			log.warn(
-				"event=pg_bm25_retrieve_error traceId={} query={} topK={} durationMs={} type={} message={}",
+				"event=pg_keyword_like_retrieve_error traceId={} query={} topK={} durationMs={} type={} message={}",
 				traceId,
-				query,
+				normalized,
 				topK,
 				durationMs,
 				e.getClass().getSimpleName(),
@@ -88,6 +86,13 @@ public class PostgresBm25Retriever implements Retriever {
 			);
 			return new ArrayList<>();
 		}
+	}
+
+	private String escapeLike(String input) {
+		return input
+			.replace("\\", "\\\\")
+			.replace("%", "\\%")
+			.replace("_", "\\_");
 	}
 
 	private List<TextChunk> mapRows(java.sql.ResultSet rs) throws java.sql.SQLException {

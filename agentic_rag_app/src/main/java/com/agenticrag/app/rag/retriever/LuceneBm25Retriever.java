@@ -25,9 +25,12 @@ import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.similarities.BM25Similarity;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.RAMDirectory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 @Service
+@Deprecated
+@ConditionalOnProperty(name = "rag.retriever.postgres.enabled", havingValue = "false")
 public class LuceneBm25Retriever implements Retriever, ChunkIndexer {
 	private final Directory directory = new RAMDirectory();
 	private final Analyzer analyzer = new SmartChineseAnalyzer();
@@ -133,4 +136,3 @@ public class LuceneBm25Retriever implements Retriever, ChunkIndexer {
 		return new TextChunk(chunkId, documentId, text, null, md);
 	}
 }
-

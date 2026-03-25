@@ -10,12 +10,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 @Component
 public class KnowledgeSearchTool implements Tool {
+	private static final Logger log = LoggerFactory.getLogger(KnowledgeSearchTool.class);
 	private final ObjectMapper objectMapper;
 	private final HybridRetriever hybridRetriever;
 	private final ContextAssembler contextAssembler;
@@ -50,15 +53,38 @@ public class KnowledgeSearchTool implements Tool {
 	@Override
 	public Mono<ToolResult> execute(JsonNode arguments, ToolExecutionContext context) {
 		return Mono.fromCallable(() -> {
+			long startNs = System.nanoTime();
+			String traceId = context != null ? context.getTraceId() : "n/a";
 			if (arguments == null || !arguments.hasNonNull("query")) {
+				log.warn("event=kb_tool_invalid_request traceId={} reason=missing_query", traceId);
 				return ToolResult.error("Missing query");
 			}
 			String q = arguments.get("query").asText("");
 			if (q.trim().isEmpty()) {
+				log.warn("event=kb_tool_invalid_request traceId={} reason=empty_query", traceId);
 				return ToolResult.error("Empty query");
 			}
-			List<TextChunk> top = hybridRetriever.retrieve(q, 20, 5);
+			log.info(
+				"event=kb_tool_start traceId={} userId={} sessionId={} requestId={} query={} recallTopK={} rerankTopK={}",
+				traceId,
+				context != null ? context.getUserId() : "anonymous",
+				context != null ? context.getSessionId() : "default",
+				context != null ? context.getRequestId() : "n/a",
+				q,
+				20,
+				5
+			);
+			List<TextChunk> top = hybridRetriever.retrieve(q, 20, 5, traceId);
 			String ctx = contextAssembler.assemble(top);
+			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
+			log.info(
+				"event=kb_tool_end traceId={} requestId={} chunks={} contextChars={} durationMs={}",
+				traceId,
+				context != null ? context.getRequestId() : "n/a",
+				top != null ? top.size() : 0,
+				ctx != null ? ctx.length() : 0,
+				durationMs
+			);
 			return ToolResult.ok(ctx);
 		}).subscribeOn(Schedulers.boundedElastic());
 	}

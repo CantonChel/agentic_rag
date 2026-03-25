@@ -2,16 +2,18 @@ package com.agenticrag.app.rag.store;
 
 import com.agenticrag.app.rag.model.TextChunk;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import com.agenticrag.app.rag.retriever.ChunkIndexer;
 
 @Service
+@Deprecated
+@ConditionalOnProperty(name = "rag.vector-store.postgres.enabled", havingValue = "false")
 public class InMemoryVectorStore implements VectorStore, ChunkIndexer {
 	private final Map<String, TextChunk> chunksById = new ConcurrentHashMap<>();
 
@@ -26,6 +28,31 @@ public class InMemoryVectorStore implements VectorStore, ChunkIndexer {
 			}
 			chunksById.put(chunk.getChunkId(), chunk);
 		}
+	}
+
+	@Override
+	public void removeChunkIds(List<String> chunkIds) {
+		if (chunkIds == null || chunkIds.isEmpty()) {
+			return;
+		}
+		for (String chunkId : chunkIds) {
+			if (chunkId == null || chunkId.trim().isEmpty()) {
+				continue;
+			}
+			chunksById.remove(chunkId);
+		}
+	}
+
+	@Override
+	public void removeKnowledge(String knowledgeId) {
+		if (knowledgeId == null || knowledgeId.trim().isEmpty()) {
+			return;
+		}
+		String target = knowledgeId.trim();
+		chunksById.entrySet().removeIf(entry -> {
+			TextChunk chunk = entry.getValue();
+			return chunk != null && target.equals(chunk.getDocumentId());
+		});
 	}
 
 	@Override
