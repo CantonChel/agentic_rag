@@ -34,6 +34,7 @@ public class PostgresIndexInitializer {
 		recoverTextifiedLargeObjectRows("embedding", "vector_json");
 		recoverTextifiedLargeObjectRows("stored_messages", "content");
 		executeIgnore("CREATE INDEX IF NOT EXISTS idx_chunk_fts ON chunk USING GIN (to_tsvector('simple', content))");
+		executeIgnore("CREATE INDEX IF NOT EXISTS idx_chunk_content_trgm ON chunk USING GIN (content gin_trgm_ops)");
 		executeIgnore("CREATE INDEX IF NOT EXISTS idx_embedding_vector_l2 ON embedding USING ivfflat ((vector_json::vector))");
 		jdbcTemplate.execute("ANALYZE chunk");
 		jdbcTemplate.execute("ANALYZE embedding");
