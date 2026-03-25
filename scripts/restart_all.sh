@@ -23,6 +23,13 @@
 # set -o pipefail: 管道中任何一个命令失败，整个管道返回失败状态
 set -euo pipefail
 
+RESTART_DEBUG="${RESTART_DEBUG:-false}"
+STARTUP_TIMEOUT_SEC="${STARTUP_TIMEOUT_SEC:-90}"
+STARTUP_POLL_INTERVAL_SEC="${STARTUP_POLL_INTERVAL_SEC:-1}"
+if [[ "${RESTART_DEBUG}" == "true" ]]; then
+  set -x
+fi
+
 # ============================================================================
 # 路径和目录配置
 # ============================================================================
@@ -95,6 +102,12 @@ INGEST_FILE_STORAGE_BACKEND="${INGEST_FILE_STORAGE_BACKEND:-minio}"
 
 # 环境变量文件路径
 DOTENV_PATH="${ROOT_DIR}/.env"
+APP_LOG_FILE="${LOG_DIR}/app.log"
+APP_BUILD_LOG_FILE="${LOG_DIR}/app-build.log"
+DOCREADER_LOG_FILE="${LOG_DIR}/docreader.log"
+REDIS_LOG_FILE="${LOG_DIR}/redis.log"
+APP_PID_FILE="${LOG_DIR}/app-mvn.pid"
+DOCREADER_PID_FILE="${LOG_DIR}/docreader.pid"
 
 # ============================================================================
 # 模式标准化处理
@@ -139,6 +152,55 @@ docker_container_running() {
   local name="$1"
   # docker ps（不带 -a）只列出正在运行的容器
   docker ps --format '{{.Names}}' | grep -q "^${name}\$"
+}
+
+log() {
+  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
+}
+
+tail_log_file() {
+  local file="$1"
+  local lines="${2:-80}"
+  if [[ -f "${file}" ]]; then
+    log "---- tail ${file} (last ${lines} lines) ----"
+    tail -n "${lines}" "${file}" || true
+  else
+    log "log file not found: ${file}"
+  fi
+}
+
+wait_for_port() {
+  local service_name="$1"
+  local port="$2"
+  local timeout="${3:-60}"
+  local elapsed=0
+  while (( elapsed < timeout )); do
+    if lsof -iTCP:"${port}" -sTCP:LISTEN -n -P >/dev/null 2>&1; then
+      log "${service_name} is listening on port ${port}"
+      return 0
+    fi
+    sleep "${STARTUP_POLL_INTERVAL_SEC}"
+    elapsed=$((elapsed + STARTUP_POLL_INTERVAL_SEC))
+  done
+  log "timeout waiting for ${service_name} on port ${port} (${timeout}s)"
+  return 1
+}
+
+wait_for_http_ok() {
+  local service_name="$1"
+  local url="$2"
+  local timeout="${3:-30}"
+  local elapsed=0
+  while (( elapsed < timeout )); do
+    if curl -fsS -m 2 "${url}" >/dev/null 2>&1; then
+      log "${service_name} HTTP check passed: ${url}"
+      return 0
+    fi
+    sleep "${STARTUP_POLL_INTERVAL_SEC}"
+    elapsed=$((elapsed + STARTUP_POLL_INTERVAL_SEC))
+  done
+  log "timeout waiting HTTP check for ${service_name}: ${url} (${timeout}s)"
+  return 1
 }
 
 # 获取 Java 主版本号
@@ -211,10 +273,11 @@ if [[ "${PG_MODE}" != "docker" && "${PG_MODE}" != "local" ]]; then
 fi
 
 # 输出当前配置信息
-echo "==> Redis mode: ${REDIS_MODE}"
-echo "==> Postgres mode: ${PG_MODE}"
-echo "==> Storage backend: ${INGEST_FILE_STORAGE_BACKEND}"
-echo "==> Stopping services on ports ${JAVA_PORT}, ${DOCREADER_PORT}, ${REDIS_PORT}, ${PG_PORT}"
+log "Redis mode: ${REDIS_MODE}"
+log "Postgres mode: ${PG_MODE}"
+log "Storage backend: ${INGEST_FILE_STORAGE_BACKEND}"
+log "Startup timeout: ${STARTUP_TIMEOUT_SEC}s"
+log "Stopping services on ports ${JAVA_PORT}, ${DOCREADER_PORT}, ${REDIS_PORT}, ${PG_PORT}"
 
 # ============================================================================
 # 停止旧进程的函数
@@ -289,6 +352,7 @@ fi
 # 通过端口号停止业务服务进程
 kill_by_port "${JAVA_PORT}"
 kill_by_port "${DOCREADER_PORT}"
+rm -f "${APP_PID_FILE}" "${DOCREADER_PID_FILE}"
 
 # 如果是本地模式的 Redis/PostgreSQL，也需要停止端口上的进程
 if [[ "${REDIS_MODE}" != "docker" ]]; then
@@ -302,7 +366,7 @@ fi
 # 启动服务
 # ============================================================================
 
-echo "==> Starting services"
+log "Starting services"
 
 # ----------------------------------------------------------------------------
 # 启动 Redis
@@ -427,8 +491,8 @@ fi
 # ----------------------------------------------------------------------------
 # 启动 docreader（Python 文档解析服务）
 # ----------------------------------------------------------------------------
-echo "Starting docreader_service (port ${DOCREADER_PORT})"
-echo "==> docreader python: ${DOCREADER_PYTHON_BIN}"
+log "Starting docreader_service (port ${DOCREADER_PORT})"
+log "docreader python: ${DOCREADER_PYTHON_BIN}"
 ensure_docreader_dependency
 
 # 使用子 shell ( ) 启动服务，避免污染当前 shell 的环境变量
@@ -445,13 +509,14 @@ ensure_docreader_dependency
   # 使用 uvicorn 启动 FastAPI 应用
   # main:app 表示 main.py 文件中的 app 对象
   # --host 0.0.0.0 允许外部访问
-  nohup "${DOCREADER_PYTHON_BIN}" -m uvicorn main:app --host 0.0.0.0 --port "${DOCREADER_PORT}" > "${LOG_DIR}/docreader.log" 2>&1 &
+  nohup "${DOCREADER_PYTHON_BIN}" -m uvicorn main:app --host 0.0.0.0 --port "${DOCREADER_PORT}" > "${DOCREADER_LOG_FILE}" 2>&1 &
+  echo $! > "${DOCREADER_PID_FILE}"
 )
 
 # ----------------------------------------------------------------------------
 # 启动 agentic-rag-app（Java 业务服务）
 # ----------------------------------------------------------------------------
-echo "Starting agentic_rag_app (port ${JAVA_PORT})"
+log "Starting agentic_rag_app (port ${JAVA_PORT})"
 
 (
   cd "${ROOT_DIR}/agentic_rag_app"
@@ -553,11 +618,55 @@ echo "Starting agentic_rag_app (port ${JAVA_PORT})"
   export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
   export MINIMAX_API_KEY="${MINIMAX_API_KEY:-}"
   export SILICONFLOW_API_KEY="${SILICONFLOW_API_KEY:-}"
+
+  # 先用当前 JAVA_HOME 做一次干净编译，避免 target/classes 中残留更高版本 JDK 编译产物
+  # 导致 spring-boot:run 在 Java 17 下报 UnsupportedClassVersionError（class file version 65.0）。
+  log "Java runtime: $("${JAVA_HOME}/bin/java" -version 2>&1 | head -n 1)"
+  log "Compiling agentic_rag_app with JAVA_HOME=${JAVA_HOME} ..."
+  if ! ./mvnw -q -DskipTests clean compile > "${APP_BUILD_LOG_FILE}" 2>&1; then
+    log "Build failed. See ${APP_BUILD_LOG_FILE}"
+    exit 1
+  fi
   
   # 使用 Maven Wrapper 启动 Spring Boot
   # -q: 安静模式，减少输出
   # spring-boot:run: Maven 插件目标，直接运行应用（不需要先打包）
-  nohup ./mvnw -q spring-boot:run > "${LOG_DIR}/app.log" 2>&1 &
+  nohup ./mvnw -q spring-boot:run > "${APP_LOG_FILE}" 2>&1 &
+  echo $! > "${APP_PID_FILE}"
 )
 
-echo "==> Done. Logs: ${LOG_DIR}/redis.log, ${LOG_DIR}/docreader.log, ${LOG_DIR}/app.log"
+if [[ -f "${DOCREADER_PID_FILE}" ]]; then
+  log "docreader pid: $(cat "${DOCREADER_PID_FILE}")"
+fi
+if [[ -f "${APP_PID_FILE}" ]]; then
+  log "app(maven wrapper) pid: $(cat "${APP_PID_FILE}")"
+fi
+
+if ! wait_for_port "docreader_service" "${DOCREADER_PORT}" "${STARTUP_TIMEOUT_SEC}"; then
+  tail_log_file "${DOCREADER_LOG_FILE}" 120
+  exit 1
+fi
+if ! wait_for_http_ok "docreader_service" "http://127.0.0.1:${DOCREADER_PORT}/healthz" 20; then
+  tail_log_file "${DOCREADER_LOG_FILE}" 120
+  exit 1
+fi
+
+if ! wait_for_port "agentic_rag_app" "${JAVA_PORT}" "${STARTUP_TIMEOUT_SEC}"; then
+  tail_log_file "${APP_BUILD_LOG_FILE}" 120
+  tail_log_file "${APP_LOG_FILE}" 120
+  if grep -q "UnsupportedClassVersionError" "${APP_LOG_FILE}" 2>/dev/null; then
+    log "Detected UnsupportedClassVersionError. This means class files were compiled by a higher JDK."
+  fi
+  exit 1
+fi
+
+if ! wait_for_http_ok "agentic_rag_app" "http://127.0.0.1:${JAVA_PORT}/actuator/health" 20; then
+  log "Warning: /actuator/health check failed, but port ${JAVA_PORT} is open."
+  tail_log_file "${APP_LOG_FILE}" 80
+fi
+
+log "Done. Logs:"
+log "  ${REDIS_LOG_FILE}"
+log "  ${DOCREADER_LOG_FILE}"
+log "  ${APP_BUILD_LOG_FILE}"
+log "  ${APP_LOG_FILE}"
