@@ -6,6 +6,7 @@ import com.agenticrag.app.ingest.model.ChunkType;
 import com.agenticrag.app.ingest.model.KnowledgeEnableStatus;
 import com.agenticrag.app.ingest.model.KnowledgeParseStatus;
 import com.agenticrag.app.ingest.repo.ChunkRepository;
+import com.agenticrag.app.ingest.repo.KnowledgeBaseRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeRepository;
 import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,10 +29,14 @@ class KnowledgeBrowseIntegrationTest {
 	@Autowired
 	private ChunkRepository chunkRepository;
 
+	@Autowired
+	private KnowledgeBaseRepository knowledgeBaseRepository;
+
 	@BeforeEach
 	void setUp() {
 		chunkRepository.deleteAll();
 		knowledgeRepository.deleteAll();
+		knowledgeBaseRepository.deleteAll();
 	}
 
 	@Test

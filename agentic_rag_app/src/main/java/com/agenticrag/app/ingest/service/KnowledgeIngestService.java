@@ -31,6 +31,7 @@ public class KnowledgeIngestService {
 	private final ParseJobService parseJobService;
 	private final IngestAsyncProperties asyncProperties;
 	private final ObjectMapper objectMapper;
+	private final KnowledgeCrudService knowledgeCrudService;
 
 	public KnowledgeIngestService(
 		KnowledgeRepository knowledgeRepository,
@@ -39,7 +40,8 @@ public class KnowledgeIngestService {
 		DocumentParseQueue documentParseQueue,
 		ParseJobService parseJobService,
 		IngestAsyncProperties asyncProperties,
-		ObjectMapper objectMapper
+		ObjectMapper objectMapper,
+		KnowledgeCrudService knowledgeCrudService
 	) {
 		this.knowledgeRepository = knowledgeRepository;
 		this.parseJobRepository = parseJobRepository;
@@ -48,6 +50,7 @@ public class KnowledgeIngestService {
 		this.parseJobService = parseJobService;
 		this.asyncProperties = asyncProperties;
 		this.objectMapper = objectMapper;
+		this.knowledgeCrudService = knowledgeCrudService;
 	}
 
 	public KnowledgeUploadResult createAndEnqueue(
@@ -73,6 +76,7 @@ public class KnowledgeIngestService {
 		Map<String, Object> metadata
 	) {
 		String kbId = normalize(knowledgeBaseId, "default");
+		knowledgeCrudService.ensureKnowledgeBaseExists(kbId);
 		String knowledgeId = UUID.randomUUID().toString();
 		String userId = extractUserId(metadata);
 		StoredFile storedFile = fileStorageService.store(userId, knowledgeId, fileName, fileBytes);

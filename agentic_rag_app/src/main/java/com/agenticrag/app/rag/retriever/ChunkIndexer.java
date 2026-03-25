@@ -5,5 +5,10 @@ import java.util.List;
 
 public interface ChunkIndexer {
 	void addChunks(List<TextChunk> chunks);
-}
 
+	default void removeChunkIds(List<String> chunkIds) {
+	}
+
+	default void removeKnowledge(String knowledgeId) {
+	}
+}

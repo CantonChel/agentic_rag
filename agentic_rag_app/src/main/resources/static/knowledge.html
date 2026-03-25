@@ -3,31 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>知识库与上传页面</title>
+    <title>知识库管理与文档管理</title>
     <style>
       body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f4f6f9; color: #111827; }
-      .container { max-width: 1100px; margin: 0 auto; padding: 16px; }
+      .container { max-width: 1180px; margin: 0 auto; padding: 16px; }
       .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
       .topbar a { color: #2563eb; text-decoration: none; }
       .panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
       .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
       .col { display: flex; flex-direction: column; gap: 6px; }
       label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #4b5563; }
-      input, textarea, button { font: inherit; }
-      input, textarea { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 8px; }
+      input, select, textarea, button { font: inherit; }
+      input, select, textarea { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 8px; }
       textarea { min-height: 88px; }
       button { padding: 8px 12px; border: 1px solid #2563eb; background: #2563eb; color: #fff; border-radius: 8px; cursor: pointer; }
       button.secondary { background: #fff; color: #2563eb; }
+      button.danger { border-color: #dc2626; background: #dc2626; color: #fff; }
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-      pre { background: #0b1020; color: #c8d1ff; padding: 10px; border-radius: 8px; overflow: auto; min-height: 96px; white-space: pre-wrap; word-break: break-word; }
+      pre { background: #0b1020; color: #c8d1ff; padding: 10px; border-radius: 8px; overflow: auto; min-height: 60px; white-space: pre-wrap; word-break: break-word; }
       .status-badge { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 12px; background: #e5e7eb; color: #111827; }
       .status-success { background: #dcfce7; color: #166534; }
       .status-failed, .status-dead_letter { background: #fee2e2; color: #991b1b; }
       .status-running { background: #dbeafe; color: #1e40af; }
-      .layout { display: grid; grid-template-columns: 340px 1fr; gap: 12px; }
+      .layout { display: grid; grid-template-columns: 360px 1fr; gap: 12px; }
       .kb-tree { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; max-height: 560px; overflow: auto; background: #fafafa; }
-      .kb-item { border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px 8px; margin-bottom: 8px; background: #fff; }
+      .kb-item { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; margin-bottom: 8px; background: #fff; }
       .kb-item summary { cursor: pointer; font-weight: 600; }
+      .kb-meta { margin-top: 6px; font-size: 12px; color: #6b7280; }
       .doc-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
       .doc-btn { text-align: left; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; color: #111827; padding: 8px; cursor: pointer; }
       .doc-btn:hover { border-color: #93c5fd; background: #eff6ff; }
@@ -41,13 +43,13 @@
       .image-item { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; margin-top: 6px; background: #fafafa; }
       .image-item img { max-width: 220px; max-height: 160px; border: 1px solid #d1d5db; border-radius: 6px; display: block; margin-top: 6px; }
       .muted { color: #6b7280; font-size: 12px; }
-      @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .kb-tree { max-height: none; } }
+      @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } .kb-tree { max-height: none; } }
     </style>
   </head>
   <body>
     <div class="container">
       <div class="topbar">
-        <h2 style="margin: 0;">知识库与文档上传页面</h2>
+        <h2 style="margin: 0;">知识库 CRUD + 文档 CRUD</h2>
         <a href="/chat.html">去聊天页面</a>
       </div>
 
@@ -59,22 +61,54 @@
             <input id="apiBase" class="mono" placeholder="留空表示同源" style="width: 240px;" />
           </label>
           <label>
-            Knowledge Base ID
-            <select id="kbIdSelect" style="width: 220px; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 8px;">
+            当前 Knowledge Base ID
+            <select id="kbIdSelect" style="width: 240px;">
               <option value="kb-demo">kb-demo</option>
               <option value="__custom__">手动输入</option>
             </select>
           </label>
           <label>
-            自定义 Knowledge Base ID
-            <input id="kbIdCustom" class="mono" placeholder="仅当选择手动输入时生效" style="width: 220px;" />
+            自定义 KB ID
+            <input id="kbIdCustom" class="mono" placeholder="仅当选择手动输入时生效" style="width: 240px;" />
           </label>
           <span class="muted" id="kbLoadTip">知识库列表加载中...</span>
         </div>
       </div>
 
       <div class="panel">
-        <h3 style="margin-top: 0;">上传文档（创建异步任务）</h3>
+        <h3 style="margin-top: 0;">知识库管理（增删改查）</h3>
+        <div class="row">
+          <label>
+            新建 KB ID
+            <input id="createKbId" class="mono" placeholder="例如 kb-sales" style="width: 220px;" />
+          </label>
+          <label style="flex: 1; min-width: 220px;">
+            名称
+            <input id="kbName" placeholder="知识库名称" />
+          </label>
+          <label style="flex: 1; min-width: 240px;">
+            描述
+            <input id="kbDescription" placeholder="知识库描述" />
+          </label>
+          <label>
+            启用状态
+            <select id="kbEnabled" style="width: 120px;">
+              <option value="true">enabled</option>
+              <option value="false">disabled</option>
+            </select>
+          </label>
+        </div>
+        <div class="row" style="margin-top: 8px;">
+          <button id="createKbBtn">创建知识库</button>
+          <button class="secondary" id="loadKbProfileBtn">读取当前知识库</button>
+          <button class="secondary" id="updateKbBtn">更新当前知识库</button>
+          <button class="danger" id="deleteKbBtn">删除当前知识库（级联）</button>
+        </div>
+        <pre id="kbOpOut" class="mono"></pre>
+      </div>
+
+      <div class="panel">
+        <h3 style="margin-top: 0;">上传文档（新增文档）</h3>
         <div class="row">
           <label style="flex: 1; min-width: 280px;">
             metadata (JSON)
@@ -103,10 +137,10 @@
       </div>
 
       <div class="panel">
-        <h3 style="margin-top: 0;">知识库 / 折叠 / 文档 / 分块</h3>
+        <h3 style="margin-top: 0;">知识库 / 文档 / 分块</h3>
         <div class="row" style="margin-bottom: 8px;">
           <button class="secondary" id="refreshKbBtn">刷新知识库树</button>
-          <span class="muted">展开知识库可查看文档，点击文档可查看分块和图片信息。</span>
+          <span class="muted">展开知识库可查看文档，点击文档可查看和编辑文档详情，再查看分块。</span>
         </div>
 
         <div class="layout">
@@ -115,9 +149,41 @@
           </div>
 
           <div>
-            <div class="col" style="margin-bottom: 8px;">
+            <div class="panel" style="margin-bottom: 8px; padding: 10px;">
               <strong id="selectedDocTitle">未选择文档</strong>
-              <span class="muted" id="selectedDocMeta">请在左侧点击一个文档查看分块。</span>
+              <div class="muted" id="selectedDocMeta">请在左侧点击一个文档。</div>
+              <div class="row" style="margin-top: 8px;">
+                <label>
+                  文档 ID
+                  <input id="docKnowledgeId" class="mono" readonly style="width: 220px;" />
+                </label>
+                <label>
+                  所属 KB
+                  <input id="docKbId" class="mono" style="width: 220px;" />
+                </label>
+                <label style="flex: 1; min-width: 220px;">
+                  文件名
+                  <input id="docFileName" />
+                </label>
+                <label>
+                  启用状态
+                  <select id="docEnableStatus" style="width: 120px;">
+                    <option value="enabled">enabled</option>
+                    <option value="disabled">disabled</option>
+                  </select>
+                </label>
+              </div>
+              <div class="row" style="margin-top: 8px;">
+                <label style="flex: 1; min-width: 260px;">
+                  metadata (JSON)
+                  <textarea id="docMetadata" class="mono" style="min-height: 74px;"></textarea>
+                </label>
+              </div>
+              <div class="row" style="margin-top: 8px;">
+                <button class="secondary" id="updateDocBtn">更新文档</button>
+                <button class="danger" id="deleteDocBtn">删除文档（级联）</button>
+              </div>
+              <pre id="docOpOut" class="mono"></pre>
             </div>
             <div class="chunk-list" id="chunkList"></div>
           </div>
@@ -130,6 +196,17 @@
       const kbIdSelect = document.getElementById('kbIdSelect');
       const kbIdCustom = document.getElementById('kbIdCustom');
       const kbLoadTip = document.getElementById('kbLoadTip');
+
+      const createKbIdInput = document.getElementById('createKbId');
+      const kbNameInput = document.getElementById('kbName');
+      const kbDescriptionInput = document.getElementById('kbDescription');
+      const kbEnabledSelect = document.getElementById('kbEnabled');
+      const createKbBtn = document.getElementById('createKbBtn');
+      const loadKbProfileBtn = document.getElementById('loadKbProfileBtn');
+      const updateKbBtn = document.getElementById('updateKbBtn');
+      const deleteKbBtn = document.getElementById('deleteKbBtn');
+      const kbOpOut = document.getElementById('kbOpOut');
+
       const metadataInput = document.getElementById('metadata');
       const fileInput = document.getElementById('fileInput');
       const uploadBtn = document.getElementById('uploadBtn');
@@ -141,13 +218,24 @@
       const startPollBtn = document.getElementById('startPollBtn');
       const stopPollBtn = document.getElementById('stopPollBtn');
       const retryBtn = document.getElementById('retryBtn');
+
       const refreshKbBtn = document.getElementById('refreshKbBtn');
       const kbTree = document.getElementById('kbTree');
+
       const selectedDocTitle = document.getElementById('selectedDocTitle');
       const selectedDocMeta = document.getElementById('selectedDocMeta');
+      const docKnowledgeIdInput = document.getElementById('docKnowledgeId');
+      const docKbIdInput = document.getElementById('docKbId');
+      const docFileNameInput = document.getElementById('docFileName');
+      const docEnableStatusSelect = document.getElementById('docEnableStatus');
+      const docMetadataInput = document.getElementById('docMetadata');
+      const updateDocBtn = document.getElementById('updateDocBtn');
+      const deleteDocBtn = document.getElementById('deleteDocBtn');
+      const docOpOut = document.getElementById('docOpOut');
       const chunkList = document.getElementById('chunkList');
 
       let pollTimer = null;
+      let currentSelectedDoc = null;
 
       function apiUrl(path) {
         const base = (apiBaseInput.value || '').trim();
@@ -200,102 +288,20 @@
         statusBadge.textContent = s;
       }
 
-      async function uploadFile() {
-        const kbId = getSelectedKbId();
-        const file = fileInput.files && fileInput.files[0];
-        if (!kbId) {
-          uploadOut.textContent = 'kbId 不能为空';
-          return;
-        }
-        if (!file) {
-          uploadOut.textContent = '请先选择文件';
-          return;
-        }
-
-        const fd = new FormData();
-        fd.append('file', file);
-        fd.append('metadata', metadataInput.value || '{}');
-
-        const url = apiUrl('/api/knowledge-bases/' + encodeURIComponent(kbId) + '/knowledge/file');
-        const res = await fetch(url, { method: 'POST', body: fd });
-        const text = await res.text();
-        uploadOut.textContent = text;
-
-        if (!res.ok) {
-          setStatusBadge('failed');
-          return;
-        }
-
-        try {
-          const data = JSON.parse(text);
-          if (data.jobId) jobIdInput.value = data.jobId;
-          setStatusBadge(data.status || 'queued');
-        } catch (_) {
-          setStatusBadge('unknown');
-        }
-
-        refreshKnowledgeBases();
-      }
-
-      async function queryJob() {
-        const jobId = (jobIdInput.value || '').trim();
-        if (!jobId) {
-          jobOut.textContent = 'jobId 不能为空';
-          return;
-        }
-
-        const url = apiUrl('/api/jobs/' + encodeURIComponent(jobId));
-        const res = await fetch(url);
-        const text = await res.text();
-        jobOut.textContent = text;
-
-        if (!res.ok) {
-          setStatusBadge('failed');
-          return;
-        }
-
-        try {
-          const data = JSON.parse(text);
-          setStatusBadge(data.status || 'unknown');
-          const terminal = ['success', 'failed', 'dead_letter'];
-          if (terminal.includes((data.status || '').toLowerCase())) {
-            stopPolling();
-            refreshKnowledgeBases();
-          }
-        } catch (_) {}
-      }
-
-      function startPolling() {
-        stopPolling();
-        queryJob();
-        pollTimer = setInterval(queryJob, 2000);
-      }
-
-      function stopPolling() {
-        if (pollTimer) {
-          clearInterval(pollTimer);
-          pollTimer = null;
-        }
-      }
-
-      async function retryJob() {
-        const jobId = (jobIdInput.value || '').trim();
-        if (!jobId) {
-          jobOut.textContent = 'jobId 不能为空';
-          return;
-        }
-        const url = apiUrl('/api/jobs/' + encodeURIComponent(jobId) + '/retry');
-        const res = await fetch(url, { method: 'POST' });
-        const text = await res.text();
-        jobOut.textContent = text;
-      }
-
       function formatBytes(bytes) {
         if (bytes == null || Number.isNaN(Number(bytes))) return '-';
         const n = Number(bytes);
         if (n < 1024) return n + ' B';
         if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
         return (n / (1024 * 1024)).toFixed(1) + ' MB';
+      }
+
+      function formatJson(data) {
+        try {
+          return JSON.stringify(data, null, 2);
+        } catch (_) {
+          return String(data);
+        }
       }
 
       function isPreviewable(url) {
@@ -351,11 +357,10 @@
           return;
         }
 
-        kbTree.innerHTML = '';
         setKbOptions(bases);
         kbLoadTip.textContent = bases.length ? '已加载知识库列表' : '暂无知识库';
+        kbTree.innerHTML = '';
         if (!bases.length) {
-          kbLoadTip.textContent = '暂无知识库';
           kbTree.textContent = '暂无知识库';
           return;
         }
@@ -367,6 +372,11 @@
           const summary = document.createElement('summary');
           summary.textContent = (kb.knowledgeBaseId || 'unknown') + ' (' + (kb.documentCount || 0) + ')';
           details.appendChild(summary);
+
+          const meta = document.createElement('div');
+          meta.className = 'kb-meta';
+          meta.textContent = 'name=' + (kb.name || '-') + ', enabled=' + (kb.enabled !== false ? 'true' : 'false');
+          details.appendChild(meta);
 
           const docList = document.createElement('div');
           docList.className = 'doc-list';
@@ -382,6 +392,8 @@
 
           kbTree.appendChild(details);
         }
+
+        await loadCurrentKnowledgeBaseProfile();
       }
 
       async function loadDocuments(kbId, docListEl) {
@@ -421,19 +433,51 @@
           meta.textContent = 'status=' + (doc.parseStatus || '-') + ', size=' + formatBytes(doc.fileSize) + ', id=' + (doc.knowledgeId || '-');
           btn.appendChild(meta);
 
-          btn.addEventListener('click', () => loadChunks(doc));
+          btn.addEventListener('click', () => loadDocumentAndChunks(doc));
           docListEl.appendChild(btn);
         }
+      }
+
+      async function loadDocumentAndChunks(doc) {
+        const knowledgeId = doc && doc.knowledgeId ? String(doc.knowledgeId) : '';
+        if (!knowledgeId) return;
+        currentSelectedDoc = doc;
+        await loadDocumentDetail(knowledgeId, doc);
+        await loadChunks(doc);
+      }
+
+      async function loadDocumentDetail(knowledgeId, fallbackDoc) {
+        selectedDocTitle.textContent = (fallbackDoc && fallbackDoc.fileName ? fallbackDoc.fileName : '文档') + ' (' + knowledgeId + ')';
+        selectedDocMeta.textContent = '详情加载中...';
+        const res = await fetch(apiUrl('/api/knowledge/' + encodeURIComponent(knowledgeId)));
+        const text = await res.text();
+        if (!res.ok) {
+          selectedDocMeta.textContent = '详情加载失败: ' + text;
+          return;
+        }
+
+        let detail = null;
+        try {
+          detail = JSON.parse(text);
+        } catch (_) {
+          selectedDocMeta.textContent = '详情返回不是合法 JSON';
+          return;
+        }
+
+        currentSelectedDoc = detail;
+        docKnowledgeIdInput.value = detail.knowledgeId || knowledgeId;
+        docKbIdInput.value = detail.knowledgeBaseId || '';
+        docFileNameInput.value = detail.fileName || '';
+        docEnableStatusSelect.value = detail.enableStatus || 'enabled';
+        docMetadataInput.value = formatJson(detail.metadata || {});
+        selectedDocMeta.textContent = 'parseStatus=' + (detail.parseStatus || '-') + ', updatedAt=' + (detail.updatedAt || '-');
       }
 
       async function loadChunks(doc) {
         const knowledgeId = doc && doc.knowledgeId ? String(doc.knowledgeId) : '';
         if (!knowledgeId) return;
 
-        selectedDocTitle.textContent = (doc.fileName || 'unknown') + ' (' + knowledgeId + ')';
-        selectedDocMeta.textContent = 'parseStatus=' + (doc.parseStatus || '-') + ', updatedAt=' + (doc.updatedAt || '-');
         chunkList.textContent = '分块加载中...';
-
         const url = apiUrl('/api/knowledge/' + encodeURIComponent(knowledgeId) + '/chunks');
         const res = await fetch(url);
         const text = await res.text();
@@ -515,14 +559,280 @@
         }
       }
 
+      async function createKnowledgeBase() {
+        const kbId = (createKbIdInput.value || '').trim();
+        if (!kbId) {
+          kbOpOut.textContent = '新建 KB ID 不能为空';
+          return;
+        }
+        const body = {
+          knowledgeBaseId: kbId,
+          name: (kbNameInput.value || '').trim() || kbId,
+          description: (kbDescriptionInput.value || '').trim() || null,
+          enabled: kbEnabledSelect.value === 'true'
+        };
+        const res = await fetch(apiUrl('/api/knowledge-bases'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const text = await res.text();
+        kbOpOut.textContent = text;
+        if (res.ok) {
+          kbIdSelect.value = '__custom__';
+          kbIdCustom.value = kbId;
+          await refreshKnowledgeBases();
+        }
+      }
+
+      async function loadCurrentKnowledgeBaseProfile() {
+        const kbId = getSelectedKbId();
+        if (!kbId) {
+          kbOpOut.textContent = '当前 KB 为空';
+          return;
+        }
+        const res = await fetch(apiUrl('/api/knowledge-bases/' + encodeURIComponent(kbId)));
+        const text = await res.text();
+        if (!res.ok) {
+          kbOpOut.textContent = text;
+          kbNameInput.value = kbId;
+          kbDescriptionInput.value = '';
+          kbEnabledSelect.value = 'true';
+          return;
+        }
+        kbOpOut.textContent = text;
+        try {
+          const kb = JSON.parse(text);
+          kbNameInput.value = kb.name || kbId;
+          kbDescriptionInput.value = kb.description || '';
+          kbEnabledSelect.value = kb.enabled === false ? 'false' : 'true';
+        } catch (_) {}
+      }
+
+      async function updateCurrentKnowledgeBase() {
+        const kbId = getSelectedKbId();
+        if (!kbId) {
+          kbOpOut.textContent = '请选择或输入当前 KB ID';
+          return;
+        }
+        const body = {
+          name: (kbNameInput.value || '').trim() || kbId,
+          description: (kbDescriptionInput.value || '').trim() || null,
+          enabled: kbEnabledSelect.value === 'true'
+        };
+        const customId = (kbIdCustom.value || '').trim();
+        if (kbIdSelect.value === '__custom__' && customId && customId !== kbId) {
+          body.knowledgeBaseId = customId;
+        }
+        const res = await fetch(apiUrl('/api/knowledge-bases/' + encodeURIComponent(kbId)), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const text = await res.text();
+        kbOpOut.textContent = text;
+        if (res.ok) {
+          await refreshKnowledgeBases();
+        }
+      }
+
+      async function deleteCurrentKnowledgeBase() {
+        const kbId = getSelectedKbId();
+        if (!kbId) {
+          kbOpOut.textContent = '请选择或输入当前 KB ID';
+          return;
+        }
+        if (!window.confirm('确认删除知识库 ' + kbId + ' ? 这会级联删除该库全部文档、分块、向量、解析任务。')) {
+          return;
+        }
+        const res = await fetch(apiUrl('/api/knowledge-bases/' + encodeURIComponent(kbId)), { method: 'DELETE' });
+        const text = await res.text();
+        kbOpOut.textContent = text;
+        if (res.ok) {
+          clearSelectedDocument();
+          await refreshKnowledgeBases();
+        }
+      }
+
+      function clearSelectedDocument() {
+        currentSelectedDoc = null;
+        selectedDocTitle.textContent = '未选择文档';
+        selectedDocMeta.textContent = '请在左侧点击一个文档。';
+        docKnowledgeIdInput.value = '';
+        docKbIdInput.value = '';
+        docFileNameInput.value = '';
+        docEnableStatusSelect.value = 'enabled';
+        docMetadataInput.value = '';
+        docOpOut.textContent = '';
+        chunkList.textContent = '';
+      }
+
+      async function updateCurrentDocument() {
+        const knowledgeId = (docKnowledgeIdInput.value || '').trim();
+        if (!knowledgeId) {
+          docOpOut.textContent = '请先选择一个文档';
+          return;
+        }
+
+        let metadataObj = {};
+        const metadataRaw = (docMetadataInput.value || '').trim();
+        if (metadataRaw) {
+          try {
+            metadataObj = JSON.parse(metadataRaw);
+          } catch (_) {
+            docOpOut.textContent = 'metadata 不是合法 JSON';
+            return;
+          }
+        }
+
+        const body = {
+          knowledgeBaseId: (docKbIdInput.value || '').trim(),
+          fileName: (docFileNameInput.value || '').trim(),
+          enableStatus: docEnableStatusSelect.value,
+          metadata: metadataObj
+        };
+
+        const res = await fetch(apiUrl('/api/knowledge/' + encodeURIComponent(knowledgeId)), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const text = await res.text();
+        docOpOut.textContent = text;
+        if (res.ok) {
+          await loadDocumentDetail(knowledgeId, currentSelectedDoc || {});
+          await refreshKnowledgeBases();
+        }
+      }
+
+      async function deleteCurrentDocument() {
+        const knowledgeId = (docKnowledgeIdInput.value || '').trim();
+        if (!knowledgeId) {
+          docOpOut.textContent = '请先选择一个文档';
+          return;
+        }
+        if (!window.confirm('确认删除文档 ' + knowledgeId + ' ? 这会级联删除分块、向量、解析任务。')) {
+          return;
+        }
+        const res = await fetch(apiUrl('/api/knowledge/' + encodeURIComponent(knowledgeId)), { method: 'DELETE' });
+        const text = await res.text();
+        docOpOut.textContent = text;
+        if (res.ok) {
+          clearSelectedDocument();
+          await refreshKnowledgeBases();
+        }
+      }
+
+      async function uploadFile() {
+        const kbId = getSelectedKbId();
+        const file = fileInput.files && fileInput.files[0];
+        if (!kbId) {
+          uploadOut.textContent = 'kbId 不能为空';
+          return;
+        }
+        if (!file) {
+          uploadOut.textContent = '请先选择文件';
+          return;
+        }
+
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('metadata', metadataInput.value || '{}');
+
+        const url = apiUrl('/api/knowledge-bases/' + encodeURIComponent(kbId) + '/knowledge/file');
+        const res = await fetch(url, { method: 'POST', body: fd });
+        const text = await res.text();
+        uploadOut.textContent = text;
+
+        if (!res.ok) {
+          setStatusBadge('failed');
+          return;
+        }
+
+        try {
+          const data = JSON.parse(text);
+          if (data.jobId) jobIdInput.value = data.jobId;
+          setStatusBadge(data.status || 'queued');
+        } catch (_) {
+          setStatusBadge('unknown');
+        }
+
+        await refreshKnowledgeBases();
+      }
+
+      async function queryJob() {
+        const jobId = (jobIdInput.value || '').trim();
+        if (!jobId) {
+          jobOut.textContent = 'jobId 不能为空';
+          return;
+        }
+
+        const url = apiUrl('/api/jobs/' + encodeURIComponent(jobId));
+        const res = await fetch(url);
+        const text = await res.text();
+        jobOut.textContent = text;
+
+        if (!res.ok) {
+          setStatusBadge('failed');
+          return;
+        }
+
+        try {
+          const data = JSON.parse(text);
+          setStatusBadge(data.status || 'unknown');
+          const terminal = ['success', 'failed', 'dead_letter'];
+          if (terminal.includes((data.status || '').toLowerCase())) {
+            stopPolling();
+            await refreshKnowledgeBases();
+          }
+        } catch (_) {}
+      }
+
+      function startPolling() {
+        stopPolling();
+        queryJob();
+        pollTimer = setInterval(queryJob, 2000);
+      }
+
+      function stopPolling() {
+        if (pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+      }
+
+      async function retryJob() {
+        const jobId = (jobIdInput.value || '').trim();
+        if (!jobId) {
+          jobOut.textContent = 'jobId 不能为空';
+          return;
+        }
+        const url = apiUrl('/api/jobs/' + encodeURIComponent(jobId) + '/retry');
+        const res = await fetch(url, { method: 'POST' });
+        const text = await res.text();
+        jobOut.textContent = text;
+      }
+
       uploadBtn.addEventListener('click', uploadFile);
       queryBtn.addEventListener('click', queryJob);
       startPollBtn.addEventListener('click', startPolling);
       stopPollBtn.addEventListener('click', stopPolling);
       retryBtn.addEventListener('click', retryJob);
+
+      createKbBtn.addEventListener('click', createKnowledgeBase);
+      loadKbProfileBtn.addEventListener('click', loadCurrentKnowledgeBaseProfile);
+      updateKbBtn.addEventListener('click', updateCurrentKnowledgeBase);
+      deleteKbBtn.addEventListener('click', deleteCurrentKnowledgeBase);
       refreshKbBtn.addEventListener('click', refreshKnowledgeBases);
+
+      updateDocBtn.addEventListener('click', updateCurrentDocument);
+      deleteDocBtn.addEventListener('click', deleteCurrentDocument);
+
+      kbIdSelect.addEventListener('change', loadCurrentKnowledgeBaseProfile);
+      kbIdCustom.addEventListener('change', loadCurrentKnowledgeBaseProfile);
       window.addEventListener('beforeunload', stopPolling);
 
+      clearSelectedDocument();
       refreshKnowledgeBases();
     </script>
   </body>

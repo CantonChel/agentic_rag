@@ -6,6 +6,7 @@ import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
 import io.minio.StatObjectArgs;
 import io.minio.errors.ErrorResponseException;
 import io.minio.http.Method;
@@ -78,6 +79,18 @@ public class MinioObjectService {
 			throw new IllegalArgumentException("object not found");
 		} catch (Exception e) {
 			throw new IllegalStateException("failed to read object from minio", e);
+		}
+	}
+
+	public void removeObject(String bucket, String objectKey) {
+		try {
+			minioClient.removeObject(
+				RemoveObjectArgs.builder()
+					.bucket(bucket)
+					.object(objectKey)
+					.build()
+			);
+		} catch (Exception ignored) {
 		}
 	}
 

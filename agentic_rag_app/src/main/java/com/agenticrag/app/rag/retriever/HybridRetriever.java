@@ -17,18 +17,18 @@ import org.springframework.stereotype.Service;
 public class HybridRetriever {
 	private static final Logger log = LoggerFactory.getLogger(HybridRetriever.class);
 	private final DenseVectorRetriever denseRetriever;
-	private final LuceneBm25Retriever bm25Retriever;
+	private final ObjectProvider<LuceneBm25Retriever> luceneBm25Retriever;
 	private final ObjectProvider<PostgresBm25Retriever> postgresBm25Retriever;
 	private final Reranker reranker;
 
 	public HybridRetriever(
 		DenseVectorRetriever denseRetriever,
-		LuceneBm25Retriever bm25Retriever,
+		ObjectProvider<LuceneBm25Retriever> luceneBm25Retriever,
 		ObjectProvider<PostgresBm25Retriever> postgresBm25Retriever,
 		Reranker reranker
 	) {
 		this.denseRetriever = denseRetriever;
-		this.bm25Retriever = bm25Retriever;
+		this.luceneBm25Retriever = luceneBm25Retriever;
 		this.postgresBm25Retriever = postgresBm25Retriever;
 		this.reranker = reranker;
 	}
@@ -48,7 +48,11 @@ public class HybridRetriever {
 
 		Retriever bm25Candidate = postgresBm25Retriever.getIfAvailable();
 		if (bm25Candidate == null) {
-			bm25Candidate = bm25Retriever;
+			bm25Candidate = luceneBm25Retriever.getIfAvailable();
+		}
+		if (bm25Candidate == null) {
+			log.warn("event=hybrid_bm25_missing traceId={} query={} reason=no_pg_or_lucene_retriever", traceId, query);
+			bm25Candidate = (q, k) -> new ArrayList<>();
 		}
 
 		final Retriever bm25RetrieverResolved = bm25Candidate;

@@ -34,6 +34,18 @@ public class MinioKnowledgeFileStorageService implements KnowledgeFileStorageSer
 		return minioObjectService.getPresignedGetUrl(parsed.bucket, parsed.key);
 	}
 
+	@Override
+	public void delete(String filePath) {
+		if (filePath == null || filePath.trim().isEmpty()) {
+			return;
+		}
+		try {
+			MinioPath parsed = parseMinioUri(filePath);
+			minioObjectService.removeObject(parsed.bucket, parsed.key);
+		} catch (Exception ignored) {
+		}
+	}
+
 	private String toMinioUri(String bucket, String key) {
 		return "minio://" + bucket + "/" + key;
 	}

@@ -1,9 +1,12 @@
 package com.agenticrag.app.ingest.service;
 
 import com.agenticrag.app.ingest.entity.ChunkEntity;
+import com.agenticrag.app.ingest.entity.KnowledgeBaseEntity;
+import com.agenticrag.app.ingest.entity.KnowledgeEntity;
 import com.agenticrag.app.ingest.model.KnowledgeEnableStatus;
 import com.agenticrag.app.ingest.model.KnowledgeParseStatus;
 import com.agenticrag.app.ingest.repo.ChunkRepository;
+import com.agenticrag.app.ingest.repo.KnowledgeBaseRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,15 +22,18 @@ import org.springframework.stereotype.Service;
 @Service
 public class KnowledgeBrowseService {
 	private final KnowledgeRepository knowledgeRepository;
+	private final KnowledgeBaseRepository knowledgeBaseRepository;
 	private final ChunkRepository chunkRepository;
 	private final ObjectMapper objectMapper;
 
 	public KnowledgeBrowseService(
 		KnowledgeRepository knowledgeRepository,
+		KnowledgeBaseRepository knowledgeBaseRepository,
 		ChunkRepository chunkRepository,
 		ObjectMapper objectMapper
 	) {
 		this.knowledgeRepository = knowledgeRepository;
+		this.knowledgeBaseRepository = knowledgeBaseRepository;
 		this.chunkRepository = chunkRepository;
 		this.objectMapper = objectMapper;
 	}
@@ -47,8 +53,26 @@ public class KnowledgeBrowseService {
 		}
 
 		List<KnowledgeBaseSummary> out = new ArrayList<>();
+		List<KnowledgeBaseEntity> registered = knowledgeBaseRepository.findAllByOrderByUpdatedAtDesc();
+		for (KnowledgeBaseEntity kb : registered) {
+			if (kb == null || kb.getId() == null || kb.getId().trim().isEmpty()) {
+				continue;
+			}
+			String kbId = kb.getId().trim();
+			int docCount = counts.containsKey(kbId) ? counts.get(kbId) : 0;
+			out.add(new KnowledgeBaseSummary(
+				kbId,
+				kb.getName(),
+				kb.getDescription(),
+				kb.isEnabled(),
+				docCount,
+				kb.getCreatedAt() != null ? kb.getCreatedAt().toString() : null,
+				kb.getUpdatedAt() != null ? kb.getUpdatedAt().toString() : null
+			));
+			counts.remove(kbId);
+		}
 		for (Map.Entry<String, Integer> e : counts.entrySet()) {
-			out.add(new KnowledgeBaseSummary(e.getKey(), e.getValue()));
+			out.add(new KnowledgeBaseSummary(e.getKey(), e.getKey(), null, true, e.getValue(), null, null));
 		}
 		out.sort(Comparator.comparing(KnowledgeBaseSummary::getKnowledgeBaseId));
 		return out;
@@ -59,22 +83,22 @@ public class KnowledgeBrowseService {
 		if (kbId.isEmpty()) {
 			return new ArrayList<>();
 		}
-		List<Object[]> docs = knowledgeRepository.listDocumentRows(kbId);
+		List<KnowledgeEntity> docs = knowledgeRepository.findByKnowledgeBaseIdOrderByCreatedAtDesc(kbId);
 		List<KnowledgeDocumentView> out = new ArrayList<>();
-		for (Object[] row : docs) {
-			if (row == null || row.length < 9) {
+		for (KnowledgeEntity doc : docs) {
+			if (doc == null) {
 				continue;
 			}
-			KnowledgeParseStatus parseStatus = asEnum(row[5], KnowledgeParseStatus.class);
-			KnowledgeEnableStatus enableStatus = asEnum(row[6], KnowledgeEnableStatus.class);
-			Instant createdAt = asInstant(row[7]);
-			Instant updatedAt = asInstant(row[8]);
+			KnowledgeParseStatus parseStatus = doc.getParseStatus();
+			KnowledgeEnableStatus enableStatus = doc.getEnableStatus();
+			Instant createdAt = doc.getCreatedAt();
+			Instant updatedAt = doc.getUpdatedAt();
 			out.add(new KnowledgeDocumentView(
-				asString(row[0]),
-				asString(row[1]),
-				asString(row[2]),
-				asString(row[3]),
-				asLong(row[4], 0L),
+				doc.getId(),
+				doc.getKnowledgeBaseId(),
+				doc.getFileName(),
+				doc.getFileType(),
+				doc.getFileSize(),
 				parseStatus != null ? parseStatus.name().toLowerCase(Locale.ROOT) : "unknown",
 				enableStatus != null ? enableStatus.name().toLowerCase(Locale.ROOT) : "unknown",
 				createdAt != null ? createdAt.toString() : null,
@@ -241,19 +265,57 @@ public class KnowledgeBrowseService {
 
 	public static class KnowledgeBaseSummary {
 		private final String knowledgeBaseId;
+		private final String name;
+		private final String description;
+		private final boolean enabled;
 		private final int documentCount;
+		private final String createdAt;
+		private final String updatedAt;
 
-		public KnowledgeBaseSummary(String knowledgeBaseId, int documentCount) {
+		public KnowledgeBaseSummary(
+			String knowledgeBaseId,
+			String name,
+			String description,
+			boolean enabled,
+			int documentCount,
+			String createdAt,
+			String updatedAt
+		) {
 			this.knowledgeBaseId = knowledgeBaseId;
+			this.name = name;
+			this.description = description;
+			this.enabled = enabled;
 			this.documentCount = documentCount;
+			this.createdAt = createdAt;
+			this.updatedAt = updatedAt;
 		}
 
 		public String getKnowledgeBaseId() {
 			return knowledgeBaseId;
 		}
 
+		public String getName() {
+			return name;
+		}
+
+		public String getDescription() {
+			return description;
+		}
+
+		public boolean isEnabled() {
+			return enabled;
+		}
+
 		public int getDocumentCount() {
 			return documentCount;
+		}
+
+		public String getCreatedAt() {
+			return createdAt;
+		}
+
+		public String getUpdatedAt() {
+			return updatedAt;
 		}
 	}
 
