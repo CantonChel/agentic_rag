@@ -416,6 +416,7 @@ def parse_json_payload(raw_text: str) -> Tuple[Optional[Any], Optional[str], Opt
 
 
 def extract_first_json_candidate(text: str) -> Optional[str]:
+    # 兜底提取：当模型在 JSON 前后夹杂解释文本时，尝试抓取首个可反序列化的 JSON 片段。
     decoder = json.JSONDecoder()
     for idx, ch in enumerate(text):
         if ch not in "{[":
@@ -429,6 +430,8 @@ def extract_first_json_candidate(text: str) -> Optional[str]:
 
 
 def sanitize_judge_output(raw_text: str) -> Tuple[str, bool]:
+    # 目标：在进入 RAGAS 解析器前，尽量把输出收敛为“纯 JSON”。
+    # 返回值：清洗后的文本，以及是否检测并剥离了 think 标签内容。
     text = str(raw_text or "")
     had_think = bool(THINK_TAG_PATTERN.search(text))
     cleaned = THINK_BLOCK_PATTERN.sub("", text)
@@ -440,11 +443,13 @@ def sanitize_judge_output(raw_text: str) -> Tuple[str, bool]:
     cleaned = THINK_TAG_PATTERN.sub("", cleaned).strip()
 
     if had_think:
+        # 常见情况 1：模型把合法 JSON 放在 ```json 代码块内。
         block = CODE_BLOCK_PATTERN.search(cleaned)
         if block:
             payload = block.group(1).strip()
             return f"```json\n{payload}\n```", True
 
+        # 常见情况 2：模型输出“解释 + JSON”，这里提取首个 JSON 主体。
         candidate = extract_first_json_candidate(cleaned)
         if candidate:
             return candidate.strip(), True
@@ -658,6 +663,8 @@ def run_ragas(records: List[EvalRecord], output_dir: Path, trace_ragas_judge: bo
             self._writer = writer
 
         def _sanitize_result_outputs(self, result: Any) -> Tuple[List[str], List[str], int]:
+            # 统一对每个候选输出做清洗：
+            # 1) 保留原文用于追踪；2) 把清洗后的文本写回 result，供 RAGAS 后续解析。
             raw_outputs: List[str] = []
             sanitized_outputs: List[str] = []
             stripped_count = 0
@@ -719,9 +726,9 @@ def run_ragas(records: List[EvalRecord], output_dir: Path, trace_ragas_judge: bo
                     "stop": stop,
                     "expected_schema": classify_ragas_prompt(prompt_text),
                     "prompt": prompt_text,
-                    "outputs": outputs_sanitized,
-                    "outputs_raw": outputs_raw,
-                    "think_stripped_count": think_stripped_count,
+                    "outputs": outputs_sanitized,  # 实际喂给 RAGAS 解析器的文本
+                    "outputs_raw": outputs_raw,  # 模型原始返回，便于排查格式漂移
+                    "think_stripped_count": think_stripped_count,  # 本次剥离 think 的条数
                 }
             )
 
