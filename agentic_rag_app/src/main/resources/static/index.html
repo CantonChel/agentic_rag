@@ -3,38 +3,463 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Agentic RAG Demo</title>
+    <title>Agentic RAG 智能平台</title>
     <style>
-      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f6f8fb; color: #1f2937; }
-      .wrap { max-width: 900px; margin: 48px auto; padding: 0 16px; }
-      .title { font-size: 28px; margin: 0 0 8px 0; }
-      .desc { color: #4b5563; margin: 0 0 24px 0; }
-      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-      .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; text-decoration: none; color: inherit; }
-      .card h2 { margin: 0 0 8px 0; font-size: 20px; }
-      .card p { margin: 0; color: #6b7280; line-height: 1.5; }
-      .hint { margin-top: 24px; color: #6b7280; font-size: 14px; }
-      @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        color: #1f2937;
+        overflow-x: hidden;
+      }
+
+      .app-container {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .header {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        padding: 16px 24px;
+        box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
+      }
+
+      .header-content {
+        max-width: 1200px;
+        margin: 0 auto;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .logo {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .logo-icon {
+        width: 40px;
+        height: 40px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 24px;
+        font-weight: bold;
+      }
+
+      .logo-text h1 {
+        font-size: 20px;
+        font-weight: 600;
+        color: #1f2937;
+      }
+
+      .logo-text p {
+        font-size: 12px;
+        color: #6b7280;
+      }
+
+      .nav-links {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .nav-link {
+        padding: 8px 16px;
+        background: white;
+        color: #667eea;
+        text-decoration: none;
+        border-radius: 8px;
+        border: 1px solid #667eea;
+        transition: all 0.3s ease;
+        font-weight: 500;
+      }
+
+      .nav-link:hover {
+        background: #667eea;
+        color: white;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+      }
+
+      .nav-link.active {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-color: transparent;
+      }
+
+      .hero {
+        padding: 80px 24px;
+        text-align: center;
+        color: white;
+      }
+
+      .hero-title {
+        font-size: 48px;
+        font-weight: 700;
+        margin-bottom: 16px;
+        text-shadow: 0 2px 20px rgba(0, 0, 0, 0.2);
+      }
+
+      .hero-subtitle {
+        font-size: 20px;
+        opacity: 0.9;
+        margin-bottom: 40px;
+        max-width: 600px;
+        margin-left: auto;
+        margin-right: auto;
+        line-height: 1.6;
+      }
+
+      .main-content {
+        flex: 1;
+        padding: 0 24px 80px;
+        max-width: 1200px;
+        width: 100%;
+        margin: 0 auto;
+      }
+
+      .section-title {
+        font-size: 24px;
+        font-weight: 600;
+        color: white;
+        margin-bottom: 24px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .section-title::before {
+        content: '';
+        width: 4px;
+        height: 28px;
+        background: white;
+        border-radius: 2px;
+      }
+
+      .card-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+        gap: 24px;
+        margin-bottom: 48px;
+      }
+
+      .card {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        border-radius: 20px;
+        padding: 32px;
+        text-decoration: none;
+        color: inherit;
+        transition: all 0.4s ease;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        transform: scaleX(0);
+        transition: transform 0.4s ease;
+      }
+
+      .card:hover {
+        transform: translateY(-8px);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+      }
+
+      .card:hover::before {
+        transform: scaleX(1);
+      }
+
+      .card-icon {
+        width: 64px;
+        height: 64px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 32px;
+        margin-bottom: 20px;
+      }
+
+      .card h2 {
+        font-size: 24px;
+        font-weight: 600;
+        color: #1f2937;
+        margin-bottom: 12px;
+      }
+
+      .card p {
+        color: #6b7280;
+        line-height: 1.6;
+        font-size: 15px;
+        margin-bottom: 20px;
+      }
+
+      .card-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: #667eea;
+        font-weight: 500;
+        font-size: 14px;
+        transition: gap 0.3s ease;
+      }
+
+      .card:hover .card-link {
+        gap: 12px;
+      }
+
+      .card-link::after {
+        content: '→';
+      }
+
+      .features-section {
+        margin-top: 48px;
+      }
+
+      .features-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 20px;
+      }
+
+      .feature-item {
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 16px;
+        padding: 24px;
+        color: white;
+        transition: all 0.3s ease;
+      }
+
+      .feature-item:hover {
+        background: rgba(255, 255, 255, 0.15);
+        transform: translateY(-4px);
+      }
+
+      .feature-icon {
+        font-size: 28px;
+        margin-bottom: 12px;
+      }
+
+      .feature-title {
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+
+      .feature-desc {
+        font-size: 13px;
+        opacity: 0.8;
+        line-height: 1.5;
+      }
+
+      .footer {
+        background: rgba(0, 0, 0, 0.1);
+        backdrop-filter: blur(10px);
+        padding: 24px;
+        text-align: center;
+        color: white;
+        font-size: 14px;
+        opacity: 0.8;
+      }
+
+      @media (max-width: 768px) {
+        .hero-title {
+          font-size: 32px;
+        }
+
+        .hero-subtitle {
+          font-size: 16px;
+        }
+
+        .card-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .header-content {
+          flex-direction: column;
+          gap: 16px;
+        }
+
+        .nav-links {
+          flex-wrap: wrap;
+          justify-content: center;
+        }
+      }
+
+      .floating-shapes {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        overflow: hidden;
+        z-index: -1;
+      }
+
+      .shape {
+        position: absolute;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 50%;
+        animation: float 20s infinite ease-in-out;
+      }
+
+      .shape:nth-child(1) {
+        width: 300px;
+        height: 300px;
+        top: 10%;
+        left: 10%;
+        animation-delay: 0s;
+      }
+
+      .shape:nth-child(2) {
+        width: 200px;
+        height: 200px;
+        top: 60%;
+        right: 10%;
+        animation-delay: -5s;
+      }
+
+      .shape:nth-child(3) {
+        width: 150px;
+        height: 150px;
+        bottom: 20%;
+        left: 20%;
+        animation-delay: -10s;
+      }
+
+      @keyframes float {
+        0%, 100% {
+          transform: translateY(0) rotate(0deg);
+        }
+        50% {
+          transform: translateY(-30px) rotate(180deg);
+        }
+      }
     </style>
   </head>
   <body>
-    <div class="wrap">
-      <h1 class="title">Agentic RAG Demo</h1>
-      <p class="desc">两个页面：聊天页面、知识库与文档上传页面。</p>
-
-      <div class="grid">
-        <a class="card" href="/chat.html">
-          <h2>聊天页面</h2>
-          <p>经典 LLM Chat 界面。支持 OpenAI / MiniMax，展示流式回复。</p>
-        </a>
-
-        <a class="card" href="/knowledge.html">
-          <h2>知识库与上传页面</h2>
-          <p>区分知识库 ID 与文档上传，显示 job 状态、错误和重试。</p>
-        </a>
+    <div class="app-container">
+      <div class="floating-shapes">
+        <div class="shape"></div>
+        <div class="shape"></div>
+        <div class="shape"></div>
       </div>
 
-      <p class="hint">默认后端地址为同源（例如 http://localhost:8081）。</p>
+      <header class="header">
+        <div class="header-content">
+          <div class="logo">
+            <div class="logo-icon">AI</div>
+            <div class="logo-text">
+              <h1>Agentic RAG</h1>
+              <p>智能检索增强生成平台</p>
+            </div>
+          </div>
+          <nav class="nav-links">
+            <a href="/index.html" class="nav-link active">🏠 首页</a>
+            <a href="/chat.html" class="nav-link">💬 聊天</a>
+            <a href="/knowledge.html" class="nav-link">📚 知识库</a>
+          </nav>
+        </div>
+      </header>
+
+      <section class="hero">
+        <h1 class="hero-title">智能对话 · 知识管理</h1>
+        <p class="hero-subtitle">
+          基于 RAG 技术的智能对话系统，支持多模型、工具调用、流式输出，让 AI 更懂您的业务
+        </p>
+      </section>
+
+      <main class="main-content">
+        <h2 class="section-title">功能入口</h2>
+        
+        <div class="card-grid">
+          <a href="/chat.html" class="card">
+            <div class="card-icon">💬</div>
+            <h2>AI 智能助手</h2>
+            <p>
+              经典的 LLM Chat 界面，支持 OpenAI / MiniMax 多模型切换，
+              流式回复展示，会话管理与记忆功能。
+            </p>
+            <span class="card-link">开始对话</span>
+          </a>
+
+          <a href="/knowledge.html" class="card">
+            <div class="card-icon">📚</div>
+            <h2>知识库管理</h2>
+            <p>
+              知识库创建与管理，文档上传与解析，
+              分块浏览与检索，完整的 RAG 知识管理流程。
+            </p>
+            <span class="card-link">管理知识库</span>
+          </a>
+        </div>
+
+        <section class="features-section">
+          <h2 class="section-title">核心特性</h2>
+          <div class="features-grid">
+            <div class="feature-item">
+              <div class="feature-icon">🤖</div>
+              <div class="feature-title">多模型支持</div>
+              <div class="feature-desc">支持 OpenAI、MiniMax 等多种 LLM 提供商，灵活切换</div>
+            </div>
+            <div class="feature-item">
+              <div class="feature-icon">🔧</div>
+              <div class="feature-title">工具调用</div>
+              <div class="feature-desc">Agent 模式支持工具调用，扩展 AI 能力边界</div>
+            </div>
+            <div class="feature-item">
+              <div class="feature-icon">📝</div>
+              <div class="feature-title">会话记忆</div>
+              <div class="feature-desc">持久化会话管理，上下文记忆，对话更连贯</div>
+            </div>
+            <div class="feature-item">
+              <div class="feature-icon">⚡</div>
+              <div class="feature-title">流式输出</div>
+              <div class="feature-desc">SSE 实时流式响应，提升交互体验</div>
+            </div>
+            <div class="feature-item">
+              <div class="feature-icon">🔍</div>
+              <div class="feature-title">智能检索</div>
+              <div class="feature-desc">向量检索 + BM25 混合搜索，精准召回</div>
+            </div>
+            <div class="feature-item">
+              <div class="feature-icon">📄</div>
+              <div class="feature-title">文档解析</div>
+              <div class="feature-desc">支持多种文档格式，智能分块与向量化</div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p>Agentic RAG Demo · 默认后端地址为同源（例如 http://localhost:8081）</p>
+      </footer>
     </div>
   </body>
 </html>
