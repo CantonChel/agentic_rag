@@ -20,6 +20,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -28,6 +30,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class KnowledgeCrudService {
+	private static final Logger log = LoggerFactory.getLogger(KnowledgeCrudService.class);
+
 	private final KnowledgeBaseRepository knowledgeBaseRepository;
 	private final KnowledgeRepository knowledgeRepository;
 	private final ChunkRepository chunkRepository;
@@ -210,7 +214,89 @@ public class KnowledgeCrudService {
 			counter.parseJobsDeleted,
 			counter.callbackEventsDeleted,
 			counter.chunksDeleted,
-			counter.embeddingsDeleted
+			counter.embeddingsDeleted,
+			counter.filesDeletedSucceeded,
+			counter.filesDeletedFailed
+		);
+	}
+
+	@Transactional
+	public FailedKnowledgeCleanupResult cleanupFailedKnowledgeBase(String knowledgeBaseId) {
+		String kbId = normalize(knowledgeBaseId, "");
+		if (kbId.isEmpty()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "knowledgeBaseId is required");
+		}
+
+		boolean kbExists = knowledgeBaseRepository.existsById(kbId);
+		long totalDocs = knowledgeRepository.countByKnowledgeBaseId(kbId);
+		List<String> failedKnowledgeIds = knowledgeRepository.listIdsByKnowledgeBaseIdAndParseStatus(kbId, KnowledgeParseStatus.FAILED);
+		if (!kbExists && totalDocs <= 0 && failedKnowledgeIds.isEmpty()) {
+			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "knowledge base not found");
+		}
+
+		CascadeDeleteCounter counter = new CascadeDeleteCounter();
+		for (String knowledgeId : failedKnowledgeIds) {
+			deleteKnowledgeInternal(knowledgeId, counter);
+		}
+		return new FailedKnowledgeCleanupResult(
+			kbId,
+			failedKnowledgeIds.size(),
+			counter.documentsDeleted,
+			counter.parseJobsDeleted,
+			counter.callbackEventsDeleted,
+			counter.chunksDeleted,
+			counter.embeddingsDeleted,
+			counter.filesDeletedSucceeded,
+			counter.filesDeletedFailed
+		);
+	}
+
+	@Transactional
+	public long cleanupResidualFailedKnowledgeDocuments(int batchSize) {
+		int size = batchSize > 0 ? batchSize : 100;
+		List<KnowledgeEntity> failed = knowledgeRepository.findTop100ByParseStatusOrderByUpdatedAtAsc(KnowledgeParseStatus.FAILED);
+		CascadeDeleteCounter counter = new CascadeDeleteCounter();
+		int count = 0;
+		for (KnowledgeEntity knowledge : failed) {
+			if (knowledge == null || knowledge.getId() == null || knowledge.getId().trim().isEmpty()) {
+				continue;
+			}
+			if (count >= size) {
+				break;
+			}
+			if (deleteKnowledgeInternal(knowledge.getId(), counter)) {
+				count++;
+			}
+		}
+		if (count > 0) {
+			log.info(
+				"residual failed knowledge cleaned: deletedDocuments={}, deletedParseJobs={}, deletedCallbackEvents={}, deletedChunks={}, deletedEmbeddings={}, filesDeletedSucceeded={}, filesDeletedFailed={}",
+				counter.documentsDeleted,
+				counter.parseJobsDeleted,
+				counter.callbackEventsDeleted,
+				counter.chunksDeleted,
+				counter.embeddingsDeleted,
+				counter.filesDeletedSucceeded,
+				counter.filesDeletedFailed
+			);
+		}
+		return count;
+	}
+
+	@Transactional
+	public KnowledgeDocumentDeleteResult hardDeleteKnowledgeDocumentIfExists(String knowledgeId) {
+		String kid = normalize(knowledgeId, "");
+		CascadeDeleteCounter counter = new CascadeDeleteCounter();
+		boolean deleted = !kid.isEmpty() && deleteKnowledgeInternal(kid, counter);
+		return new KnowledgeDocumentDeleteResult(
+			kid,
+			counter.parseJobsDeleted,
+			counter.callbackEventsDeleted,
+			counter.chunksDeleted,
+			counter.embeddingsDeleted,
+			counter.filesDeletedSucceeded,
+			counter.filesDeletedFailed,
+			deleted
 		);
 	}
 
@@ -277,7 +363,10 @@ public class KnowledgeCrudService {
 			counter.parseJobsDeleted,
 			counter.callbackEventsDeleted,
 			counter.chunksDeleted,
-			counter.embeddingsDeleted
+			counter.embeddingsDeleted,
+			counter.filesDeletedSucceeded,
+			counter.filesDeletedFailed,
+			true
 		);
 	}
 
@@ -296,8 +385,12 @@ public class KnowledgeCrudService {
 				if (indexer == null) {
 					continue;
 				}
-				indexer.removeChunkIds(chunkIds);
-				indexer.removeKnowledge(knowledgeId);
+				try {
+					indexer.removeChunkIds(chunkIds);
+					indexer.removeKnowledge(knowledgeId);
+				} catch (Exception e) {
+					log.warn("cleanup index remove failed: knowledgeId={}, indexer={}, error={}", knowledgeId, indexer.getClass().getSimpleName(), e.getMessage());
+				}
 			}
 		}
 
@@ -310,7 +403,13 @@ public class KnowledgeCrudService {
 			counter.callbackEventsDeleted += callbackEventRepository.deleteByJobIdIn(jobIds);
 		}
 		counter.parseJobsDeleted += parseJobRepository.deleteByKnowledgeId(knowledgeId);
-		fileStorageService.delete(knowledge.getFilePath());
+		boolean fileDeleted = fileStorageService.deleteAndReport(knowledge.getFilePath());
+		if (fileDeleted) {
+			counter.filesDeletedSucceeded += 1;
+		} else {
+			counter.filesDeletedFailed += 1;
+			log.warn("cleanup file delete failed: knowledgeId={}, filePath={}", knowledgeId, knowledge.getFilePath());
+		}
 		knowledgeRepository.delete(knowledge);
 		counter.documentsDeleted += 1;
 		return true;
@@ -419,6 +518,8 @@ public class KnowledgeCrudService {
 		private long callbackEventsDeleted;
 		private long chunksDeleted;
 		private long embeddingsDeleted;
+		private long filesDeletedSucceeded;
+		private long filesDeletedFailed;
 	}
 
 	public static class CreateKnowledgeBaseRequest {
@@ -692,6 +793,8 @@ public class KnowledgeCrudService {
 		private final long deletedCallbackEvents;
 		private final long deletedChunks;
 		private final long deletedEmbeddings;
+		private final long deletedFilesSucceeded;
+		private final long deletedFilesFailed;
 
 		public KnowledgeBaseDeleteResult(
 			String knowledgeBaseId,
@@ -699,7 +802,9 @@ public class KnowledgeCrudService {
 			long deletedParseJobs,
 			long deletedCallbackEvents,
 			long deletedChunks,
-			long deletedEmbeddings
+			long deletedEmbeddings,
+			long deletedFilesSucceeded,
+			long deletedFilesFailed
 		) {
 			this.knowledgeBaseId = knowledgeBaseId;
 			this.deletedDocuments = deletedDocuments;
@@ -707,6 +812,8 @@ public class KnowledgeCrudService {
 			this.deletedCallbackEvents = deletedCallbackEvents;
 			this.deletedChunks = deletedChunks;
 			this.deletedEmbeddings = deletedEmbeddings;
+			this.deletedFilesSucceeded = deletedFilesSucceeded;
+			this.deletedFilesFailed = deletedFilesFailed;
 		}
 
 		public String getKnowledgeBaseId() {
@@ -732,6 +839,14 @@ public class KnowledgeCrudService {
 		public long getDeletedEmbeddings() {
 			return deletedEmbeddings;
 		}
+
+		public long getDeletedFilesSucceeded() {
+			return deletedFilesSucceeded;
+		}
+
+		public long getDeletedFilesFailed() {
+			return deletedFilesFailed;
+		}
 	}
 
 	public static class KnowledgeDocumentDeleteResult {
@@ -740,19 +855,28 @@ public class KnowledgeCrudService {
 		private final long deletedCallbackEvents;
 		private final long deletedChunks;
 		private final long deletedEmbeddings;
+		private final long deletedFilesSucceeded;
+		private final long deletedFilesFailed;
+		private final boolean deleted;
 
 		public KnowledgeDocumentDeleteResult(
 			String knowledgeId,
 			long deletedParseJobs,
 			long deletedCallbackEvents,
 			long deletedChunks,
-			long deletedEmbeddings
+			long deletedEmbeddings,
+			long deletedFilesSucceeded,
+			long deletedFilesFailed,
+			boolean deleted
 		) {
 			this.knowledgeId = knowledgeId;
 			this.deletedParseJobs = deletedParseJobs;
 			this.deletedCallbackEvents = deletedCallbackEvents;
 			this.deletedChunks = deletedChunks;
 			this.deletedEmbeddings = deletedEmbeddings;
+			this.deletedFilesSucceeded = deletedFilesSucceeded;
+			this.deletedFilesFailed = deletedFilesFailed;
+			this.deleted = deleted;
 		}
 
 		public String getKnowledgeId() {
@@ -773,6 +897,88 @@ public class KnowledgeCrudService {
 
 		public long getDeletedEmbeddings() {
 			return deletedEmbeddings;
+		}
+
+		public long getDeletedFilesSucceeded() {
+			return deletedFilesSucceeded;
+		}
+
+		public long getDeletedFilesFailed() {
+			return deletedFilesFailed;
+		}
+
+		public boolean isDeleted() {
+			return deleted;
+		}
+	}
+
+	public static class FailedKnowledgeCleanupResult {
+		private final String knowledgeBaseId;
+		private final long scannedFailedDocuments;
+		private final long deletedDocuments;
+		private final long deletedParseJobs;
+		private final long deletedCallbackEvents;
+		private final long deletedChunks;
+		private final long deletedEmbeddings;
+		private final long deletedFilesSucceeded;
+		private final long deletedFilesFailed;
+
+		public FailedKnowledgeCleanupResult(
+			String knowledgeBaseId,
+			long scannedFailedDocuments,
+			long deletedDocuments,
+			long deletedParseJobs,
+			long deletedCallbackEvents,
+			long deletedChunks,
+			long deletedEmbeddings,
+			long deletedFilesSucceeded,
+			long deletedFilesFailed
+		) {
+			this.knowledgeBaseId = knowledgeBaseId;
+			this.scannedFailedDocuments = scannedFailedDocuments;
+			this.deletedDocuments = deletedDocuments;
+			this.deletedParseJobs = deletedParseJobs;
+			this.deletedCallbackEvents = deletedCallbackEvents;
+			this.deletedChunks = deletedChunks;
+			this.deletedEmbeddings = deletedEmbeddings;
+			this.deletedFilesSucceeded = deletedFilesSucceeded;
+			this.deletedFilesFailed = deletedFilesFailed;
+		}
+
+		public String getKnowledgeBaseId() {
+			return knowledgeBaseId;
+		}
+
+		public long getScannedFailedDocuments() {
+			return scannedFailedDocuments;
+		}
+
+		public long getDeletedDocuments() {
+			return deletedDocuments;
+		}
+
+		public long getDeletedParseJobs() {
+			return deletedParseJobs;
+		}
+
+		public long getDeletedCallbackEvents() {
+			return deletedCallbackEvents;
+		}
+
+		public long getDeletedChunks() {
+			return deletedChunks;
+		}
+
+		public long getDeletedEmbeddings() {
+			return deletedEmbeddings;
+		}
+
+		public long getDeletedFilesSucceeded() {
+			return deletedFilesSucceeded;
+		}
+
+		public long getDeletedFilesFailed() {
+			return deletedFilesFailed;
 		}
 	}
 }

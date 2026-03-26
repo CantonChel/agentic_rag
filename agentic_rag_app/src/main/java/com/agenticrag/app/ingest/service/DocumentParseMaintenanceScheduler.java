@@ -16,15 +16,18 @@ public class DocumentParseMaintenanceScheduler {
 	private final IngestAsyncProperties asyncProperties;
 	private final DocumentParseQueue queue;
 	private final ParseJobService parseJobService;
+	private final KnowledgeCrudService knowledgeCrudService;
 
 	public DocumentParseMaintenanceScheduler(
 		IngestAsyncProperties asyncProperties,
 		DocumentParseQueue queue,
-		ParseJobService parseJobService
+		ParseJobService parseJobService,
+		KnowledgeCrudService knowledgeCrudService
 	) {
 		this.asyncProperties = asyncProperties;
 		this.queue = queue;
 		this.parseJobService = parseJobService;
+		this.knowledgeCrudService = knowledgeCrudService;
 	}
 
 	@Scheduled(fixedDelayString = "${ingest.async.retry-replay-interval-ms:3000}")
@@ -61,6 +64,18 @@ public class DocumentParseMaintenanceScheduler {
 			}
 		} catch (Exception e) {
 			log.warn("lease recover failed: {}", e.getMessage());
+		}
+	}
+
+	@Scheduled(fixedDelayString = "${ingest.async.failed-cleanup-interval-ms:60000}")
+	public void cleanupResidualFailedKnowledge() {
+		if (!asyncProperties.isEnabled()) {
+			return;
+		}
+		try {
+			knowledgeCrudService.cleanupResidualFailedKnowledgeDocuments(100);
+		} catch (Exception e) {
+			log.warn("residual failed knowledge cleanup failed: {}", e.getMessage());
 		}
 	}
 }

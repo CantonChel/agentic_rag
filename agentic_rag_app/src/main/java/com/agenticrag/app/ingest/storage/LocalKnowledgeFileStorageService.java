@@ -42,14 +42,16 @@ public class LocalKnowledgeFileStorageService implements KnowledgeFileStorageSer
 	}
 
 	@Override
-	public void delete(String filePath) {
+	public boolean deleteAndReport(String filePath) {
 		if (filePath == null || filePath.trim().isEmpty()) {
-			return;
+			return false;
 		}
 		try {
 			Path file = Paths.get(filePath).toAbsolutePath().normalize();
 			Files.deleteIfExists(file);
+			return true;
 		} catch (Exception ignored) {
+			return false;
 		}
 	}
 

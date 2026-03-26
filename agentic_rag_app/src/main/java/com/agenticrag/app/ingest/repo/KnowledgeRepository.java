@@ -1,6 +1,7 @@
 package com.agenticrag.app.ingest.repo;
 
 import com.agenticrag.app.ingest.entity.KnowledgeEntity;
+import com.agenticrag.app.ingest.model.KnowledgeParseStatus;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -15,6 +16,14 @@ public interface KnowledgeRepository extends JpaRepository<KnowledgeEntity, Stri
 
 	@Query("select k.id from KnowledgeEntity k where k.knowledgeBaseId = :knowledgeBaseId")
 	List<String> listIdsByKnowledgeBaseId(@Param("knowledgeBaseId") String knowledgeBaseId);
+
+	@Query("select k.id from KnowledgeEntity k where k.knowledgeBaseId = :knowledgeBaseId and k.parseStatus = :parseStatus")
+	List<String> listIdsByKnowledgeBaseIdAndParseStatus(
+		@Param("knowledgeBaseId") String knowledgeBaseId,
+		@Param("parseStatus") KnowledgeParseStatus parseStatus
+	);
+
+	List<KnowledgeEntity> findTop100ByParseStatusOrderByUpdatedAtAsc(KnowledgeParseStatus parseStatus);
 
 	@Modifying
 	@Query("update KnowledgeEntity k set k.knowledgeBaseId = :toKnowledgeBaseId, k.updatedAt = :updatedAt where k.knowledgeBaseId = :fromKnowledgeBaseId")

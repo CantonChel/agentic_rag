@@ -19,6 +19,7 @@ import com.agenticrag.app.ingest.repo.ParseJobRepository;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -165,6 +166,53 @@ class KnowledgeCrudIntegrationTest {
 	}
 
 	@Test
+	void cleanupFailedKnowledgeShouldDeleteOnlyFailedDocumentsAndBeIdempotent() {
+		knowledgeBaseRepository.save(base("kb-cleanup"));
+		knowledgeRepository.save(doc("doc-failed", "kb-cleanup", "failed.txt", KnowledgeParseStatus.FAILED));
+		knowledgeRepository.save(doc("doc-success", "kb-cleanup", "success.txt", KnowledgeParseStatus.COMPLETED));
+		chunkRepository.save(chunk("doc-failed", "cf-1", "failed-chunk"));
+		chunkRepository.save(chunk("doc-success", "cs-1", "success-chunk"));
+		embeddingRepository.save(embedding("doc-failed", "cf-1", "failed-chunk"));
+		embeddingRepository.save(embedding("doc-success", "cs-1", "success-chunk"));
+		parseJobRepository.save(job("job-failed", "doc-failed"));
+		parseJobRepository.save(job("job-success", "doc-success"));
+		callbackEventRepository.save(event("evt-failed", "job-failed"));
+		callbackEventRepository.save(event("evt-success", "job-success"));
+
+		webTestClient.post()
+			.uri("/api/knowledge-bases/{kbId}/cleanup-failed", "kb-cleanup")
+			.exchange()
+			.expectStatus().isOk()
+			.expectBody()
+			.jsonPath("$.knowledgeBaseId").isEqualTo("kb-cleanup")
+			.jsonPath("$.scannedFailedDocuments").isEqualTo(1)
+			.jsonPath("$.deletedDocuments").isEqualTo(1)
+			.jsonPath("$.deletedParseJobs").isEqualTo(1)
+			.jsonPath("$.deletedCallbackEvents").isEqualTo(1)
+			.jsonPath("$.deletedChunks").isEqualTo(1)
+			.jsonPath("$.deletedEmbeddings").isEqualTo(1);
+
+		Assertions.assertFalse(knowledgeRepository.findById("doc-failed").isPresent());
+		Assertions.assertTrue(knowledgeRepository.findById("doc-success").isPresent());
+		Assertions.assertTrue(parseJobRepository.findById("job-success").isPresent());
+		Assertions.assertEquals(1L, chunkRepository.count());
+		Assertions.assertEquals(1L, embeddingRepository.count());
+		Assertions.assertEquals(1L, callbackEventRepository.count());
+
+		webTestClient.post()
+			.uri("/api/knowledge-bases/{kbId}/cleanup-failed", "kb-cleanup")
+			.exchange()
+			.expectStatus().isOk()
+			.expectBody()
+			.jsonPath("$.scannedFailedDocuments").isEqualTo(0)
+			.jsonPath("$.deletedDocuments").isEqualTo(0)
+			.jsonPath("$.deletedParseJobs").isEqualTo(0)
+			.jsonPath("$.deletedCallbackEvents").isEqualTo(0)
+			.jsonPath("$.deletedChunks").isEqualTo(0)
+			.jsonPath("$.deletedEmbeddings").isEqualTo(0);
+	}
+
+	@Test
 	void updateDocumentShouldMoveKnowledgeBaseAndUpdateMetadata() {
 		knowledgeBaseRepository.save(base("kb-old"));
 		knowledgeRepository.save(doc("doc-move", "kb-old", "before.txt"));
@@ -213,6 +261,10 @@ class KnowledgeCrudIntegrationTest {
 	}
 
 	private KnowledgeEntity doc(String id, String kbId, String filename) {
+		return doc(id, kbId, filename, KnowledgeParseStatus.COMPLETED);
+	}
+
+	private KnowledgeEntity doc(String id, String kbId, String filename, KnowledgeParseStatus parseStatus) {
 		KnowledgeEntity k = new KnowledgeEntity();
 		k.setId(id);
 		k.setKnowledgeBaseId(kbId);
@@ -221,8 +273,8 @@ class KnowledgeCrudIntegrationTest {
 		k.setFileSize(10L);
 		k.setFileHash("hash-" + id);
 		k.setFilePath("/tmp/" + filename);
-		k.setParseStatus(KnowledgeParseStatus.COMPLETED);
-		k.setEnableStatus(KnowledgeEnableStatus.ENABLED);
+		k.setParseStatus(parseStatus);
+		k.setEnableStatus(parseStatus == KnowledgeParseStatus.COMPLETED ? KnowledgeEnableStatus.ENABLED : KnowledgeEnableStatus.DISABLED);
 		k.setMetadataJson("{}");
 		k.setCreatedAt(Instant.now());
 		k.setUpdatedAt(Instant.now());

@@ -35,14 +35,15 @@ public class MinioKnowledgeFileStorageService implements KnowledgeFileStorageSer
 	}
 
 	@Override
-	public void delete(String filePath) {
+	public boolean deleteAndReport(String filePath) {
 		if (filePath == null || filePath.trim().isEmpty()) {
-			return;
+			return false;
 		}
 		try {
 			MinioPath parsed = parseMinioUri(filePath);
-			minioObjectService.removeObject(parsed.bucket, parsed.key);
+			return minioObjectService.removeObject(parsed.bucket, parsed.key);
 		} catch (Exception ignored) {
+			return false;
 		}
 	}
 
