@@ -1,13 +1,16 @@
 package com.agenticrag.app.ingest.api;
 
+import com.agenticrag.app.ingest.docreader.DocreaderClient;
+import com.agenticrag.app.ingest.docreader.DocreaderReadResponse;
+import com.agenticrag.app.ingest.entity.ChunkEntity;
+import com.agenticrag.app.ingest.queue.ReservedJob;
 import com.agenticrag.app.ingest.queue.DocumentParseQueue;
-import com.agenticrag.app.ingest.repo.CallbackEventRepository;
 import com.agenticrag.app.ingest.repo.ChunkRepository;
 import com.agenticrag.app.ingest.repo.EmbeddingRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeBaseRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeRepository;
 import com.agenticrag.app.ingest.repo.ParseJobRepository;
-import com.agenticrag.app.ingest.service.ParseJobService;
+import com.agenticrag.app.ingest.service.DocumentParseDispatcher;
 import com.agenticrag.app.rag.embedding.EmbeddingModel;
 import com.agenticrag.app.tool.Tool;
 import com.agenticrag.app.tool.ToolExecutionContext;
@@ -17,11 +20,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Base64;
+import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,7 +53,7 @@ class KnowledgeIngestSearchE2eIntegrationTest {
 	private ToolRouter toolRouter;
 
 	@Autowired
-	private ParseJobService parseJobService;
+	private DocumentParseDispatcher documentParseDispatcher;
 
 	@Autowired
 	private KnowledgeRepository knowledgeRepository;
@@ -68,18 +70,17 @@ class KnowledgeIngestSearchE2eIntegrationTest {
 	@Autowired
 	private EmbeddingRepository embeddingRepository;
 
-	@Autowired
-	private CallbackEventRepository callbackEventRepository;
-
 	@MockBean
 	private DocumentParseQueue documentParseQueue;
+
+	@MockBean
+	private DocreaderClient docreaderClient;
 
 	@MockBean
 	private EmbeddingModel embeddingModel;
 
 	@BeforeEach
 	void setUp() {
-		callbackEventRepository.deleteAll();
 		embeddingRepository.deleteAll();
 		chunkRepository.deleteAll();
 		parseJobRepository.deleteAll();
@@ -130,55 +131,25 @@ class KnowledgeIngestSearchE2eIntegrationTest {
 		Assertions.assertFalse(knowledgeId.isEmpty());
 		Assertions.assertFalse(jobId.isEmpty());
 
-		parseJobService.tryMarkDispatched(jobId, Instant.now().plusSeconds(300));
-		parseJobService.markParsing(jobId, Instant.now().plusSeconds(300));
+		DocreaderReadResponse readResponse = new DocreaderReadResponse();
+		readResponse.setMarkdownContent(content);
+		readResponse.setImageRefs(Collections.emptyList());
+		readResponse.setMetadata(Collections.singletonMap("source", "e2e"));
+		readResponse.setError("");
+		Mockito.when(docreaderClient.readDocument(Mockito.any())).thenReturn(readResponse);
 
-		Map<String, Object> chunk = new HashMap<>();
-		chunk.put("chunk_id", "e2e-0");
-		chunk.put("type", "text");
-		chunk.put("seq", 0);
-		chunk.put("start", 0);
-		chunk.put("end", content.length());
-		chunk.put("content", content);
-		chunk.put("metadata", new HashMap<>());
-		List<Map<String, Object>> chunks = new ArrayList<>();
-		chunks.add(chunk);
+		documentParseDispatcher.dispatch(new ReservedJob(jobId, null));
 
-		Map<String, Object> callback = new HashMap<>();
-		callback.put("event_id", "evt-" + System.nanoTime());
-		callback.put("status", "completed");
-		callback.put("message", "ok");
-		callback.put("chunks", chunks);
-		String callbackBody = objectMapper.writeValueAsString(callback);
-
-		webTestClient.post()
-			.uri("/internal/docreader/jobs/{jobId}/result", jobId)
-			.contentType(MediaType.APPLICATION_JSON)
-			.bodyValue(callbackBody)
+		byte[] statusBody = webTestClient.get()
+			.uri("/api/jobs/{jobId}", jobId)
 			.exchange()
 			.expectStatus().isOk()
 			.expectBody()
-			.jsonPath("$.ok").isEqualTo(true)
-			.jsonPath("$.state").isEqualTo("accepted");
-
-		boolean reachedSuccess = false;
-		for (int i = 0; i < 20; i++) {
-			byte[] statusBody = webTestClient.get()
-				.uri("/api/jobs/{jobId}", jobId)
-				.exchange()
-				.expectStatus().isOk()
-				.expectBody()
-				.returnResult()
-				.getResponseBodyContent();
-			Assertions.assertNotNull(statusBody);
-			JsonNode statusJson = objectMapper.readTree(statusBody);
-			if ("success".equalsIgnoreCase(statusJson.path("status").asText())) {
-				reachedSuccess = true;
-				break;
-			}
-			Thread.sleep(100L);
-		}
-		Assertions.assertTrue(reachedSuccess, "job should reach success after async callback processing");
+			.returnResult()
+			.getResponseBodyContent();
+		Assertions.assertNotNull(statusBody);
+		JsonNode statusJson = objectMapper.readTree(statusBody);
+		Assertions.assertEquals("success", statusJson.path("status").asText());
 
 		Tool tool = toolRouter.getTool("search_knowledge_base").orElseThrow();
 		ObjectNode args = objectMapper.createObjectNode().put("query", uniqueToken);
@@ -188,5 +159,73 @@ class KnowledgeIngestSearchE2eIntegrationTest {
 		Assertions.assertTrue(result.isSuccess());
 		Assertions.assertNotNull(result.getOutput());
 		Assertions.assertTrue(result.getOutput().contains(uniqueToken));
+	}
+
+	@Test
+	void ingestShouldReplaceImageRefsAndExposeStoredImage() throws Exception {
+		String kbId = "kb-image";
+		String uploadContent = "placeholder";
+		String markdown = "before\n\n![diagram](images/demo.png)\n\nafter";
+		byte[] imageBytes = "fake-png-bytes".getBytes(StandardCharsets.UTF_8);
+
+		MultiValueMap<String, Object> multipart = new LinkedMultiValueMap<>();
+		multipart.add("file", new ByteArrayResource(uploadContent.getBytes(StandardCharsets.UTF_8)) {
+			@Override
+			public String getFilename() {
+				return "image.txt";
+			}
+		});
+		byte[] uploadBody = webTestClient.post()
+			.uri("/api/knowledge-bases/{kbId}/knowledge/file", kbId)
+			.contentType(MediaType.MULTIPART_FORM_DATA)
+			.body(BodyInserters.fromMultipartData(multipart))
+			.exchange()
+			.expectStatus().isOk()
+			.expectBody()
+			.returnResult()
+			.getResponseBodyContent();
+
+		Assertions.assertNotNull(uploadBody);
+		JsonNode uploadJson = objectMapper.readTree(uploadBody);
+		String knowledgeId = uploadJson.path("knowledgeId").asText();
+		String jobId = uploadJson.path("jobId").asText();
+
+		DocreaderReadResponse.ImageRef imageRef = new DocreaderReadResponse.ImageRef();
+		imageRef.setOriginalRef("images/demo.png");
+		imageRef.setFileName("demo.png");
+		imageRef.setMimeType("image/png");
+		imageRef.setBytesBase64(Base64.getEncoder().encodeToString(imageBytes));
+
+		DocreaderReadResponse readResponse = new DocreaderReadResponse();
+		readResponse.setMarkdownContent(markdown);
+		readResponse.setImageRefs(Collections.singletonList(imageRef));
+		readResponse.setMetadata(Collections.singletonMap("source", "image"));
+		readResponse.setError("");
+		Mockito.when(docreaderClient.readDocument(Mockito.any())).thenReturn(readResponse);
+
+		documentParseDispatcher.dispatch(new ReservedJob(jobId, null));
+
+		List<ChunkEntity> chunks = chunkRepository.findByKnowledgeIdOrderByChunkIndexAsc(knowledgeId);
+		Assertions.assertFalse(chunks.isEmpty());
+		Assertions.assertTrue(chunks.get(0).getContent().contains("/api/knowledge/images?filePath="));
+		Assertions.assertNotNull(chunks.get(0).getImageInfoJson());
+
+		JsonNode imageInfo = objectMapper.readTree(chunks.get(0).getImageInfoJson()).get(0);
+		String filePath = imageInfo.path("filePath").asText();
+		Assertions.assertFalse(filePath.isEmpty());
+
+		webTestClient.get()
+			.uri("/api/knowledge/{knowledgeId}/chunks", knowledgeId)
+			.exchange()
+			.expectStatus().isOk()
+			.expectBody()
+			.jsonPath("$[0].imageInfos[0].filePath").isEqualTo(filePath);
+
+		webTestClient.get()
+			.uri(uriBuilder -> uriBuilder.path("/api/knowledge/images").queryParam("filePath", filePath).build())
+			.exchange()
+			.expectStatus().isOk()
+			.expectHeader().contentType("image/png")
+			.expectBody(byte[].class).isEqualTo(imageBytes);
 	}
 }
