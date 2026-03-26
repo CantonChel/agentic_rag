@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-rag.local/benchmark/schemas/build_descriptor.schema.json",
+  "title": "BuildDescriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "build_id",
+    "source_snapshot_id",
+    "chunk_strategy_version",
+    "embedding_model",
+    "retriever_config",
+    "status",
+    "created_at"
+  ],
+  "properties": {
+    "build_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_snapshot_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chunk_strategy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "embedding_model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "retriever_config": {
+      "type": "object"
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
