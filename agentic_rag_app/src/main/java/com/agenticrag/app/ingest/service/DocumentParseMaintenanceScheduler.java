@@ -52,6 +52,13 @@ public class DocumentParseMaintenanceScheduler {
 				}
 				queue.enqueue(jobId);
 			}
+			List<String> staleIndexing = parseJobService.recoverStaleIndexing(Instant.now());
+			for (String jobId : staleIndexing) {
+				if (jobId == null || jobId.trim().isEmpty()) {
+					continue;
+				}
+				queue.enqueue(jobId);
+			}
 		} catch (Exception e) {
 			log.warn("lease recover failed: {}", e.getMessage());
 		}

@@ -215,6 +215,30 @@ public class ParseJobService {
 		return recovered;
 	}
 
+	@Transactional
+	public List<String> recoverStaleIndexing(Instant now) {
+		Instant point = now != null ? now : Instant.now();
+		long staleSeconds = Math.max(asyncProperties.getLeaseSeconds() * 3L, 600L);
+		Instant cutoff = point.minusSeconds(staleSeconds);
+		List<ParseJobEntity> stale = parseJobRepository.findTop100ByStatusAndUpdatedAtLessThanEqualOrderByUpdatedAtAsc(
+			ParseJobStatus.INDEXING,
+			cutoff
+		);
+		List<String> recovered = new ArrayList<>();
+		for (ParseJobEntity job : stale) {
+			job.setStatus(ParseJobStatus.RETRY_WAIT);
+			job.setNextRetryAt(point);
+			job.setLeaseUntil(null);
+			job.setLastErrorCode("indexing_stale");
+			job.setLastErrorMessage("indexing has no progress for " + staleSeconds + " seconds");
+			job.setUpdatedAt(point);
+			parseJobRepository.save(job);
+			setKnowledgeParseStatusByKnowledgeId(job.getKnowledgeId(), KnowledgeParseStatus.PARSING);
+			recovered.add(job.getId());
+		}
+		return recovered;
+	}
+
 	@Transactional(readOnly = true)
 	public int maxRetry() {
 		return asyncProperties.getMaxRetry();

@@ -22,6 +22,8 @@ public interface ParseJobRepository extends JpaRepository<ParseJobEntity, String
 
 	List<ParseJobEntity> findTop100ByStatusInAndLeaseUntilLessThanEqualOrderByLeaseUntilAsc(Collection<ParseJobStatus> statuses, Instant leaseUntil);
 
+	List<ParseJobEntity> findTop100ByStatusAndUpdatedAtLessThanEqualOrderByUpdatedAtAsc(ParseJobStatus status, Instant updatedAt);
+
 	@Modifying
 	@Query("update ParseJobEntity j set j.status=:toStatus, j.updatedAt=:now, j.leaseUntil=:leaseUntil, j.nextRetryAt=:nextRetryAt where j.id=:jobId and j.status in :fromStatuses")
 	int transitionIfStatusIn(
