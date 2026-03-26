@@ -539,18 +539,36 @@
         display: none;
       }
 
+      .file-picker-actions {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+
       .file-upload-label {
         display: inline-flex;
-        flex-direction: column;
         align-items: center;
         gap: 8px;
         cursor: pointer;
-        color: #6b7280;
+        color: #4b5563;
+        background: white;
+        border: 1px solid #d1d5db;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-weight: 500;
+        transition: all 0.2s ease;
+      }
+
+      .file-upload-label:hover {
+        border-color: #667eea;
+        color: #4338ca;
+        transform: translateY(-1px);
       }
 
       .file-upload-label::before {
         content: '📎';
-        font-size: 32px;
+        font-size: 18px;
       }
 
       .file-name {
@@ -558,6 +576,9 @@
         font-size: 13px;
         color: #667eea;
         font-weight: 500;
+        white-space: pre-wrap;
+        word-break: break-word;
+        text-align: left;
       }
 
       .muted {
@@ -755,15 +776,24 @@
           </div>
           <div class="row" style="margin-top: 16px;">
             <div class="file-upload-area" style="flex: 1;">
-              <label class="file-upload-label">
-                <span>点击或拖拽文件到此处上传</span>
-                <input id="fileInput" type="file" />
-              </label>
+              <div class="file-picker-actions">
+                <label class="file-upload-label">
+                  <span>选择多个文件</span>
+                  <input id="fileInput" type="file" multiple />
+                </label>
+                <label class="file-upload-label">
+                  <span>选择文件夹</span>
+                  <input id="folderInput" type="file" webkitdirectory directory multiple />
+                </label>
+              </div>
+              <div class="muted" style="margin-top: 10px;">支持上传多个文件或整个文件夹（会递归读取文件）</div>
               <div id="fileName" class="file-name"></div>
             </div>
             <div style="display: flex; flex-direction: column; gap: 10px;">
               <button id="uploadBtn" class="btn btn-success" style="min-width: 160px;">📤 上传并创建任务</button>
+              <button id="cleanupFailedBtn" class="btn btn-secondary">🧽 清空失败数据</button>
               <button id="queryBtn" class="btn btn-secondary">🔍 查询状态</button>
+              <button id="clearFilesBtn" class="btn btn-secondary">🧹 清空选择</button>
             </div>
           </div>
           <div class="row" style="margin-top: 12px;">
@@ -862,8 +892,11 @@
 
       const metadataInput = document.getElementById('metadata');
       const fileInput = document.getElementById('fileInput');
+      const folderInput = document.getElementById('folderInput');
       const fileNameDiv = document.getElementById('fileName');
       const uploadBtn = document.getElementById('uploadBtn');
+      const cleanupFailedBtn = document.getElementById('cleanupFailedBtn');
+      const clearFilesBtn = document.getElementById('clearFilesBtn');
       const jobIdInput = document.getElementById('jobId');
       const statusBadge = document.getElementById('statusBadge');
       const uploadOut = document.getElementById('uploadOut');
@@ -890,14 +923,67 @@
 
       let pollTimer = null;
       let currentSelectedDoc = null;
+      let selectedUploadFiles = [];
+
+      function selectedFileKey(file) {
+        if (!file) return '';
+        const relativePath = file.webkitRelativePath ? String(file.webkitRelativePath) : '';
+        return relativePath + '|' + file.name + '|' + file.size + '|' + file.lastModified;
+      }
+
+      function updateSelectedFilesView() {
+        if (!selectedUploadFiles.length) {
+          fileNameDiv.textContent = '';
+          return;
+        }
+        const totalBytes = selectedUploadFiles.reduce((sum, item) => sum + Number(item.size || 0), 0);
+        const folderFileCount = selectedUploadFiles.filter(item => !!item.webkitRelativePath).length;
+        const previewItems = selectedUploadFiles.slice(0, 8).map(item => '• ' + (item.webkitRelativePath || item.name));
+        const remainCount = selectedUploadFiles.length - previewItems.length;
+        fileNameDiv.textContent =
+          '已选择 ' + selectedUploadFiles.length + ' 个文件，共 ' + formatBytes(totalBytes)
+          + (folderFileCount > 0 ? '（其中 ' + folderFileCount + ' 个来自文件夹）' : '')
+          + '\n' + previewItems.join('\n')
+          + (remainCount > 0 ? '\n... 其余 ' + remainCount + ' 个文件' : '');
+      }
+
+      function addSelectedFiles(fileList) {
+        if (!fileList || !fileList.length) return;
+        const merged = new Map();
+        for (const item of selectedUploadFiles) {
+          merged.set(selectedFileKey(item), item);
+        }
+        for (const item of fileList) {
+          merged.set(selectedFileKey(item), item);
+        }
+        selectedUploadFiles = Array.from(merged.values()).sort((a, b) => {
+          const left = String(a.webkitRelativePath || a.name || '').toLowerCase();
+          const right = String(b.webkitRelativePath || b.name || '').toLowerCase();
+          return left.localeCompare(right, 'zh-CN');
+        });
+        updateSelectedFilesView();
+      }
+
+      function clearSelectedFiles() {
+        selectedUploadFiles = [];
+        fileInput.value = '';
+        folderInput.value = '';
+        updateSelectedFilesView();
+      }
 
       fileInput.addEventListener('change', () => {
-        const file = fileInput.files[0];
-        if (file) {
-          fileNameDiv.textContent = '已选择: ' + file.name + ' (' + formatBytes(file.size) + ')';
-        } else {
-          fileNameDiv.textContent = '';
-        }
+        addSelectedFiles(fileInput.files);
+        fileInput.value = '';
+      });
+
+      folderInput.addEventListener('change', () => {
+        addSelectedFiles(folderInput.files);
+        folderInput.value = '';
+      });
+
+      clearFilesBtn.addEventListener('click', () => {
+        clearSelectedFiles();
+        uploadOut.textContent = '已清空待上传文件';
       });
 
       function apiUrl(path) {
@@ -1353,12 +1439,12 @@
       });
 
       uploadBtn.addEventListener('click', async () => {
-        const file = fileInput.files[0];
-        if (!file) {
-          uploadOut.textContent = '请先选择文件';
+        const files = selectedUploadFiles.slice();
+        if (!files.length) {
+          uploadOut.textContent = '请先选择文件或文件夹';
           return;
         }
-        
+
         const kbId = getSelectedKbId();
         if (!kbId) {
           uploadOut.textContent = '请先选择知识库';
@@ -1368,32 +1454,142 @@
         let metadata = {};
         try {
           metadata = JSON.parse(metadataInput.value || '{}');
-        } catch (_) {}
+        } catch (_) {
+          uploadOut.textContent = '文档元数据 JSON 格式错误，请先修正';
+          return;
+        }
 
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('knowledgeBaseId', kbId);
-        formData.append('metadata', JSON.stringify(metadata));
-
-        uploadOut.textContent = '上传中...';
+        const uploadPath = '/api/knowledge-bases/' + encodeURIComponent(kbId) + '/knowledge/file';
+        const results = [];
+        uploadOut.textContent = '上传中... (0/' + files.length + ')';
         uploadBtn.disabled = true;
-        
-        const res = await fetch(apiUrl('/api/knowledge/upload'), {
-          method: 'POST',
-          body: formData
-        });
-        const text = await res.text();
-        uploadOut.textContent = '状态: ' + res.status + '\n' + text;
-        uploadBtn.disabled = false;
-        
-        if (res.ok) {
-          try {
-            const data = JSON.parse(text);
-            if (data.jobId) {
-              jobIdInput.value = data.jobId;
-              setStatusBadge(data.status || 'queued');
+        clearFilesBtn.disabled = true;
+
+        try {
+          for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const relativePath = file.webkitRelativePath ? String(file.webkitRelativePath) : '';
+            const metadataForFile = Object.assign({}, metadata);
+            if (!metadataForFile.source) {
+              metadataForFile.source = relativePath || file.name;
             }
-          } catch (_) {}
+            if (relativePath && !metadataForFile.relativePath) {
+              metadataForFile.relativePath = relativePath;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file, file.name);
+            formData.append('metadata', JSON.stringify(metadataForFile));
+
+            uploadOut.textContent = '上传中... (' + (i + 1) + '/' + files.length + ') ' + (relativePath || file.name);
+
+            const res = await fetch(apiUrl(uploadPath), {
+              method: 'POST',
+              body: formData
+            });
+            const text = await res.text();
+
+            let data = null;
+            try {
+              data = JSON.parse(text);
+            } catch (_) {
+              data = null;
+            }
+
+            results.push({
+              index: i + 1,
+              fileName: relativePath || file.name,
+              statusCode: res.status,
+              ok: res.ok,
+              jobId: data && data.jobId ? String(data.jobId) : '',
+              status: data && data.status ? String(data.status) : '',
+              body: text
+            });
+          }
+        } finally {
+          uploadBtn.disabled = false;
+          clearFilesBtn.disabled = false;
+        }
+
+        const successRows = results.filter(item => item.ok);
+        const failedRows = results.filter(item => !item.ok);
+        const outputLines = [];
+        outputLines.push('上传完成: ' + successRows.length + '/' + results.length + ' 成功');
+        if (failedRows.length) {
+          outputLines.push('失败数量: ' + failedRows.length);
+        }
+        outputLines.push('');
+        for (const item of results) {
+          const mark = item.ok ? '✅' : '❌';
+          const jobPart = item.jobId ? ' | jobId=' + item.jobId : '';
+          outputLines.push(mark + ' [' + item.index + '] ' + item.fileName + ' | HTTP ' + item.statusCode + jobPart);
+          if (!item.ok && item.body) {
+            const brief = item.body.length > 220 ? item.body.slice(0, 220) + '...' : item.body;
+            outputLines.push('   响应: ' + brief);
+          }
+        }
+        uploadOut.textContent = outputLines.join('\n');
+
+        if (successRows.length === 1 && successRows[0].jobId) {
+          jobIdInput.value = successRows[0].jobId;
+          setStatusBadge(successRows[0].status || 'queued');
+        } else if (successRows.length > 1) {
+          jobIdInput.value = '';
+          setStatusBadge('queued');
+        }
+
+        if (!failedRows.length && successRows.length > 0) {
+          clearSelectedFiles();
+        }
+      });
+
+      cleanupFailedBtn.addEventListener('click', async () => {
+        const kbId = getSelectedKbId();
+        if (!kbId) {
+          uploadOut.textContent = '请先选择知识库';
+          return;
+        }
+
+        cleanupFailedBtn.disabled = true;
+        uploadBtn.disabled = true;
+        clearFilesBtn.disabled = true;
+        uploadOut.textContent = '清理失败数据中...';
+
+        try {
+          const cleanupPath = '/api/knowledge-bases/' + encodeURIComponent(kbId) + '/cleanup-failed';
+          const res = await fetch(apiUrl(cleanupPath), { method: 'POST' });
+          const text = await res.text();
+
+          if (!res.ok) {
+            uploadOut.textContent = '清理失败，已阻断上传\n状态: ' + res.status + '\n' + text;
+            return;
+          }
+
+          let data = {};
+          try {
+            data = JSON.parse(text) || {};
+          } catch (_) {
+            data = {};
+          }
+
+          const lines = [];
+          lines.push('清理完成（仅失败文档）');
+          lines.push('KB: ' + (data.knowledgeBaseId || kbId));
+          lines.push('扫描失败文档: ' + Number(data.scannedFailedDocuments || 0));
+          lines.push('删除文档: ' + Number(data.deletedDocuments || 0));
+          lines.push('删除任务: ' + Number(data.deletedParseJobs || 0));
+          lines.push('删除回调: ' + Number(data.deletedCallbackEvents || 0));
+          lines.push('删除分块: ' + Number(data.deletedChunks || 0));
+          lines.push('删除向量: ' + Number(data.deletedEmbeddings || 0));
+          lines.push('文件删除成功: ' + Number(data.deletedFilesSucceeded || 0));
+          lines.push('文件删除失败: ' + Number(data.deletedFilesFailed || 0));
+          lines.push('');
+          lines.push('可以继续上传重跑文件。');
+          uploadOut.textContent = lines.join('\n');
+        } finally {
+          cleanupFailedBtn.disabled = false;
+          uploadBtn.disabled = false;
+          clearFilesBtn.disabled = false;
         }
       });
 
