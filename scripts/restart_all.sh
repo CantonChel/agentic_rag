@@ -169,6 +169,22 @@ tail_log_file() {
   fi
 }
 
+print_diag_section() {
+  local title="$1"
+  shift
+  log "---- ${title} ----"
+  "$@" || true
+}
+
+print_startup_diagnostics() {
+  log "================ Startup Diagnostics ================"
+  print_diag_section "Environment Summary" bash -c "printf 'INGEST_FILE_STORAGE_BACKEND=%s\nDOCREADER_BASE_URL=%s\nDOCREADER_CALLBACK_BASE_URL=%s\nDOCREADER_CALLBACK_SECRET=%s\nMINIO_ENDPOINT=%s\n' \"${INGEST_FILE_STORAGE_BACKEND}\" \"${DOCREADER_BASE_URL:-}\" \"${DOCREADER_CALLBACK_BASE_URL:-}\" \"$( [[ -n \"${DOCREADER_CALLBACK_SECRET:-}\" ]] && echo 'set' || echo 'empty' )\" \"${MINIO_ENDPOINT_APP}\""
+  print_diag_section "App Parse Events (last 40)" bash -c "tail -n 500 \"${APP_LOG_FILE}\" 2>/dev/null | grep -E 'dispatch job failed|callback processed success|invalid callback signature|lease recover|stale indexing|residual failed knowledge cleanup' | tail -n 40"
+  print_diag_section "Docreader Callback Events (last 40)" bash -c "tail -n 500 \"${DOCREADER_LOG_FILE}\" 2>/dev/null | grep -E 'callback non-2xx|callback exception|callback failed after retries|status=failed|status=success' | tail -n 40"
+  print_diag_section "Queue Poller Warnings (last 20)" bash -c "tail -n 500 \"${APP_LOG_FILE}\" 2>/dev/null | grep -E 'queue poll failed|Redis command interrupted' | tail -n 20"
+  log "================ End Diagnostics ===================="
+}
+
 wait_for_port() {
   local service_name="$1"
   local port="$2"
@@ -653,6 +669,7 @@ if ! wait_for_port "docreader_service" "${DOCREADER_PORT}" "${STARTUP_TIMEOUT_SE
 fi
 if ! wait_for_http_ok "docreader_service" "http://127.0.0.1:${DOCREADER_PORT}/healthz" 20; then
   tail_log_file "${DOCREADER_LOG_FILE}" 120
+  print_startup_diagnostics
   exit 1
 fi
 
@@ -662,12 +679,14 @@ if ! wait_for_port "agentic_rag_app" "${JAVA_PORT}" "${STARTUP_TIMEOUT_SEC}"; th
   if grep -q "UnsupportedClassVersionError" "${APP_LOG_FILE}" 2>/dev/null; then
     log "Detected UnsupportedClassVersionError. This means class files were compiled by a higher JDK."
   fi
+  print_startup_diagnostics
   exit 1
 fi
 
 if ! wait_for_http_ok "agentic_rag_app" "http://127.0.0.1:${JAVA_PORT}/actuator/health" 20; then
   log "Warning: /actuator/health check failed, but port ${JAVA_PORT} is open."
   tail_log_file "${APP_LOG_FILE}" 80
+  print_startup_diagnostics
 fi
 
 log "Done. Logs:"
@@ -675,3 +694,4 @@ log "  ${REDIS_LOG_FILE}"
 log "  ${DOCREADER_LOG_FILE}"
 log "  ${APP_BUILD_LOG_FILE}"
 log "  ${APP_LOG_FILE}"
+print_startup_diagnostics
