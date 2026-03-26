@@ -2,6 +2,7 @@ package com.agenticrag.app.session;
 
 import com.agenticrag.app.chat.context.ContextManager;
 import com.agenticrag.app.chat.store.PersistentMessageStore;
+import com.agenticrag.app.chat.store.SessionReplayStore;
 import com.agenticrag.app.memory.MemoryFlushService;
 import java.util.Collection;
 import org.junit.jupiter.api.Assertions;
@@ -53,5 +54,17 @@ class SessionManagerIsolationTest {
 			Mockito.any(),
 			Mockito.any()
 		);
+	}
+
+	@Test
+	void deleteAlsoClearsReplayEvents() {
+		ContextManager contextManager = Mockito.mock(ContextManager.class);
+		PersistentMessageStore persistentMessageStore = Mockito.mock(PersistentMessageStore.class);
+		SessionReplayStore sessionReplayStore = Mockito.mock(SessionReplayStore.class);
+		SessionManager sessionManager = new SessionManager(contextManager, persistentMessageStore, sessionReplayStore, null);
+
+		sessionManager.delete("u1", "s1");
+
+		Mockito.verify(sessionReplayStore).clear("u1::s1");
 	}
 }

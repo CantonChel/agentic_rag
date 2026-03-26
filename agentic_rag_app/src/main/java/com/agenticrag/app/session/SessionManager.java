@@ -2,6 +2,7 @@ package com.agenticrag.app.session;
 
 import com.agenticrag.app.chat.context.ContextManager;
 import com.agenticrag.app.chat.store.PersistentMessageStore;
+import com.agenticrag.app.chat.store.SessionReplayStore;
 import com.agenticrag.app.memory.MemoryFlushService;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -15,21 +16,32 @@ import org.springframework.stereotype.Service;
 public class SessionManager {
 	private final ContextManager contextManager;
 	private final PersistentMessageStore persistentMessageStore;
+	private final SessionReplayStore sessionReplayStore;
 	private final MemoryFlushService memoryFlushService;
 	private final Map<String, ChatSession> sessions = new ConcurrentHashMap<>();
 
 	public SessionManager(ContextManager contextManager, PersistentMessageStore persistentMessageStore) {
-		this(contextManager, persistentMessageStore, null);
+		this(contextManager, persistentMessageStore, null, null);
+	}
+
+	public SessionManager(
+		ContextManager contextManager,
+		PersistentMessageStore persistentMessageStore,
+		MemoryFlushService memoryFlushService
+	) {
+		this(contextManager, persistentMessageStore, null, memoryFlushService);
 	}
 
 	@Autowired
 	public SessionManager(
 		ContextManager contextManager,
 		PersistentMessageStore persistentMessageStore,
+		SessionReplayStore sessionReplayStore,
 		MemoryFlushService memoryFlushService
 	) {
 		this.contextManager = contextManager;
 		this.persistentMessageStore = persistentMessageStore;
+		this.sessionReplayStore = sessionReplayStore;
 		this.memoryFlushService = memoryFlushService;
 	}
 
@@ -56,6 +68,9 @@ public class SessionManager {
 		sessions.remove(key);
 		contextManager.clear(key);
 		persistentMessageStore.clear(key);
+		if (sessionReplayStore != null) {
+			sessionReplayStore.clear(key);
+		}
 	}
 
 	public Collection<ChatSession> list(String userId) {

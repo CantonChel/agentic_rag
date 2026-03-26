@@ -1,23 +1,37 @@
 package com.agenticrag.app.session;
 
 import com.agenticrag.app.chat.store.PersistentMessageStore;
+import com.agenticrag.app.chat.store.SessionReplayStore;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
 public class SessionSummaryService {
 	private final SessionManager sessionManager;
 	private final PersistentMessageStore persistentMessageStore;
+	private final SessionReplayStore sessionReplayStore;
 
 	public SessionSummaryService(SessionManager sessionManager, PersistentMessageStore persistentMessageStore) {
+		this(sessionManager, persistentMessageStore, null);
+	}
+
+	@Autowired
+	public SessionSummaryService(
+		SessionManager sessionManager,
+		PersistentMessageStore persistentMessageStore,
+		SessionReplayStore sessionReplayStore
+	) {
 		this.sessionManager = sessionManager;
 		this.persistentMessageStore = persistentMessageStore;
+		this.sessionReplayStore = sessionReplayStore;
 	}
 
 	public List<SessionSummary> listForUser(String userId) {
@@ -35,18 +49,32 @@ public class SessionSummaryService {
 					(left, right) -> left
 				)
 			);
+		Map<String, SessionReplayStore.SessionReplayStats> replayStatsBySessionId = (sessionReplayStore != null
+			? sessionReplayStore.listSessionStats()
+			: Collections.<SessionReplayStore.SessionReplayStats>emptyList())
+			.stream()
+			.filter(stats -> uid.equals(SessionScope.userIdFromScopedSessionId(stats.getSessionId())))
+			.collect(
+				Collectors.toMap(
+					stats -> SessionScope.sessionIdFromScopedSessionId(stats.getSessionId()),
+					stats -> stats,
+					(left, right) -> left
+				)
+			);
 
 		LinkedHashSet<String> sessionIds = new LinkedHashSet<>();
 		sessionIds.addAll(inMemorySessions.keySet());
 		sessionIds.addAll(messageStatsBySessionId.keySet());
+		sessionIds.addAll(replayStatsBySessionId.keySet());
 
 		List<SessionSummary> out = new ArrayList<>();
 		for (String sessionId : sessionIds) {
 			ChatSession session = inMemorySessions.get(sessionId);
 			PersistentMessageStore.SessionMessageStats stats = messageStatsBySessionId.get(sessionId);
+			SessionReplayStore.SessionReplayStats replayStats = replayStatsBySessionId.get(sessionId);
 			Instant createdAt = resolveCreatedAt(session, stats);
-			Instant lastActiveAt = resolveLastActiveAt(createdAt, stats);
-			boolean hasMessages = stats != null && stats.getMessageCount() > 0;
+			Instant lastActiveAt = resolveLastActiveAt(createdAt, stats, replayStats);
+			boolean hasMessages = (stats != null && stats.getMessageCount() > 0) || (replayStats != null && replayStats.getEventCount() > 0);
 			out.add(new SessionSummary(sessionId, createdAt, lastActiveAt, hasMessages));
 		}
 
@@ -68,7 +96,14 @@ public class SessionSummaryService {
 		return Instant.EPOCH;
 	}
 
-	private Instant resolveLastActiveAt(Instant createdAt, PersistentMessageStore.SessionMessageStats stats) {
+	private Instant resolveLastActiveAt(
+		Instant createdAt,
+		PersistentMessageStore.SessionMessageStats stats,
+		SessionReplayStore.SessionReplayStats replayStats
+	) {
+		if (replayStats != null && replayStats.getLastEventTs() != null) {
+			return Instant.ofEpochMilli(replayStats.getLastEventTs());
+		}
 		if (stats != null && stats.getLastMessageAt() != null) {
 			return stats.getLastMessageAt();
 		}

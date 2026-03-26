@@ -1,6 +1,7 @@
 package com.agenticrag.app.session;
 
 import com.agenticrag.app.chat.store.PersistentMessageStore;
+import com.agenticrag.app.chat.store.SessionReplayStore;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Assertions;
@@ -12,7 +13,8 @@ class SessionSummaryServiceTest {
 	void sortsSessionsByLatestActivityAndExposesMetadata() {
 		SessionManager sessionManager = Mockito.mock(SessionManager.class);
 		PersistentMessageStore persistentMessageStore = Mockito.mock(PersistentMessageStore.class);
-		SessionSummaryService service = new SessionSummaryService(sessionManager, persistentMessageStore);
+		SessionReplayStore sessionReplayStore = Mockito.mock(SessionReplayStore.class);
+		SessionSummaryService service = new SessionSummaryService(sessionManager, persistentMessageStore, sessionReplayStore);
 
 		Instant createdAt = Instant.parse("2026-03-26T09:00:00Z");
 		ChatSession emptySession = new ChatSession("empty-session", createdAt);
@@ -33,6 +35,7 @@ class SessionSummaryServiceTest {
 				)
 			)
 		);
+		Mockito.when(sessionReplayStore.listSessionStats()).thenReturn(List.of());
 
 		List<SessionSummaryService.SessionSummary> summaries = service.listForUser("u1");
 
@@ -46,5 +49,33 @@ class SessionSummaryServiceTest {
 		Assertions.assertEquals(createdAt, summaries.get(1).getCreatedAt());
 		Assertions.assertEquals(createdAt, summaries.get(1).getLastActiveAt());
 		Assertions.assertFalse(summaries.get(1).isHasMessages());
+	}
+
+	@Test
+	void replayActivityOverridesMessageLastActiveTime() {
+		SessionManager sessionManager = Mockito.mock(SessionManager.class);
+		PersistentMessageStore persistentMessageStore = Mockito.mock(PersistentMessageStore.class);
+		SessionReplayStore sessionReplayStore = Mockito.mock(SessionReplayStore.class);
+		SessionSummaryService service = new SessionSummaryService(sessionManager, persistentMessageStore, sessionReplayStore);
+
+		Mockito.when(sessionManager.list("u1")).thenReturn(List.of());
+		Mockito.when(persistentMessageStore.listSessionStats()).thenReturn(
+			List.of(
+				new PersistentMessageStore.SessionMessageStats(
+					"u1::s1",
+					Instant.parse("2026-03-26T08:00:00Z"),
+					Instant.parse("2026-03-26T09:00:00Z"),
+					2
+				)
+			)
+		);
+		Mockito.when(sessionReplayStore.listSessionStats()).thenReturn(
+			List.of(new SessionReplayStore.SessionReplayStats("u1::s1", Instant.parse("2026-03-26T10:30:00Z").toEpochMilli(), 5))
+		);
+
+		List<SessionSummaryService.SessionSummary> summaries = service.listForUser("u1");
+
+		Assertions.assertEquals(1, summaries.size());
+		Assertions.assertEquals(Instant.parse("2026-03-26T10:30:00Z"), summaries.get(0).getLastActiveAt());
 	}
 }
