@@ -1053,6 +1053,30 @@
         chatBox.scrollTop = chatBox.scrollHeight;
       }
 
+      function handleStreamEvent(data) {
+        if (!data || !data.type) return;
+        if (data.type === 'thinking') {
+          handleThinkingEvent(data);
+          return;
+        }
+        if (data.type === 'content' || data.type === 'delta') {
+          handleContentEvent({ content: data.content || '' });
+          return;
+        }
+        if (data.type === 'session_switched') {
+          if (data.sessionId && sessionIdInput) {
+            sessionIdInput.value = data.sessionId;
+            updateSessionStatus('会话已切换');
+          }
+          return;
+        }
+        if (data.type === 'error') {
+          const message = data.content || data.error || '流式请求失败';
+          handleContentEvent({ content: '\n[错误] ' + message });
+          return;
+        }
+      }
+
       async function sendPrompt() {
         const text = promptInput.value.trim();
         if (!text || isStreaming) return;
@@ -1068,21 +1092,21 @@
         const provider = providerSel.value;
         const mode = modeSel.value;
         const toolsEnabled = toolsSel.value === 'true';
+        const streamPath = mode === 'llm'
+          ? `/api/llm/${encodeURIComponent(provider)}/stream`
+          : `/api/agent/${encodeURIComponent(provider)}/stream`;
         const query = new URLSearchParams({
-          provider,
-          mode,
+          prompt: text,
+          sessionId: sid,
+          userId: currentUserId(),
           tools: String(toolsEnabled),
-          userId: currentUserId()
+          toolChoice: 'AUTO'
         });
-
-        const body = { prompt: text, sessionId: sid };
-        const url = apiUrl('/api/chat?' + query.toString());
+        const url = apiUrl(streamPath + '?' + query.toString());
 
         try {
           const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
+            method: 'GET'
           });
           if (!response.ok) {
             throw new Error('Request failed: ' + response.status);
@@ -1109,11 +1133,7 @@
                 }
                 try {
                   const data = JSON.parse(dataStr);
-                  if (data.type === 'thinking') {
-                    handleThinkingEvent(data);
-                  } else if (data.type === 'content') {
-                    handleContentEvent(data);
-                  }
+                  handleStreamEvent(data);
                 } catch (e) {
                   console.error('Failed to parse SSE data:', e);
                 }
