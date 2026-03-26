@@ -1,20 +1,10 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 
 from config import settings
-from models import JobStatus, JobSubmitRequest, JobSubmitResponse
-from worker import job_manager
+from models import ReadRequest, ReadResponse
+from parser import read_document_safe
 
 app = FastAPI(title="docreader-service", version="0.1.0")
-
-
-@app.on_event("startup")
-async def on_startup() -> None:
-    await job_manager.start()
-
-
-@app.on_event("shutdown")
-async def on_shutdown() -> None:
-    await job_manager.stop()
 
 
 @app.get("/healthz")
@@ -22,17 +12,9 @@ async def healthz() -> dict:
     return {"ok": True}
 
 
-@app.post("/jobs", response_model=JobSubmitResponse)
-async def submit_job(req: JobSubmitRequest) -> JobSubmitResponse:
-    if not req.callback_url:
-        raise HTTPException(status_code=400, detail="callbackUrl is required")
-    remote_job_id = await job_manager.submit(req)
-    return JobSubmitResponse(accepted=True, remote_job_id=remote_job_id)
-
-
-@app.get("/jobs/{remote_job_id}", response_model=JobStatus)
-async def get_job_status(remote_job_id: str) -> JobStatus:
-    return job_manager.get_status(remote_job_id)
+@app.post("/read", response_model=ReadResponse)
+async def read(req: ReadRequest) -> ReadResponse:
+    return await read_document_safe(req.job_id, req.file_url, req.options)
 
 
 if __name__ == "__main__":

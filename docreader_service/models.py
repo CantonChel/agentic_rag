@@ -2,11 +2,10 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
-class JobSubmitRequest(BaseModel):
+class ReadRequest(BaseModel):
     job_id: str = Field(..., alias="jobId")
     knowledge_id: str = Field(..., alias="knowledgeId")
     file_url: str = Field(..., alias="fileUrl")
-    callback_url: str = Field(..., alias="callbackUrl")
     pipeline_version: str = Field("v1", alias="pipelineVersion")
     options: Dict[str, Any] = Field(default_factory=dict)
 
@@ -14,47 +13,21 @@ class JobSubmitRequest(BaseModel):
         allow_population_by_field_name = True
 
 
-class JobSubmitResponse(BaseModel):
-    accepted: bool
-    remote_job_id: str
+class ImageRef(BaseModel):
+    original_ref: str = Field(..., alias="originalRef")
+    file_name: str = Field(..., alias="fileName")
+    mime_type: str = Field(..., alias="mimeType")
+    bytes_base64: Optional[str] = Field(default=None, alias="bytesBase64")
+
+    class Config:
+        allow_population_by_field_name = True
 
 
-class CallbackError(BaseModel):
-    code: str
-    message: str
+class ReadResponse(BaseModel):
+    markdown_content: str = Field("", alias="markdownContent")
+    image_refs: List[ImageRef] = Field(default_factory=list, alias="imageRefs")
+    metadata: Dict[str, str] = Field(default_factory=dict)
+    error: str = ""
 
-
-class ImageInfo(BaseModel):
-    url: Optional[str] = None
-    original_url: Optional[str] = None
-    start_pos: Optional[int] = None
-    end_pos: Optional[int] = None
-    caption: Optional[str] = None
-    ocr_text: Optional[str] = None
-    storage_bucket: Optional[str] = None
-    storage_key: Optional[str] = None
-
-
-class ChunkPayload(BaseModel):
-    chunk_id: str
-    type: str = "text"
-    seq: int
-    start: Optional[int] = None
-    end: Optional[int] = None
-    content: str
-    image_info: List[ImageInfo] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class CallbackPayload(BaseModel):
-    event_id: str
-    status: str
-    message: Optional[str] = None
-    error: Optional[CallbackError] = None
-    chunks: List[ChunkPayload] = Field(default_factory=list)
-
-
-class JobStatus(BaseModel):
-    remote_job_id: str
-    status: str
-    message: Optional[str] = None
+    class Config:
+        allow_population_by_field_name = True

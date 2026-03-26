@@ -8,7 +8,8 @@ from parser import _build_markdown_with_image_mapping
 from parser import _compose_markdown_pages_with_images
 from parser import _extract_markdown_data_uri_images
 from parser import _extract_text
-from parser import parse_to_chunks
+from parser import read_document
+from parser import read_document_safe
 
 
 class ParserDocxTest(unittest.TestCase):
@@ -19,48 +20,59 @@ class ParserDocxTest(unittest.TestCase):
         self.assertEqual("# title\n\nhello markdown", text)
 
     @mock.patch("parser.convert_docx_to_markdown", return_value="# h1\n\nbody line")
-    def test_parse_to_chunks_from_local_docx_file(self, _mocked_convert: mock.MagicMock) -> None:
+    def test_read_document_from_local_docx_file(self, _mocked_convert: mock.MagicMock) -> None:
         with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
             tmp.write(b"fake-docx")
             path = tmp.name
 
         try:
-            chunks = asyncio.run(
-                parse_to_chunks(
+            result = asyncio.run(
+                read_document(
                     job_id="job-docx-1",
                     file_url=path,
-                    options={"chunk_size": 30, "chunk_overlap": 5, "user_id": "u-1"},
+                    options={"user_id": "u-1"},
                 )
             )
         finally:
             os.remove(path)
 
-        self.assertTrue(chunks)
-        self.assertEqual(".docx", chunks[0].metadata.get("source_ext"))
-        self.assertEqual("u-1", chunks[0].metadata.get("user_id"))
-        self.assertIn("# h1", chunks[0].content)
+        self.assertEqual(".docx", result.metadata.get("source_ext"))
+        self.assertEqual("u-1", result.metadata.get("user_id"))
+        self.assertIn("# h1", result.markdown_content)
+        self.assertEqual("", result.error)
 
-    def test_parse_to_chunks_from_local_txt_file_should_not_split_in_docreader(self) -> None:
+    def test_read_document_from_local_txt_file_should_return_whole_markdown(self) -> None:
         long_text = "A" * 1200
         with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tmp:
             tmp.write(long_text.encode("utf-8"))
             path = tmp.name
 
         try:
-            chunks = asyncio.run(
-                parse_to_chunks(
+            result = asyncio.run(
+                read_document(
                     job_id="job-txt-1",
                     file_url=path,
-                    options={"chunk_size": 100, "chunk_overlap": 20, "user_id": "u-2"},
+                    options={"user_id": "u-2"},
                 )
             )
         finally:
             os.remove(path)
 
-        self.assertEqual(1, len(chunks))
-        self.assertEqual(".txt", chunks[0].metadata.get("source_ext"))
-        self.assertEqual("u-2", chunks[0].metadata.get("user_id"))
-        self.assertEqual(long_text, chunks[0].content)
+        self.assertEqual(".txt", result.metadata.get("source_ext"))
+        self.assertEqual("u-2", result.metadata.get("user_id"))
+        self.assertEqual(long_text, result.markdown_content)
+        self.assertEqual([], result.image_refs)
+
+    def test_read_document_safe_returns_error_string_for_unsupported_file(self) -> None:
+        result = asyncio.run(
+            read_document_safe(
+                job_id="job-bad-1",
+                file_url="/tmp/not-found.unsupported",
+                options={},
+            )
+        )
+        self.assertEqual("", result.markdown_content)
+        self.assertTrue(result.error.startswith("unsupported_file:"))
 
     def test_extract_markdown_data_uri_images(self) -> None:
         source = "head\n\n![](data:image/png;base64,aGVsbG8=)\n\ntail"

@@ -3,66 +3,59 @@
 独立 Python 文档清洗服务（与 `agentic_rag_app` 同级目录）。
 
 ## 功能
-- `POST /jobs`：接收清洗任务，异步执行。
-- `GET /jobs/{remote_job_id}`：查询任务状态。
+- `POST /read`：同步读取单篇文档，直接返回整篇 `ReadResponse`。
 - `GET /healthz`：健康检查。
-- 清洗完成后回调业务端（支持 `HMAC-SHA256` 签名）。
 - 支持解析：`pdf`、`docx`、`txt`、`md`、`csv`、`json`、`html/htm`。
-- `docx` 会通过 `markitdown` 统一转换为 Markdown 后在 `docreader` 内分块。
-- 非 `docx` 文件在 `docreader` 端默认返回整篇内容（单 chunk），由 `rag_app` 统一分块。
-- `pdf` 解析会尽量保留 Markdown 中图片原始位置（先占位，再在业务侧替换为存储路径）。
+- `docx`/`pdf` 会尽量产出整篇 Markdown，并保留图片引用位置。
+- `docreader` 不负责分块、不负责 embedding、不负责图片落存。
 
-## 任务输入（`POST /jobs`）
+## 请求输入（`POST /read`）
 ```json
 {
   "jobId": "业务端job_id",
   "knowledgeId": "knowledge_id",
   "fileUrl": "文件URL或本地路径",
-  "callbackUrl": "业务端回调地址",
   "pipelineVersion": "v1",
   "options": {
-    "chunk_size": 1000,
-    "chunk_overlap": 150
+    "user_id": "anonymous"
   }
 }
 ```
 
-说明：`chunk_size/chunk_overlap` 目前仅用于 `docx` 在 `docreader` 端的切分。
-
-## 回调输出（成功）
+## `ReadResponse` 输出（成功）
 ```json
 {
-  "event_id": "uuid",
-  "status": "success",
-  "message": "ok",
-  "chunks": [
+  "markdownContent": "# Title\n\n正文...\n\n![](images/abc.png)",
+  "imageRefs": [
     {
-      "chunk_id": "job_id:0",
-      "type": "text",
-      "seq": 0,
-      "start": 0,
-      "end": 1000,
-      "content": "...",
-      "image_info": [],
-      "metadata": {"source_ext": ".pdf"}
+      "originalRef": "images/abc.png",
+      "fileName": "abc.png",
+      "mimeType": "image/png",
+      "bytesBase64": "iVBORw0KGgoAAA..."
     }
-  ]
+  ],
+  "metadata": {
+    "source_ext": ".pdf",
+    "user_id": "anonymous",
+    "job_id": "业务端job_id"
+  },
+  "error": ""
 }
 ```
 
-## 回调输出（失败）
+## `ReadResponse` 输出（失败）
 ```json
 {
-  "event_id": "uuid",
-  "status": "failed",
-  "message": "...",
-  "error": {
-    "code": "unsupported_file | corrupted_file | service_unavailable | schema_invalid",
-    "message": "..."
+  "markdownContent": "",
+  "imageRefs": [],
+  "metadata": {
+    "job_id": "业务端job_id"
   },
-  "chunks": []
+  "error": "unsupported_file: unsupported extension: .xlsx"
 }
 ```
+
+说明：失败信息固定放在 `error` 字符串中，格式为 `error_code: message`，供业务端分类处理。
 
 ## 本地运行
 ```bash
@@ -75,7 +68,3 @@ uvicorn main:app --host 0.0.0.0 --port 8090
 
 ## 关键环境变量
 - `DOCREADER_PORT`（默认 `8090`）
-- `DOCREADER_WORKER_COUNT`（默认 `2`）
-- `DOCREADER_CALLBACK_SECRET`（为空则不签名）
-- `DOCREADER_SIGNATURE_HEADER`（默认 `X-Docreader-Signature`）
-- `DOCREADER_TIMESTAMP_HEADER`（默认 `X-Docreader-Timestamp`）

@@ -4,15 +4,14 @@ import io
 import os
 import re
 import uuid
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 from urllib.parse import urlparse
 
 import httpx
-from minio import Minio
 
 from config import settings
 from markitdown_parser import convert_docx_to_markdown, convert_file_to_markdown
-from models import ChunkPayload, ImageInfo
+from models import ImageRef, ReadResponse
 
 
 class ParseError(Exception):
@@ -149,7 +148,12 @@ def _extract_docx_markdown_and_images(docx_bytes: bytes) -> Tuple[str, List[Tupl
     try:
         from docx import Document  # type: ignore
     except Exception as exc:
-        raise ParseError("corrupted_file", f"python-docx import failed: {exc}")
+        try:
+            return _extract_docx_markdown(docx_bytes), []
+        except ParseError:
+            raise
+        except Exception:
+            raise ParseError("corrupted_file", f"python-docx import failed: {exc}")
 
     try:
         doc = Document(io.BytesIO(docx_bytes))
@@ -365,6 +369,17 @@ def _content_type_from_ext(ext: str) -> str:
     return ext_map.get((ext or "").lower(), "application/octet-stream")
 
 
+def _file_name_from_ref(original_ref: str, ext: str) -> str:
+    raw_ref = (original_ref or "").strip()
+    if raw_ref:
+        parsed = urlparse(raw_ref)
+        candidate = os.path.basename(parsed.path or raw_ref)
+        if candidate:
+            return candidate
+    safe_ext = (ext or "").lower().strip(".") or "bin"
+    return f"image-{uuid.uuid4().hex}.{safe_ext}"
+
+
 _MARKDOWN_DATA_URI_IMAGE_PATTERN = re.compile(
     r"!\[([^\]]*)\]\(\s*<?data:image/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)>?\s*\)",
     flags=re.IGNORECASE,
@@ -421,63 +436,30 @@ def _extract_markdown_data_uri_images(markdown: str) -> Tuple[str, List[Tuple[st
     return replaced, refs
 
 
-def _upload_inline_images(
-    job_id: str,
-    knowledge_id: str,
-    user_id: str,
-    extracted_images: List[Tuple[str, bytes, str]],
-) -> List[ImageInfo]:
-    if not extracted_images:
-        return []
+def _to_error_string(code: str, message: str) -> str:
+    safe_code = (code or "service_unavailable").strip() or "service_unavailable"
+    safe_message = (message or "").strip()
+    return f"{safe_code}: {safe_message}" if safe_message else safe_code
 
-    try:
-        client = Minio(
-            settings.minio_endpoint,
-            access_key=settings.minio_access_key,
-            secret_key=settings.minio_secret_key,
-            secure=settings.minio_secure,
+
+def _build_image_refs(extracted_images: List[Tuple[str, bytes, str]]) -> List[ImageRef]:
+    refs: List[ImageRef] = []
+    for original_ref, payload, ext in extracted_images:
+        safe_bytes = payload or b""
+        refs.append(
+            ImageRef(
+                original_ref=original_ref,
+                file_name=_file_name_from_ref(original_ref, ext),
+                mime_type=_content_type_from_ext(ext),
+                bytes_base64=base64.b64encode(safe_bytes).decode("ascii") if safe_bytes else None,
+            )
         )
-        bucket = settings.minio_bucket
-        if not client.bucket_exists(bucket):
-            client.make_bucket(bucket)
-    except Exception as exc:
-        raise ParseError("service_unavailable", f"minio init failed: {exc}")
-
-    out: List[ImageInfo] = []
-    for idx, (original_ref, payload, ext) in enumerate(extracted_images, start=1):
-        key = f"{user_id}/{knowledge_id}/parsed-images/{job_id}/img-{idx}.{ext}"
-        try:
-            client.put_object(
-                bucket_name=bucket,
-                object_name=key,
-                data=io.BytesIO(payload),
-                length=len(payload),
-                content_type=_content_type_from_ext(ext),
-            )
-            out.append(
-                ImageInfo(
-                    url=f"minio://{bucket}/{key}",
-                    original_url=original_ref,
-                    storage_bucket=bucket,
-                    storage_key=key,
-                    start_pos=None,
-                    end_pos=None,
-                    caption=None,
-                    ocr_text=None,
-                )
-            )
-        except Exception as exc:
-            raise ParseError("service_unavailable", f"minio upload failed: {exc}")
-    return out
+    return refs
 
 
-async def parse_to_chunks(job_id: str, file_url: str, options: dict) -> List[ChunkPayload]:
-    chunk_size = int(options.get("chunk_size", 1000)) if options else 1000
-    chunk_overlap = int(options.get("chunk_overlap", 150)) if options else 150
+async def read_document(job_id: str, file_url: str, options: dict) -> ReadResponse:
     safe_options = options or {}
     user_id = _safe_token(str(safe_options.get("user_id") or safe_options.get("userId") or "anonymous"), "anonymous")
-    knowledge_id = _safe_token(str(safe_options.get("knowledge_id") or safe_options.get("knowledgeId") or "unknown"), "unknown")
-
     source_bytes, ext = await asyncio.to_thread(_read_source_bytes, file_url)
     inline_images: List[Tuple[str, bytes, str]] = []
     if ext == ".docx":
@@ -491,49 +473,33 @@ async def parse_to_chunks(job_id: str, file_url: str, options: dict) -> List[Chu
 
     if not text.strip():
         raise ParseError("corrupted_file", "empty extracted text")
+    metadata: Dict[str, str] = {
+        "source_ext": ext or "unknown",
+        "user_id": user_id,
+        "job_id": (job_id or "").strip(),
+    }
+    return ReadResponse(
+        markdown_content=text.strip(),
+        image_refs=_build_image_refs(inline_images),
+        metadata=metadata,
+        error="",
+    )
 
-    # Keep docx behavior as-is in docreader. All other file types are returned
-    # as a single full-document chunk and split later in rag_app.
-    if ext == ".docx":
-        splits = await asyncio.to_thread(_split_text, text, chunk_size, chunk_overlap)
-    else:
-        content = text.strip()
-        splits = [(0, len(text), content)] if content else []
 
-    chunks: List[ChunkPayload] = []
-    for idx, (start, end, content) in enumerate(splits):
-        chunks.append(
-            ChunkPayload(
-                chunk_id=f"{job_id}:{idx}",
-                type="text",
-                seq=idx,
-                start=start,
-                end=end,
-                content=content,
-                image_info=[],
-                metadata={"source_ext": ext or "unknown", "user_id": user_id},
-            )
+async def read_document_safe(job_id: str, file_url: str, options: dict) -> ReadResponse:
+    try:
+        return await read_document(job_id, file_url, options)
+    except ParseError as exc:
+        return ReadResponse(
+            markdown_content="",
+            image_refs=[],
+            metadata={"job_id": (job_id or "").strip()},
+            error=_to_error_string(exc.code, exc.message),
         )
-    if ext in (".pdf", ".docx"):
-        image_infos = await asyncio.to_thread(_upload_inline_images, job_id, knowledge_id, user_id, inline_images)
-        if image_infos:
-            if chunks:
-                if ext == ".docx":
-                    for chunk in chunks:
-                        chunk.image_info.extend(image_infos)
-                else:
-                    chunks[0].image_info.extend(image_infos)
-            else:
-                chunks.append(
-                    ChunkPayload(
-                        chunk_id=f"{job_id}:0",
-                        type="text",
-                        seq=0,
-                        start=None,
-                        end=None,
-                        content="",
-                        image_info=image_infos,
-                        metadata={"source_ext": "pdf", "user_id": user_id},
-                    )
-                )
-    return chunks
+    except Exception as exc:
+        return ReadResponse(
+            markdown_content="",
+            image_refs=[],
+            metadata={"job_id": (job_id or "").strip()},
+            error=_to_error_string("service_unavailable", str(exc)),
+        )
