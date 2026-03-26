@@ -13,6 +13,7 @@ import com.agenticrag.app.chat.message.SystemMessage;
 import com.agenticrag.app.memory.MemoryFlushService;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
+import com.agenticrag.app.prompt.SystemPromptMode;
 import com.agenticrag.app.session.ChatSession;
 import com.agenticrag.app.session.SessionManager;
 import com.agenticrag.app.session.SessionScope;
@@ -152,6 +153,8 @@ public class StreamingChatService {
 				StringBuilder inlineThinkBuffer = new StringBuilder();
 				ThinkTagParser thinkTagParser = new ThinkTagParser();
 				AtomicBoolean inlineThinkingEmitted = new AtomicBoolean(false);
+				AtomicBoolean structuredReasoningEmitted = new AtomicBoolean(false);
+				AtomicReference<String> reasoningSourceRef = new AtomicReference<>(MinimaxReasoningSupport.SOURCE_REASONING_FIELD);
 
 				OpenAIClient client = provider == LlmProvider.MINIMAX ? minimaxClient : openAiClient;
 				String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
@@ -177,7 +180,7 @@ public class StreamingChatService {
 					return;
 				}
 
-				String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, true));
+				String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, includeTools, SystemPromptMode.LLM));
 				contextManager.ensureSystemPrompt(scopedSid, configuredSystemPrompt);
 				String systemPrompt = contextManager.getSystemPrompt(scopedSid);
 				persistentMessageStore.ensureSystemPrompt(scopedSid, systemPrompt);
@@ -198,6 +201,7 @@ public class StreamingChatService {
 				ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder()
 					.model(model)
 					.addSystemMessage(systemPrompt);
+				MinimaxReasoningSupport.applyReasoningSplit(paramsBuilder, provider, minimaxProperties);
 
 				List<com.openai.models.chat.completions.ChatCompletionMessageParam> messageParams = adapter.toMessageParams(local);
 				for (com.openai.models.chat.completions.ChatCompletionMessageParam mp : messageParams) {
@@ -248,10 +252,20 @@ public class StreamingChatService {
 								}
 							}
 
-							if (delta.toolCalls().isPresent() && delta.toolCalls().get() != null) {
+							boolean hasToolCallsInDelta = delta.toolCalls().isPresent() && delta.toolCalls().get() != null;
+							if (hasToolCallsInDelta) {
 								toolCallAccumulator.append(delta.toolCalls().get());
 							}
-							appendReasoningFromDelta(delta, reasoningBuffer);
+							String reasoningPart = appendReasoningFromDelta(delta, reasoningBuffer, reasoningSourceRef);
+							if (reasoningPart != null && !reasoningPart.isEmpty() && !hasToolCallsInDelta) {
+								structuredReasoningEmitted.set(true);
+								sink.next(LlmStreamEvent.thinking(
+									reasoningPart,
+									reasoningSourceRef.get(),
+									originModelRef.get(),
+									1
+								));
+							}
 
 							if (choice.finishReason().isPresent() && choice.finishReason().get() != null) {
 								String finishReason = choice.finishReason().get().toString();
@@ -269,7 +283,9 @@ public class StreamingChatService {
 								}
 								String reasoning = reasoningBuffer.toString().trim();
 								if (!reasoning.isEmpty()) {
-									sink.next(LlmStreamEvent.thinking(reasoning, "reasoning_field", originModelRef.get(), 1));
+									if (!structuredReasoningEmitted.get()) {
+										sink.next(LlmStreamEvent.thinking(reasoning, reasoningSourceRef.get(), originModelRef.get(), 1));
+									}
 									recordThinkingMessage(scopedSid, reasoning);
 								} else {
 									String inlineThinking = inlineThinkBuffer.toString().trim();
@@ -444,53 +460,19 @@ public class StreamingChatService {
 		private final StringBuilder arguments = new StringBuilder();
 	}
 
-	private void appendReasoningFromDelta(ChatCompletionChunk.Choice.Delta delta, StringBuilder reasoningBuffer) {
-		if (delta == null || reasoningBuffer == null) {
-			return;
-		}
-		Map<String, JsonValue> extras = delta._additionalProperties();
-		if (extras == null || extras.isEmpty()) {
-			return;
-		}
-		String text = extractReasoningText(extras, "reasoning_content", "thinking", "reasoning");
-		if (text != null && !text.isEmpty()) {
-			reasoningBuffer.append(text);
-		}
-	}
-
-	private String extractReasoningText(Map<String, JsonValue> extras, String... keys) {
-		if (extras == null || keys == null) {
+	private String appendReasoningFromDelta(
+		ChatCompletionChunk.Choice.Delta delta,
+		StringBuilder reasoningBuffer,
+		AtomicReference<String> reasoningSourceRef
+	) {
+		MinimaxReasoningSupport.ExtractedReasoning extracted = MinimaxReasoningSupport.extractReasoning(delta);
+		if (extracted == null) {
 			return null;
 		}
-		for (String key : keys) {
-			JsonValue value = extras.get(key);
-			if (value == null) {
-				continue;
-			}
-			try {
-				JsonNode node = value.convert(JsonNode.class);
-				if (node == null) {
-					continue;
-				}
-				if (node.isTextual()) {
-					return node.asText();
-				}
-				if (node.isArray()) {
-					StringBuilder sb = new StringBuilder();
-					for (JsonNode item : node) {
-						if (item != null && item.isTextual()) {
-							sb.append(item.asText());
-						}
-					}
-					if (sb.length() > 0) {
-						return sb.toString();
-					}
-				}
-			} catch (Exception ignored) {
-				// ignore malformed reasoning payloads
-			}
+		if (reasoningSourceRef != null && extracted.source() != null && !extracted.source().isEmpty()) {
+			reasoningSourceRef.set(extracted.source());
 		}
-		return null;
+		return MinimaxReasoningSupport.mergeReasoning(reasoningBuffer, extracted);
 	}
 
 	private boolean looksLikeStepByStep(String text) {

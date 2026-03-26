@@ -368,6 +368,12 @@
         flex-shrink: 0;
       }
 
+      .thinking-source-meta {
+        margin-bottom: 6px;
+        font-size: 11px;
+        color: #64748b;
+      }
+
       .assistant-content {
         white-space: pre-wrap;
       }
@@ -910,7 +916,11 @@
           toolCardsById: {},
           turnId: null,
           lastSequenceId: null,
+          currentThinkingWrapper: null,
           currentThinkingEl: null,
+          currentThinkingTitleEl: null,
+          currentThinkingSourceMetaEl: null,
+          currentThinkingSources: [],
           currentThinkingBlockKey: null,
           lastEventType: null,
           lastThinkingRoundId: null
@@ -1248,6 +1258,63 @@
         }
       }
 
+      const THINKING_SOURCE_LABELS = {
+        thinking_tool: '计划思考',
+        reasoning_details: '模型推理中',
+        reasoning_field: '推理片段',
+        assistant_content: '内容解析思考'
+      };
+
+      function getThinkingSourceLabel(source) {
+        const normalized = source ? String(source).trim() : '';
+        if (!normalized) return '思考';
+        return THINKING_SOURCE_LABELS[normalized] || '思考';
+      }
+
+      function updateThinkingSourceSummary(target, source) {
+        if (!target || !target.currentThinkingWrapper) return;
+        const normalized = source ? String(source).trim() : '';
+        const sourceList = Array.isArray(target.currentThinkingSources) ? target.currentThinkingSources : [];
+        if (normalized && !sourceList.includes(normalized)) {
+          sourceList.push(normalized);
+        }
+        target.currentThinkingSources = sourceList;
+
+        const labels = [];
+        for (const item of sourceList) {
+          const label = getThinkingSourceLabel(item);
+          if (label && !labels.includes(label)) {
+            labels.push(label);
+          }
+        }
+
+        if (target.currentThinkingTitleEl) {
+          target.currentThinkingTitleEl.textContent = labels.length > 1 ? '思考进行中' : (labels[0] || '思考');
+        }
+        if (target.currentThinkingSourceMetaEl) {
+          const summary = labels.length > 0 ? '来源: ' + labels.join(' / ') : '';
+          target.currentThinkingSourceMetaEl.textContent = summary;
+          target.currentThinkingSourceMetaEl.style.display = summary ? 'block' : 'none';
+        }
+        target.currentThinkingWrapper.dataset.sources = sourceList.join(',');
+        target.currentThinkingWrapper.title = sourceList.length > 0
+          ? 'thinking source: ' + sourceList.join(', ')
+          : '';
+      }
+
+      function closeCurrentThinkingBlock(target, nextEventType) {
+        if (!target) return;
+        target.currentThinkingWrapper = null;
+        target.currentThinkingEl = null;
+        target.currentThinkingTitleEl = null;
+        target.currentThinkingSourceMetaEl = null;
+        target.currentThinkingSources = [];
+        target.currentThinkingBlockKey = null;
+        if (nextEventType) {
+          target.lastEventType = nextEventType;
+        }
+      }
+
       function ensureToolCard(target, data) {
         if (!target || !target.toolContainer) return null;
         const toolCallId = resolveToolCallId(data);
@@ -1293,6 +1360,7 @@
 
       function handleTurnStartEvent(data) {
         if (!currentAssistant) return;
+        closeCurrentThinkingBlock(currentAssistant, 'turn');
         if (data && data.turnId) {
           currentAssistant.turnId = data.turnId;
         }
@@ -1306,6 +1374,7 @@
 
       function handleTurnEndEvent(data) {
         if (!currentAssistant || !currentAssistant.turnMetaEl) return;
+        closeCurrentThinkingBlock(currentAssistant, 'turn');
         const reason = data && data.finishReason ? data.finishReason : 'done';
         currentAssistant.turnMetaEl.style.display = 'block';
         currentAssistant.turnMetaEl.textContent =
@@ -1315,6 +1384,7 @@
 
       function handleToolStartEvent(data) {
         if (!currentAssistant) return;
+        closeCurrentThinkingBlock(currentAssistant, 'tool');
         const card = ensureToolCard(currentAssistant, data);
         if (!card) return;
         card.details.dataset.status = 'running';
@@ -1330,11 +1400,11 @@
         if ((data.toolName || '') === 'todo_write') {
           renderTodoPlan(card, data.argsPreview, null);
         }
-        currentAssistant.lastEventType = 'tool';
       }
 
       function handleToolEndEvent(data) {
         if (!currentAssistant) return;
+        closeCurrentThinkingBlock(currentAssistant, 'tool');
         const card = ensureToolCard(currentAssistant, data);
         if (!card) return;
         const status = data.status || 'success';
@@ -1360,7 +1430,6 @@
         if ((data.toolName || '') === 'todo_write') {
           renderTodoPlan(card, data.argsPreview, data.resultPreview);
         }
-        currentAssistant.lastEventType = 'tool';
       }
 
       function handleThinkingEvent(data) {
@@ -1371,7 +1440,7 @@
         if (currentAssistant.thinkingContainer) {
           currentAssistant.thinkingContainer.style.display = 'block';
         }
-        const blockKey = String(data && data.source ? data.source : 'thinking') + '::' + String(roundId);
+        const blockKey = 'round::' + String(roundId);
 
         const roundChanged =
           roundId !== null &&
@@ -1390,7 +1459,7 @@
           head.className = 'thinking-head';
           const title = document.createElement('div');
           title.className = 'thinking-title';
-          title.textContent = '思考' + (data && data.source ? ' · ' + data.source : '');
+          title.textContent = '思考';
           head.appendChild(title);
           if (roundId !== null) {
             const roundLabel = document.createElement('div');
@@ -1399,14 +1468,23 @@
             head.appendChild(roundLabel);
           }
           wrapper.appendChild(head);
+          const sourceMeta = document.createElement('div');
+          sourceMeta.className = 'thinking-source-meta';
+          sourceMeta.style.display = 'none';
+          wrapper.appendChild(sourceMeta);
           const box = document.createElement('div');
           box.className = 'thinking-content';
           wrapper.appendChild(box);
           currentAssistant.thinkingContainer.appendChild(wrapper);
+          currentAssistant.currentThinkingWrapper = wrapper;
           currentAssistant.currentThinkingEl = box;
+          currentAssistant.currentThinkingTitleEl = title;
+          currentAssistant.currentThinkingSourceMetaEl = sourceMeta;
+          currentAssistant.currentThinkingSources = [];
           currentAssistant.currentThinkingBlockKey = blockKey;
         }
 
+        updateThinkingSourceSummary(currentAssistant, data && data.source ? data.source : '');
         currentAssistant.currentThinkingEl.textContent += content;
         if (roundId !== null) {
           currentAssistant.lastThinkingRoundId = roundId;
@@ -1417,10 +1495,10 @@
 
       function handleContentEvent(data) {
         if (!currentAssistant || !currentAssistant.contentEl) return;
+        closeCurrentThinkingBlock(currentAssistant, 'content');
         const content = data && data.content ? data.content : '';
         if (!content) return;
         currentAssistant.contentEl.textContent += content;
-        currentAssistant.lastEventType = 'content';
         chatBox.scrollTop = chatBox.scrollHeight;
       }
 

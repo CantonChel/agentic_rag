@@ -36,7 +36,7 @@ public class KnowledgeSearchTool implements Tool {
 
 	@Override
 	public String description() {
-		return "When you need to answer questions about organization-specific policies, internal documents, product specs, model numbers, or any domain knowledge you are not fully sure about, you must call this tool before answering. Input should be a short, high-signal search phrase or a concise declarative statement, not a long question. The tool returns <context> with ranked excerpts and sources; you must base the answer strictly on it and cite sources like [引用 1].";
+		return "Semantic retrieval over the knowledge base. Use this after keyword anchoring or when you need broader recall, better coverage, or more context than exact keywords can provide. Input should be a short, high-signal search phrase or concise declarative statement, not a long question. The tool returns <context> with ranked excerpts and sources; you must base the answer strictly on it and cite sources like [引用 1].";
 	}
 
 	@Override

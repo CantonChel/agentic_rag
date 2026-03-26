@@ -15,9 +15,11 @@ import com.agenticrag.app.llm.LlmProvider;
 import com.agenticrag.app.llm.LlmStreamEvent;
 import com.agenticrag.app.llm.LlmToolCall;
 import com.agenticrag.app.llm.LlmToolChoiceMode;
+import com.agenticrag.app.llm.MinimaxReasoningSupport;
 import com.agenticrag.app.memory.MemoryFlushService;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
+import com.agenticrag.app.prompt.SystemPromptMode;
 import com.agenticrag.app.session.ChatSession;
 import com.agenticrag.app.session.SessionManager;
 import com.agenticrag.app.session.SessionScope;
@@ -221,7 +223,7 @@ public class AgentStreamingService {
 				try {
 					OpenAIClient client = provider == LlmProvider.MINIMAX ? minimaxClient : openAiClient;
 					String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
-					String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, true));
+					String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, includeTools, SystemPromptMode.AGENT));
 					OpenAiMessageAdapter adapter = new OpenAiMessageAdapter(objectMapper);
 
 					if (isSessionSwitchCommand(prompt)) {
@@ -281,6 +283,7 @@ public class AgentStreamingService {
 						ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder()
 							.model(model)
 							.addSystemMessage(systemPrompt);
+						MinimaxReasoningSupport.applyReasoningSplit(paramsBuilder, provider, minimaxProperties);
 
 						if (isFinalIteration) {
 							paramsBuilder.addSystemMessage("系统警告：你已达到最大思考步数。请立即停止调用新工具，基于目前已有的观察结果，向用户输出最终总结回复。");
@@ -307,7 +310,9 @@ public class AgentStreamingService {
 						String finishReason = null;
 						boolean hasToolThinking = false;
 						AtomicBoolean inlineThinkingEmitted = new AtomicBoolean(false);
+						AtomicBoolean structuredReasoningEmitted = new AtomicBoolean(false);
 						AtomicReference<String> originModelRef = new AtomicReference<>(model);
+						AtomicReference<String> reasoningSourceRef = new AtomicReference<>(MinimaxReasoningSupport.SOURCE_REASONING_FIELD);
 
 						try (StreamResponse<ChatCompletionChunk> streamResponse = client.chat().completions().createStreaming(paramsBuilder.build())) {
 							outer:
@@ -356,10 +361,23 @@ public class AgentStreamingService {
 										}
 									}
 
-									if (delta.toolCalls().isPresent() && delta.toolCalls().get() != null) {
+									boolean hasToolCallsInDelta = delta.toolCalls().isPresent() && delta.toolCalls().get() != null;
+									if (hasToolCallsInDelta) {
 										toolCallAccumulator.append(delta.toolCalls().get());
 									}
-									appendReasoningFromDelta(delta, reasoningBuffer);
+									String reasoningPart = appendReasoningFromDelta(delta, reasoningBuffer, reasoningSourceRef);
+									if (reasoningPart != null && !reasoningPart.isEmpty() && !hasToolCallsInDelta) {
+										structuredReasoningEmitted.set(true);
+										sink.next(LlmStreamEvent.thinking(
+											reasoningPart,
+											reasoningSourceRef.get(),
+											originModelRef.get(),
+											iterationFinal,
+											turnId,
+											nextSequence.getAsLong(),
+											System.currentTimeMillis()
+										));
+									}
 
 									if (choice.finishReason().isPresent() && choice.finishReason().get() != null) {
 										finishReason = choice.finishReason().get().toString();
@@ -397,7 +415,9 @@ public class AgentStreamingService {
 						if (toolCalls == null || toolCalls.isEmpty()) {
 							emitThinkingIfNeeded(
 								false,
+								structuredReasoningEmitted.get(),
 								reasoningBuffer,
+								reasoningSourceRef,
 								inlineThinkBuffer,
 								assistantFinal,
 								originModelRef.get(),
@@ -544,7 +564,9 @@ public class AgentStreamingService {
 						if (!hasToolThinking) {
 							emitThinkingIfNeeded(
 								false,
+								structuredReasoningEmitted.get(),
 								reasoningBuffer,
+								reasoningSourceRef,
 								inlineThinkBuffer,
 								assistantFinal,
 								originModelRef.get(),
@@ -782,58 +804,26 @@ public class AgentStreamingService {
 		private final StringBuilder arguments = new StringBuilder();
 	}
 
-	private void appendReasoningFromDelta(ChatCompletionChunk.Choice.Delta delta, StringBuilder reasoningBuffer) {
-		if (delta == null || reasoningBuffer == null) {
-			return;
-		}
-		Map<String, JsonValue> extras = delta._additionalProperties();
-		if (extras == null || extras.isEmpty()) {
-			return;
-		}
-		String text = extractReasoningText(extras, "reasoning_content", "thinking", "reasoning");
-		if (text != null && !text.isEmpty()) {
-			reasoningBuffer.append(text);
-		}
-	}
-
-	private String extractReasoningText(Map<String, JsonValue> extras, String... keys) {
-		if (extras == null || keys == null) {
+	private String appendReasoningFromDelta(
+		ChatCompletionChunk.Choice.Delta delta,
+		StringBuilder reasoningBuffer,
+		AtomicReference<String> reasoningSourceRef
+	) {
+		MinimaxReasoningSupport.ExtractedReasoning extracted = MinimaxReasoningSupport.extractReasoning(delta);
+		if (extracted == null) {
 			return null;
 		}
-		for (String key : keys) {
-			JsonValue value = extras.get(key);
-			if (value == null) {
-				continue;
-			}
-			try {
-				JsonNode node = value.convert(JsonNode.class);
-				if (node == null) {
-					continue;
-				}
-				if (node.isTextual()) {
-					return node.asText();
-				}
-				if (node.isArray()) {
-					StringBuilder sb = new StringBuilder();
-					for (JsonNode item : node) {
-						if (item != null && item.isTextual()) {
-							sb.append(item.asText());
-						}
-					}
-					if (sb.length() > 0) {
-						return sb.toString();
-					}
-				}
-			} catch (Exception ignored) {
-				// ignore malformed reasoning payloads
-			}
+		if (reasoningSourceRef != null && extracted.source() != null && !extracted.source().isEmpty()) {
+			reasoningSourceRef.set(extracted.source());
 		}
-		return null;
+		return MinimaxReasoningSupport.mergeReasoning(reasoningBuffer, extracted);
 	}
 
 	private void emitThinkingIfNeeded(
 		boolean hasToolThinking,
+		boolean structuredReasoningEmitted,
 		StringBuilder reasoningBuffer,
+		AtomicReference<String> reasoningSourceRef,
 		StringBuilder inlineThinkBuffer,
 		String assistantFinal,
 		String originModel,
@@ -849,15 +839,20 @@ public class AgentStreamingService {
 		}
 		String reasoning = reasoningBuffer == null ? "" : reasoningBuffer.toString().trim();
 		if (!reasoning.isEmpty()) {
-			sink.next(LlmStreamEvent.thinking(
-				reasoning,
-				"reasoning_field",
-				originModel,
-				iteration,
-				turnId,
-				nextSequence.getAsLong(),
-				System.currentTimeMillis()
-			));
+			if (!structuredReasoningEmitted) {
+				String source = reasoningSourceRef != null && reasoningSourceRef.get() != null
+					? reasoningSourceRef.get()
+					: MinimaxReasoningSupport.SOURCE_REASONING_FIELD;
+				sink.next(LlmStreamEvent.thinking(
+					reasoning,
+					source,
+					originModel,
+					iteration,
+					turnId,
+					nextSequence.getAsLong(),
+					System.currentTimeMillis()
+				));
+			}
 			recordThinkingMessage(sessionId, reasoning);
 			return;
 		}

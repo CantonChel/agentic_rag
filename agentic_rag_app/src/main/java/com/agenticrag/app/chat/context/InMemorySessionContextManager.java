@@ -68,6 +68,11 @@ public class InMemorySessionContextManager implements ContextManager {
 		if (!list.isEmpty()) {
 			ChatMessage first = list.get(0);
 			if (first != null && first.getType() == ChatMessageType.SYSTEM) {
+				String incoming = systemPrompt != null ? systemPrompt : "";
+				String existing = first.getContent() != null ? first.getContent() : "";
+				if (!existing.equals(incoming)) {
+					list.set(0, new SystemMessage(incoming));
+				}
 				return;
 			}
 		}
