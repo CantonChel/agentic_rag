@@ -95,3 +95,17 @@ class TurnExecutionSummary:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
+
+@dataclass(frozen=True)
+class SuiteManifest:
+    """Manifest describing one portable benchmark package."""
+
+    package_version: str
+    project_key: str
+    suite_version: str
+    created_at: str
+    generator_version: str
+    files: Dict[str, str]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)

@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-rag.local/benchmark/schemas/suite_manifest.schema.json",
+  "title": "SuiteManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "package_version",
+    "project_key",
+    "suite_version",
+    "created_at",
+    "generator_version",
+    "files"
+  ],
+  "properties": {
+    "package_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_key": {
+      "type": "string",
+      "pattern": "^[a-z0-9_\\-]+$"
+    },
+    "suite_version": {
+      "type": "string",
+      "pattern": "^[a-z0-9_\\-]+$"
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generator_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_units",
+        "benchmark_suite",
+        "suite_manifest",
+        "review_markdown"
+      ],
+      "properties": {
+        "evidence_units": {
+          "const": "evidence_units.jsonl"
+        },
+        "benchmark_suite": {
+          "const": "benchmark_suite.jsonl"
+        },
+        "suite_manifest": {
+          "const": "suite_manifest.json"
+        },
+        "review_markdown": {
+          "const": "benchmark_suite.md"
+        }
+      }
+    }
+  }
+}
