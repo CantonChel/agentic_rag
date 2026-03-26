@@ -348,6 +348,79 @@
         white-space: pre-wrap;
       }
 
+      .turn-meta {
+        margin: 8px 0 10px;
+        font-size: 12px;
+        color: #6b7280;
+      }
+
+      .tool-section {
+        margin: 12px 0;
+        padding: 10px 12px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+      }
+
+      .tool-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #334155;
+        margin-bottom: 8px;
+      }
+
+      .tool-card {
+        border: 1px solid #dbeafe;
+        border-radius: 10px;
+        background: #ffffff;
+        margin-bottom: 8px;
+        overflow: hidden;
+      }
+
+      .tool-card[data-status="running"] {
+        border-left: 4px solid #2563eb;
+      }
+
+      .tool-card[data-status="success"] {
+        border-left: 4px solid #059669;
+      }
+
+      .tool-card[data-status="error"],
+      .tool-card[data-status="timeout"] {
+        border-left: 4px solid #dc2626;
+      }
+
+      .tool-summary {
+        cursor: pointer;
+        padding: 10px 12px;
+        font-size: 13px;
+        font-weight: 600;
+        color: #1f2937;
+        list-style: none;
+      }
+
+      .tool-summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .tool-body {
+        border-top: 1px solid #e5e7eb;
+        padding: 8px 12px 12px;
+        font-size: 12px;
+        color: #374151;
+      }
+
+      .tool-body pre {
+        margin: 6px 0 0;
+        padding: 8px;
+        border-radius: 8px;
+        background: #f3f4f6;
+        color: #111827;
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
       .input-area {
         padding: 20px 24px;
         background: white;
@@ -753,8 +826,16 @@
         let thinkingContainer = null;
         let thinkingTitleEl = null;
         let assistantContentEl = null;
+        let turnMetaEl = null;
+        let toolTitleEl = null;
+        let toolContainer = null;
 
         if (role === 'assistant') {
+          turnMetaEl = document.createElement('div');
+          turnMetaEl.className = 'turn-meta';
+          turnMetaEl.style.display = 'none';
+          contentDiv.appendChild(turnMetaEl);
+
           thinkingTitleEl = document.createElement('div');
           thinkingTitleEl.className = 'thinking-title';
           thinkingTitleEl.textContent = '思考';
@@ -765,6 +846,17 @@
           thinkingContainer.className = 'thinking-section';
           thinkingContainer.style.display = 'none';
           contentDiv.appendChild(thinkingContainer);
+
+          toolTitleEl = document.createElement('div');
+          toolTitleEl.className = 'tool-title';
+          toolTitleEl.textContent = '工具调用';
+          toolTitleEl.style.display = 'none';
+          contentDiv.appendChild(toolTitleEl);
+
+          toolContainer = document.createElement('div');
+          toolContainer.className = 'tool-section';
+          toolContainer.style.display = 'none';
+          contentDiv.appendChild(toolContainer);
 
           assistantContentEl = document.createElement('div');
           assistantContentEl.className = 'assistant-content';
@@ -783,6 +875,12 @@
           contentEl: assistantContentEl || contentDiv,
           thinkingContainer,
           thinkingTitleEl,
+          turnMetaEl,
+          toolTitleEl,
+          toolContainer,
+          toolCardsById: {},
+          turnId: null,
+          lastSequenceId: null,
           currentThinkingEl: null,
           lastEventType: null,
           lastThinkingRoundId: null
@@ -1005,6 +1103,127 @@
         await loadSessionHistoryById(sid);
       }
 
+      function formatPreview(payload) {
+        if (payload === undefined || payload === null) return '';
+        if (typeof payload === 'string') return payload;
+        try {
+          return JSON.stringify(payload, null, 2);
+        } catch (_) {
+          return String(payload);
+        }
+      }
+
+      function resolveToolCallId(data) {
+        if (!data) return 'tool-' + Date.now();
+        if (data.toolCallId) return String(data.toolCallId);
+        return (data.toolName || 'tool') + '-' + Date.now();
+      }
+
+      function ensureToolCard(target, data) {
+        if (!target || !target.toolContainer) return null;
+        const toolCallId = resolveToolCallId(data);
+        let card = target.toolCardsById[toolCallId];
+        if (card) return card;
+
+        if (target.toolTitleEl) {
+          target.toolTitleEl.style.display = 'block';
+        }
+        target.toolContainer.style.display = 'block';
+
+        const details = document.createElement('details');
+        details.className = 'tool-card';
+        details.dataset.status = 'running';
+
+        const summary = document.createElement('summary');
+        summary.className = 'tool-summary';
+        summary.textContent = '工具执行中：' + (data.toolName || 'unknown');
+        details.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'tool-body';
+        details.appendChild(body);
+
+        const metaEl = document.createElement('div');
+        body.appendChild(metaEl);
+
+        const argsPre = document.createElement('pre');
+        argsPre.style.display = 'none';
+        body.appendChild(argsPre);
+
+        const resultPre = document.createElement('pre');
+        resultPre.style.display = 'none';
+        body.appendChild(resultPre);
+
+        target.toolContainer.appendChild(details);
+        card = { details, summary, metaEl, argsPre, resultPre, toolCallId };
+        target.toolCardsById[toolCallId] = card;
+        return card;
+      }
+
+      function handleTurnStartEvent(data) {
+        if (!currentAssistant) return;
+        if (data && data.turnId) {
+          currentAssistant.turnId = data.turnId;
+        }
+        if (currentAssistant.turnMetaEl) {
+          currentAssistant.turnMetaEl.style.display = 'block';
+          currentAssistant.turnMetaEl.textContent =
+            '回合开始 · turnId=' + (currentAssistant.turnId || '-') +
+            (data && data.sequenceId !== undefined ? ' · seq=' + data.sequenceId : '');
+        }
+      }
+
+      function handleTurnEndEvent(data) {
+        if (!currentAssistant || !currentAssistant.turnMetaEl) return;
+        const reason = data && data.finishReason ? data.finishReason : 'done';
+        currentAssistant.turnMetaEl.style.display = 'block';
+        currentAssistant.turnMetaEl.textContent =
+          '回合结束 · reason=' + reason +
+          (data && data.sequenceId !== undefined ? ' · seq=' + data.sequenceId : '');
+      }
+
+      function handleToolStartEvent(data) {
+        if (!currentAssistant) return;
+        const card = ensureToolCard(currentAssistant, data);
+        if (!card) return;
+        card.details.dataset.status = 'running';
+        card.summary.textContent = '工具执行中：' + (data.toolName || 'unknown');
+        card.metaEl.textContent =
+          '状态: running' +
+          (data.roundId !== undefined && data.roundId !== null ? ' · round=' + data.roundId : '');
+        const argsText = formatPreview(data.argsPreview);
+        if (argsText) {
+          card.argsPre.style.display = 'block';
+          card.argsPre.textContent = '[args]\n' + argsText;
+        }
+      }
+
+      function handleToolEndEvent(data) {
+        if (!currentAssistant) return;
+        const card = ensureToolCard(currentAssistant, data);
+        if (!card) return;
+        const status = data.status || 'success';
+        card.details.dataset.status = status;
+        const durationPart =
+          data.durationMs !== undefined && data.durationMs !== null
+            ? ' · ' + data.durationMs + 'ms'
+            : '';
+        card.summary.textContent = '工具' + (status === 'success' ? '完成' : '结束') +
+          '：' + (data.toolName || 'unknown') + durationPart;
+        card.metaEl.textContent =
+          '状态: ' + status +
+          (data.roundId !== undefined && data.roundId !== null ? ' · round=' + data.roundId : '');
+        const resultText = formatPreview(data.resultPreview);
+        if (resultText) {
+          card.resultPre.style.display = 'block';
+          card.resultPre.textContent = '[result]\n' + resultText;
+        }
+        if (data.error) {
+          card.resultPre.style.display = 'block';
+          card.resultPre.textContent += '\n[error]\n' + data.error;
+        }
+      }
+
       function handleThinkingEvent(data) {
         if (!currentAssistant || !currentAssistant.thinkingContainer) return;
         const content = data && data.content ? data.content : '';
@@ -1055,6 +1274,38 @@
 
       function handleStreamEvent(data) {
         if (!data || !data.type) return;
+        const sequenceId = Number(data.sequenceId);
+        if (
+          currentAssistant &&
+          Number.isFinite(sequenceId) &&
+          currentAssistant.lastSequenceId !== null &&
+          currentAssistant.lastSequenceId !== undefined &&
+          sequenceId <= currentAssistant.lastSequenceId
+        ) {
+          return;
+        }
+        if (currentAssistant && Number.isFinite(sequenceId)) {
+          currentAssistant.lastSequenceId = sequenceId;
+        }
+        if (data.turnId && currentAssistant && !currentAssistant.turnId) {
+          currentAssistant.turnId = data.turnId;
+        }
+        if (data.type === 'turn_start') {
+          handleTurnStartEvent(data);
+          return;
+        }
+        if (data.type === 'turn_end') {
+          handleTurnEndEvent(data);
+          return;
+        }
+        if (data.type === 'tool_start') {
+          handleToolStartEvent(data);
+          return;
+        }
+        if (data.type === 'tool_end') {
+          handleToolEndEvent(data);
+          return;
+        }
         if (data.type === 'thinking') {
           handleThinkingEvent(data);
           return;
