@@ -315,19 +315,17 @@
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
       }
 
-      .thinking-section {
-        margin-bottom: 12px;
-        padding: 12px;
-        background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
-        border-radius: 12px;
-        border-left: 4px solid #667eea;
+      .event-timeline {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin: 10px 0 12px;
       }
 
       .thinking-title {
         font-size: 12px;
         font-weight: 600;
         color: #667eea;
-        margin-bottom: 8px;
         display: flex;
         align-items: center;
         gap: 6px;
@@ -337,6 +335,13 @@
         content: '💭';
       }
 
+      .thinking-block {
+        padding: 12px;
+        background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+        border-radius: 12px;
+        border-left: 4px solid #667eea;
+      }
+
       .thinking-content {
         font-size: 13px;
         color: #4b5563;
@@ -344,8 +349,117 @@
         line-height: 1.5;
       }
 
+      .thinking-block + .thinking-block {
+        margin-top: 10px;
+      }
+
+      .thinking-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 6px;
+      }
+
+      .thinking-round {
+        font-size: 11px;
+        font-weight: 600;
+        color: #334155;
+        flex-shrink: 0;
+      }
+
       .assistant-content {
         white-space: pre-wrap;
+      }
+
+      .turn-meta {
+        margin: 8px 0 10px;
+        font-size: 12px;
+        color: #6b7280;
+      }
+
+      .tool-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #334155;
+      }
+
+      .tool-card {
+        border: 1px solid #dbeafe;
+        border-radius: 10px;
+        background: #ffffff;
+        overflow: hidden;
+      }
+
+      .tool-card[data-status="running"] {
+        border-left: 4px solid #2563eb;
+      }
+
+      .tool-card[data-status="success"] {
+        border-left: 4px solid #059669;
+      }
+
+      .tool-card[data-status="error"],
+      .tool-card[data-status="timeout"] {
+        border-left: 4px solid #dc2626;
+      }
+
+      .tool-summary {
+        cursor: pointer;
+        padding: 10px 12px;
+        font-size: 13px;
+        font-weight: 600;
+        color: #1f2937;
+        list-style: none;
+      }
+
+      .tool-summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .tool-body {
+        border-top: 1px solid #e5e7eb;
+        padding: 8px 12px 12px;
+        font-size: 12px;
+        color: #374151;
+      }
+
+      .tool-body pre {
+        margin: 6px 0 0;
+        padding: 8px;
+        border-radius: 8px;
+        background: #f3f4f6;
+        color: #111827;
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .todo-plan {
+        margin-top: 8px;
+        padding: 10px;
+        border-radius: 8px;
+        background: #eef2ff;
+        border: 1px solid #c7d2fe;
+      }
+
+      .todo-plan-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: #312e81;
+        margin-bottom: 6px;
+      }
+
+      .todo-plan-task {
+        font-size: 12px;
+        color: #3730a3;
+        margin-bottom: 6px;
+      }
+
+      .todo-plan-step {
+        font-size: 12px;
+        color: #1e1b4b;
+        line-height: 1.5;
       }
 
       .input-area {
@@ -750,21 +864,27 @@
         const contentDiv = document.createElement('div');
         contentDiv.className = 'message-content';
         
+        let eventTimelineEl = null;
         let thinkingContainer = null;
         let thinkingTitleEl = null;
         let assistantContentEl = null;
+        let turnMetaEl = null;
+        let toolTitleEl = null;
+        let toolContainer = null;
 
         if (role === 'assistant') {
-          thinkingTitleEl = document.createElement('div');
-          thinkingTitleEl.className = 'thinking-title';
-          thinkingTitleEl.textContent = '思考';
-          thinkingTitleEl.style.display = 'none';
-          contentDiv.appendChild(thinkingTitleEl);
+          turnMetaEl = document.createElement('div');
+          turnMetaEl.className = 'turn-meta';
+          turnMetaEl.style.display = 'none';
+          contentDiv.appendChild(turnMetaEl);
 
-          thinkingContainer = document.createElement('div');
-          thinkingContainer.className = 'thinking-section';
-          thinkingContainer.style.display = 'none';
-          contentDiv.appendChild(thinkingContainer);
+          eventTimelineEl = document.createElement('div');
+          eventTimelineEl.className = 'event-timeline';
+          eventTimelineEl.style.display = 'none';
+          contentDiv.appendChild(eventTimelineEl);
+
+          thinkingContainer = eventTimelineEl;
+          toolContainer = eventTimelineEl;
 
           assistantContentEl = document.createElement('div');
           assistantContentEl.className = 'assistant-content';
@@ -781,9 +901,17 @@
         return {
           container: messageDiv,
           contentEl: assistantContentEl || contentDiv,
+          eventTimelineEl,
           thinkingContainer,
           thinkingTitleEl,
+          turnMetaEl,
+          toolTitleEl,
+          toolContainer,
+          toolCardsById: {},
+          turnId: null,
+          lastSequenceId: null,
           currentThinkingEl: null,
+          currentThinkingBlockKey: null,
           lastEventType: null,
           lastThinkingRoundId: null
         };
@@ -829,18 +957,7 @@
       function appendThinkingOnly(text) {
         const msg = appendMessage('assistant', '');
         if (!msg) return;
-        if (msg.thinkingTitleEl) {
-          msg.thinkingTitleEl.style.display = 'block';
-        }
-        if (msg.thinkingContainer) {
-          msg.thinkingContainer.style.display = 'block';
-          const box = document.createElement('div');
-          box.className = 'thinking-content';
-          box.textContent = text || '';
-          msg.thinkingContainer.appendChild(box);
-          msg.currentThinkingEl = box;
-          msg.lastEventType = 'thinking';
-        }
+        appendThinkingToMessage(msg, text);
         if (msg.contentEl) {
           msg.contentEl.textContent = '';
         }
@@ -848,15 +965,25 @@
 
       function appendThinkingToMessage(target, text) {
         if (!target || !text) return;
-        if (target.thinkingTitleEl) {
-          target.thinkingTitleEl.style.display = 'block';
-        }
         if (!target.thinkingContainer) return;
         target.thinkingContainer.style.display = 'block';
+        const wrapper = document.createElement('div');
+        wrapper.className = 'thinking-block';
+        const head = document.createElement('div');
+        head.className = 'thinking-head';
+        const title = document.createElement('div');
+        title.className = 'thinking-title';
+        title.textContent = '思考';
+        head.appendChild(title);
+        wrapper.appendChild(head);
         const box = document.createElement('div');
         box.className = 'thinking-content';
         box.textContent = text || '';
-        target.thinkingContainer.appendChild(box);
+        wrapper.appendChild(box);
+        target.thinkingContainer.appendChild(wrapper);
+        target.currentThinkingEl = box;
+        target.currentThinkingBlockKey = 'history';
+        target.lastEventType = 'thinking';
       }
 
       function setSendingState(sending) {
@@ -991,6 +1118,26 @@
                 } else {
                   appendThinkingOnly(msg.content || '');
                 }
+              } else if (msg.type === 'TOOL_CALL' && lastAssistantMsg && Array.isArray(msg.toolCalls)) {
+                withAssistantTarget(lastAssistantMsg, () => {
+                  for (const call of msg.toolCalls) {
+                    handleToolStartEvent({
+                      toolCallId: call && call.id ? call.id : undefined,
+                      toolName: call && call.name ? call.name : undefined,
+                      argsPreview: call && call.arguments ? call.arguments : undefined
+                    });
+                  }
+                });
+              } else if (msg.type === 'TOOL_RESULT' && lastAssistantMsg) {
+                withAssistantTarget(lastAssistantMsg, () => {
+                  handleToolEndEvent({
+                    toolCallId: msg.toolCallId || undefined,
+                    toolName: msg.toolName || undefined,
+                    status: msg.success ? 'success' : 'error',
+                    resultPreview: msg.result ? { text: msg.result } : undefined,
+                    error: msg.success ? undefined : (msg.result || 'tool failed')
+                  });
+                });
               }
             }
           }
@@ -1005,20 +1152,226 @@
         await loadSessionHistoryById(sid);
       }
 
+      function withAssistantTarget(target, fn) {
+        const previous = currentAssistant;
+        currentAssistant = target;
+        try {
+          fn();
+        } finally {
+          currentAssistant = previous;
+        }
+      }
+
+      function formatPreview(payload) {
+        if (payload === undefined || payload === null) return '';
+        if (typeof payload === 'string') return payload;
+        try {
+          return JSON.stringify(payload, null, 2);
+        } catch (_) {
+          return String(payload);
+        }
+      }
+
+      function resolveToolCallId(data) {
+        if (!data) return 'tool-' + Date.now();
+        if (data.toolCallId) return String(data.toolCallId);
+        return (data.toolName || 'tool') + '-' + Date.now();
+      }
+
+      function normalizeTodoStatus(status) {
+        const value = String(status || 'pending').toLowerCase();
+        if (value === 'done' || value === 'completed' || value === 'success') return 'done';
+        if (value === 'running' || value === 'doing') return 'running';
+        return 'pending';
+      }
+
+      function extractTodoFromResultPreview(resultPreview) {
+        const text =
+          typeof resultPreview === 'string'
+            ? resultPreview
+            : (resultPreview && typeof resultPreview.text === 'string' ? resultPreview.text : '');
+        if (!text) return null;
+        const lines = text.split('\n');
+        let task = '';
+        const steps = [];
+        for (const line of lines) {
+          if (line.startsWith('任务:')) {
+            task = line.slice(3).trim();
+            continue;
+          }
+          const m = line.match(/^\s*\d+\.\s+\[([^\]]+)\]\s+(.+)\s+\(([^)]+)\)\s*$/);
+          if (!m) continue;
+          steps.push({ id: m[1], description: m[2], status: m[3] });
+        }
+        if (!task && steps.length === 0) return null;
+        return { task, steps };
+      }
+
+      function extractTodoPlan(argsPreview, resultPreview) {
+        if (argsPreview && typeof argsPreview === 'object' && argsPreview.task && Array.isArray(argsPreview.steps)) {
+          return {
+            task: String(argsPreview.task || ''),
+            steps: argsPreview.steps.map((step, idx) => ({
+              id: step && step.id ? String(step.id) : 'step' + (idx + 1),
+              description: step && step.description ? String(step.description) : '',
+              status: step && step.status ? String(step.status) : 'pending'
+            }))
+          };
+        }
+        return extractTodoFromResultPreview(resultPreview);
+      }
+
+      function renderTodoPlan(card, argsPreview, resultPreview) {
+        if (!card || !card.todoPlanEl) return;
+        const plan = extractTodoPlan(argsPreview, resultPreview);
+        if (!plan) return;
+        card.todoPlanEl.innerHTML = '';
+        card.todoPlanEl.style.display = 'block';
+
+        const title = document.createElement('div');
+        title.className = 'todo-plan-title';
+        title.textContent = 'Todo 计划';
+        card.todoPlanEl.appendChild(title);
+
+        const task = document.createElement('div');
+        task.className = 'todo-plan-task';
+        task.textContent = '任务：' + (plan.task || '(未提供)');
+        card.todoPlanEl.appendChild(task);
+
+        for (const step of plan.steps || []) {
+          const row = document.createElement('div');
+          row.className = 'todo-plan-step';
+          const status = normalizeTodoStatus(step.status);
+          const flag = status === 'done' ? '✅' : (status === 'running' ? '⏳' : '⬜');
+          row.textContent = `${flag} [${step.id}] ${step.description}`;
+          card.todoPlanEl.appendChild(row);
+        }
+      }
+
+      function ensureToolCard(target, data) {
+        if (!target || !target.toolContainer) return null;
+        const toolCallId = resolveToolCallId(data);
+        let card = target.toolCardsById[toolCallId];
+        if (card) return card;
+
+        target.toolContainer.style.display = 'block';
+
+        const details = document.createElement('details');
+        details.className = 'tool-card';
+        details.dataset.status = 'running';
+
+        const summary = document.createElement('summary');
+        summary.className = 'tool-summary';
+        summary.textContent = '工具执行中：' + (data.toolName || 'unknown');
+        details.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'tool-body';
+        details.appendChild(body);
+
+        const metaEl = document.createElement('div');
+        body.appendChild(metaEl);
+
+        const argsPre = document.createElement('pre');
+        argsPre.style.display = 'none';
+        body.appendChild(argsPre);
+
+        const resultPre = document.createElement('pre');
+        resultPre.style.display = 'none';
+        body.appendChild(resultPre);
+
+        const todoPlanEl = document.createElement('div');
+        todoPlanEl.className = 'todo-plan';
+        todoPlanEl.style.display = 'none';
+        body.appendChild(todoPlanEl);
+
+        target.toolContainer.appendChild(details);
+        card = { details, summary, metaEl, argsPre, resultPre, todoPlanEl, toolCallId };
+        target.toolCardsById[toolCallId] = card;
+        return card;
+      }
+
+      function handleTurnStartEvent(data) {
+        if (!currentAssistant) return;
+        if (data && data.turnId) {
+          currentAssistant.turnId = data.turnId;
+        }
+        if (currentAssistant.turnMetaEl) {
+          currentAssistant.turnMetaEl.style.display = 'block';
+          currentAssistant.turnMetaEl.textContent =
+            '回合开始 · turnId=' + (currentAssistant.turnId || '-') +
+            (data && data.sequenceId !== undefined ? ' · seq=' + data.sequenceId : '');
+        }
+      }
+
+      function handleTurnEndEvent(data) {
+        if (!currentAssistant || !currentAssistant.turnMetaEl) return;
+        const reason = data && data.finishReason ? data.finishReason : 'done';
+        currentAssistant.turnMetaEl.style.display = 'block';
+        currentAssistant.turnMetaEl.textContent =
+          '回合结束 · reason=' + reason +
+          (data && data.sequenceId !== undefined ? ' · seq=' + data.sequenceId : '');
+      }
+
+      function handleToolStartEvent(data) {
+        if (!currentAssistant) return;
+        const card = ensureToolCard(currentAssistant, data);
+        if (!card) return;
+        card.details.dataset.status = 'running';
+        card.summary.textContent = '工具执行中：' + (data.toolName || 'unknown');
+        card.metaEl.textContent =
+          '状态: running' +
+          (data.roundId !== undefined && data.roundId !== null ? ' · round=' + data.roundId : '');
+        const argsText = formatPreview(data.argsPreview);
+        if (argsText) {
+          card.argsPre.style.display = 'block';
+          card.argsPre.textContent = '[args]\n' + argsText;
+        }
+        if ((data.toolName || '') === 'todo_write') {
+          renderTodoPlan(card, data.argsPreview, null);
+        }
+        currentAssistant.lastEventType = 'tool';
+      }
+
+      function handleToolEndEvent(data) {
+        if (!currentAssistant) return;
+        const card = ensureToolCard(currentAssistant, data);
+        if (!card) return;
+        const status = data.status || 'success';
+        card.details.dataset.status = status;
+        const durationPart =
+          data.durationMs !== undefined && data.durationMs !== null
+            ? ' · ' + data.durationMs + 'ms'
+            : '';
+        card.summary.textContent = '工具' + (status === 'success' ? '完成' : '结束') +
+          '：' + (data.toolName || 'unknown') + durationPart;
+        card.metaEl.textContent =
+          '状态: ' + status +
+          (data.roundId !== undefined && data.roundId !== null ? ' · round=' + data.roundId : '');
+        const resultText = formatPreview(data.resultPreview);
+        if (resultText) {
+          card.resultPre.style.display = 'block';
+          card.resultPre.textContent = '[result]\n' + resultText;
+        }
+        if (data.error) {
+          card.resultPre.style.display = 'block';
+          card.resultPre.textContent += '\n[error]\n' + data.error;
+        }
+        if ((data.toolName || '') === 'todo_write') {
+          renderTodoPlan(card, data.argsPreview, data.resultPreview);
+        }
+        currentAssistant.lastEventType = 'tool';
+      }
+
       function handleThinkingEvent(data) {
         if (!currentAssistant || !currentAssistant.thinkingContainer) return;
         const content = data && data.content ? data.content : '';
         if (!content) return;
         const roundId = data && data.roundId !== undefined && data.roundId !== null ? data.roundId : null;
-        if (data && data.source && currentAssistant.thinkingTitleEl) {
-          currentAssistant.thinkingTitleEl.textContent = '思考 · ' + data.source;
-        }
-        if (currentAssistant.thinkingTitleEl) {
-          currentAssistant.thinkingTitleEl.style.display = 'block';
-        }
         if (currentAssistant.thinkingContainer) {
           currentAssistant.thinkingContainer.style.display = 'block';
         }
+        const blockKey = String(data && data.source ? data.source : 'thinking') + '::' + String(roundId);
 
         const roundChanged =
           roundId !== null &&
@@ -1028,12 +1381,30 @@
         if (
           currentAssistant.lastEventType !== 'thinking' ||
           !currentAssistant.currentThinkingEl ||
-          roundChanged
+          roundChanged ||
+          currentAssistant.currentThinkingBlockKey !== blockKey
         ) {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'thinking-block';
+          const head = document.createElement('div');
+          head.className = 'thinking-head';
+          const title = document.createElement('div');
+          title.className = 'thinking-title';
+          title.textContent = '思考' + (data && data.source ? ' · ' + data.source : '');
+          head.appendChild(title);
+          if (roundId !== null) {
+            const roundLabel = document.createElement('div');
+            roundLabel.className = 'thinking-round';
+            roundLabel.textContent = '第 ' + roundId + ' 轮思考';
+            head.appendChild(roundLabel);
+          }
+          wrapper.appendChild(head);
           const box = document.createElement('div');
           box.className = 'thinking-content';
-          currentAssistant.thinkingContainer.appendChild(box);
+          wrapper.appendChild(box);
+          currentAssistant.thinkingContainer.appendChild(wrapper);
           currentAssistant.currentThinkingEl = box;
+          currentAssistant.currentThinkingBlockKey = blockKey;
         }
 
         currentAssistant.currentThinkingEl.textContent += content;
@@ -1053,6 +1424,62 @@
         chatBox.scrollTop = chatBox.scrollHeight;
       }
 
+      function handleStreamEvent(data) {
+        if (!data || !data.type) return;
+        const sequenceId = Number(data.sequenceId);
+        if (
+          currentAssistant &&
+          Number.isFinite(sequenceId) &&
+          currentAssistant.lastSequenceId !== null &&
+          currentAssistant.lastSequenceId !== undefined &&
+          sequenceId <= currentAssistant.lastSequenceId
+        ) {
+          return;
+        }
+        if (currentAssistant && Number.isFinite(sequenceId)) {
+          currentAssistant.lastSequenceId = sequenceId;
+        }
+        if (data.turnId && currentAssistant && !currentAssistant.turnId) {
+          currentAssistant.turnId = data.turnId;
+        }
+        if (data.type === 'turn_start') {
+          handleTurnStartEvent(data);
+          return;
+        }
+        if (data.type === 'turn_end') {
+          handleTurnEndEvent(data);
+          return;
+        }
+        if (data.type === 'tool_start') {
+          handleToolStartEvent(data);
+          return;
+        }
+        if (data.type === 'tool_end') {
+          handleToolEndEvent(data);
+          return;
+        }
+        if (data.type === 'thinking') {
+          handleThinkingEvent(data);
+          return;
+        }
+        if (data.type === 'content' || data.type === 'delta') {
+          handleContentEvent({ content: data.content || '' });
+          return;
+        }
+        if (data.type === 'session_switched') {
+          if (data.sessionId && sessionIdInput) {
+            sessionIdInput.value = data.sessionId;
+            updateSessionStatus('会话已切换');
+          }
+          return;
+        }
+        if (data.type === 'error') {
+          const message = data.content || data.error || '流式请求失败';
+          handleContentEvent({ content: '\n[错误] ' + message });
+          return;
+        }
+      }
+
       async function sendPrompt() {
         const text = promptInput.value.trim();
         if (!text || isStreaming) return;
@@ -1068,21 +1495,21 @@
         const provider = providerSel.value;
         const mode = modeSel.value;
         const toolsEnabled = toolsSel.value === 'true';
+        const streamPath = mode === 'llm'
+          ? `/api/llm/${encodeURIComponent(provider)}/stream`
+          : `/api/agent/${encodeURIComponent(provider)}/stream`;
         const query = new URLSearchParams({
-          provider,
-          mode,
+          prompt: text,
+          sessionId: sid,
+          userId: currentUserId(),
           tools: String(toolsEnabled),
-          userId: currentUserId()
+          toolChoice: 'AUTO'
         });
-
-        const body = { prompt: text, sessionId: sid };
-        const url = apiUrl('/api/chat?' + query.toString());
+        const url = apiUrl(streamPath + '?' + query.toString());
 
         try {
           const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
+            method: 'GET'
           });
           if (!response.ok) {
             throw new Error('Request failed: ' + response.status);
@@ -1109,11 +1536,7 @@
                 }
                 try {
                   const data = JSON.parse(dataStr);
-                  if (data.type === 'thinking') {
-                    handleThinkingEvent(data);
-                  } else if (data.type === 'content') {
-                    handleContentEvent(data);
-                  }
+                  handleStreamEvent(data);
                 } catch (e) {
                   console.error('Failed to parse SSE data:', e);
                 }
