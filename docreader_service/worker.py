@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import hmac
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ import httpx
 from config import settings
 from models import CallbackError, CallbackPayload, JobSubmitRequest, JobStatus
 from parser import ParseError, parse_to_chunks
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -103,14 +106,36 @@ class JobManager:
             headers[settings.signature_header] = signature
 
         timeout = httpx.Timeout(settings.callback_timeout_seconds)
-        for _ in range(max(1, settings.callback_retry_max)):
+        attempts = max(1, settings.callback_retry_max)
+        for attempt in range(1, attempts + 1):
             try:
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.post(callback_url, content=body.encode("utf-8"), headers=headers)
                     if 200 <= resp.status_code < 300:
                         return
+                    logger.warning(
+                        "docreader callback non-2xx: attempt=%s/%s url=%s status=%s body=%s",
+                        attempt,
+                        attempts,
+                        callback_url,
+                        resp.status_code,
+                        (resp.text or "")[:300],
+                    )
             except Exception:
+                logger.exception(
+                    "docreader callback exception: attempt=%s/%s url=%s",
+                    attempt,
+                    attempts,
+                    callback_url,
+                )
                 await asyncio.sleep(1)
+        logger.error(
+            "docreader callback failed after retries: attempts=%s url=%s event_id=%s status=%s",
+            attempts,
+            callback_url,
+            payload.event_id,
+            payload.status,
+        )
 
 
 job_manager = JobManager()

@@ -7,7 +7,7 @@ class Settings:
     host: str = os.getenv("DOCREADER_HOST", "0.0.0.0")
     port: int = int(os.getenv("DOCREADER_PORT", "8090"))
     worker_count: int = int(os.getenv("DOCREADER_WORKER_COUNT", "2"))
-    callback_timeout_seconds: float = float(os.getenv("DOCREADER_CALLBACK_TIMEOUT_SECONDS", "10"))
+    callback_timeout_seconds: float = float(os.getenv("DOCREADER_CALLBACK_TIMEOUT_SECONDS", "120"))
     callback_retry_max: int = int(os.getenv("DOCREADER_CALLBACK_RETRY_MAX", "3"))
     callback_secret: str = os.getenv("DOCREADER_CALLBACK_SECRET", "")
     signature_header: str = os.getenv("DOCREADER_SIGNATURE_HEADER", "X-Docreader-Signature")
