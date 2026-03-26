@@ -64,30 +64,55 @@ POLL_INTERVAL_SECONDS=2 \
 ./scripts/e2e_async_ingest_local.sh
 ```
 
-## SSE 事件契约（思考能力）
-流式接口会通过 SSE 输出事件，`data` 为 JSON。
+## SSE 事件契约（回合 + 工具状态）
+流式接口通过 SSE 输出事件，`data` 为 JSON。推荐前端按 `turnId + sequenceId` 渲染。
 
 ### 事件类型
-- `delta`：普通内容增量
-- `done`：本轮结束
+- `turn_start`：一次用户请求回合开始
+- `thinking`：思考内容（支持多轮，`roundId` 区分）
+- `tool_start`：工具开始执行
+- `tool_end`：工具执行结束（`success/error/timeout`）
+- `delta`：回答正文增量
+- `done`：本次模型流结束
+- `turn_end`：回合结束（收尾事件）
 - `error`：错误消息
-- `thinking`：思考内容（默认应展示，可支持“隐藏思考”开关）
 
-### thinking 事件字段
+### 通用字段（推荐前端统一读取）
 ```json
 {
-  "type": "thinking",
-  "content": "思考内容",
-  "source": "thinking_tool | reasoning_field | assistant_content",
-  "originModel": "gpt-xxx",
+  "type": "tool_start",
+  "turnId": "7f0e7d70-9ed0-4d0f-86e5-3f5b8775ef2e",
+  "sequenceId": 5,
+  "ts": 1760000000000,
   "roundId": 1
 }
 ```
 
-### 思考来源与优先级
-1. `thinking_tool`：来自 `thinking` 工具输出（最高优先级）
-2. `reasoning_field`：来自模型原生 `reasoning_content` / `thinking` / `reasoning` 字段
-3. `assistant_content`：assistant 内容中的显式分步文本（如“步骤 1/2/3”）
+### 工具生命周期字段
+`tool_start`:
+```json
+{
+  "type": "tool_start",
+  "toolCallId": "call_1",
+  "toolName": "search_knowledge_base",
+  "argsPreview": {"query":"架构"}
+}
+```
 
-只要任一来源存在，都会发 `thinking` 事件；如有更高优先级来源，忽略低优先级来源。
-`<think>` 标签不作为可靠来源，默认不解析。
+`tool_end`:
+```json
+{
+  "type": "tool_end",
+  "toolCallId": "call_1",
+  "toolName": "search_knowledge_base",
+  "status": "success",
+  "durationMs": 183,
+  "resultPreview": {"text":"..."},
+  "error": null
+}
+```
+
+### 顺序与配对约束
+1. 同一回合内 `sequenceId` 单调递增。
+2. 每个 `tool_start` 必有一个同 `toolCallId` 的 `tool_end`。
+3. 典型时序：`turn_start -> thinking/tool_start/tool_end/delta... -> done -> turn_end`。

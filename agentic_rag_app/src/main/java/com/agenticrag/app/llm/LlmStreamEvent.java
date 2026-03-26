@@ -25,7 +25,7 @@ public class LlmStreamEvent {
 	private final String error;
 
 	public LlmStreamEvent(String type, String content, List<LlmToolCall> toolCalls, String finishReason, JsonNode raw) {
-		this(type, content, toolCalls, finishReason, raw, null, null, null, null, null, null, null, null, null, null, null, null, null);
+		this(type, content, toolCalls, finishReason, raw, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
 	}
 
 	public LlmStreamEvent(
@@ -39,7 +39,7 @@ public class LlmStreamEvent {
 		Integer roundId,
 		String sessionId
 	) {
-		this(type, content, toolCalls, finishReason, raw, source, originModel, roundId, sessionId, null, null, null, null, null, null, null, null, null);
+		this(type, content, toolCalls, finishReason, raw, source, originModel, roundId, sessionId, null, null, null, null, null, null, null, null, null, null);
 	}
 
 	public LlmStreamEvent(
@@ -85,23 +85,23 @@ public class LlmStreamEvent {
 	}
 
 	public static LlmStreamEvent delta(String content) {
-		return new LlmStreamEvent("delta", content, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+		return new LlmStreamEvent("delta", content, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
 	}
 
 	public static LlmStreamEvent done(String finishReason, List<LlmToolCall> toolCalls) {
-		return new LlmStreamEvent("done", null, toolCalls, finishReason, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+		return new LlmStreamEvent("done", null, toolCalls, finishReason, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
 	}
  
 	public static LlmStreamEvent error(String message) {
-		return new LlmStreamEvent("error", message, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+		return new LlmStreamEvent("error", message, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
 	}
 
 	public static LlmStreamEvent thinking(String content, String source, String originModel, Integer roundId) {
-		return new LlmStreamEvent("thinking", content, null, null, null, source, originModel, roundId, null, null, null, null, null, null, null, null, null, null);
+		return new LlmStreamEvent("thinking", content, null, null, null, source, originModel, roundId, null, null, null, null, null, null, null, null, null, null, null);
 	}
 
 	public static LlmStreamEvent sessionSwitched(String sessionId) {
-		return new LlmStreamEvent("session_switched", null, null, null, null, null, null, null, sessionId, null, null, null, null, null, null, null, null, null);
+		return new LlmStreamEvent("session_switched", null, null, null, null, null, null, null, sessionId, null, null, null, null, null, null, null, null, null, null);
 	}
 
 	public static LlmStreamEvent turnStart(String turnId, Long sequenceId, Long ts, String sessionId) {
