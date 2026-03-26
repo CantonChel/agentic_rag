@@ -48,6 +48,9 @@ class PackageWriterTest(unittest.TestCase):
             manifest = json.loads((package_dir / STANDARD_PACKAGE_FILES["suite_manifest"]).read_text(encoding="utf-8"))
             self.assertEqual(manifest["project_key"], "api_docs")
             self.assertEqual(manifest["suite_version"], "base_v1")
+            review_markdown = (package_dir / STANDARD_PACKAGE_FILES["review_markdown"]).read_text(encoding="utf-8")
+            self.assertIn("Benchmark Review", review_markdown)
+            self.assertIn("sample question", review_markdown)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,14 @@
 - 历史题库兼容导入入口
 - 基础校验 CLI
 
+当前第二阶段新增：
+
+- 复用 `docreader` 做文档标准化
+- 从规范文本提取 `EvidenceUnit`
+- 基于规则生成 `BenchmarkSample`
+- 导出标准 benchmark 数据包
+- 自动生成人工审阅版 `benchmark_suite.md`
+
 ## 目录结构
 
 ```text
@@ -188,6 +196,37 @@ python3 -m agentic_rag_benchmark.cli validate-package \
 - 目录缺少固定文件会直接报错
 - 空 JSON / JSONL 文件会跳过内容校验，但结构会判定为有效
 - 非空文件会按 schema 做内容校验
+
+### 4. 从文档构建标准 package
+
+确保 `docreader_service` 已启动后，可以直接从单文件或目录生成 package：
+
+```bash
+PYTHONPATH=/Users/luolinhao/Documents/trae_projects/agentic_rag \
+python3 -m agentic_rag_benchmark.cli build-package \
+  /absolute/path/to/source_docs \
+  --project-key api_docs \
+  --suite-version base_v1 \
+  --docreader-base-url http://127.0.0.1:8090
+```
+
+可选参数：
+
+- `--source-root`
+  控制导出到 `doc_path` 的相对根目录
+- `--package-root`
+  控制 `packages/` 根目录，默认是当前 `agentic_rag_benchmark/`
+
+生成完成后会在：
+
+`packages/<project_key>/<suite_version>/`
+
+下得到：
+
+- `evidence_units.jsonl`
+- `benchmark_suite.jsonl`
+- `suite_manifest.json`
+- `benchmark_suite.md`
 
 ## 第一阶段范围边界
 

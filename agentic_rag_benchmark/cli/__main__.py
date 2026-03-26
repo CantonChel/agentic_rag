@@ -14,7 +14,7 @@ from agentic_rag_benchmark.validator import validate_package_dir
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="agentic_rag_benchmark", description="Stage-1 benchmark utilities")
+    parser = argparse.ArgumentParser(prog="agentic_rag_benchmark", description="Benchmark utilities")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     validate_package = subparsers.add_parser("validate-package", help="Validate one portable package directory")
