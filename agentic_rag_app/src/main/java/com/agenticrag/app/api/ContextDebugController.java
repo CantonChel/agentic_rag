@@ -8,6 +8,7 @@ import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.llm.LlmProvider;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
+import com.agenticrag.app.prompt.SystemPromptMode;
 import com.agenticrag.app.session.SessionScope;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -75,14 +76,15 @@ public class ContextDebugController {
 		@PathVariable("sessionId") String sessionId,
 		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "count", defaultValue = "50") int count,
-		@RequestParam(value = "chars", defaultValue = "200") int chars
+		@RequestParam(value = "chars", defaultValue = "200") int chars,
+		@RequestParam(value = "mode", defaultValue = "LLM") SystemPromptMode mode
 	) {
 		String scopedSessionId = SessionScope.scopedSessionId(userId, sessionId);
 		int c = Math.max(0, Math.min(count, 2000));
 		int len = Math.max(1, Math.min(chars, 5000));
 		String payload = repeat("中", len);
 
-		String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(LlmProvider.OPENAI, true));
+		String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(LlmProvider.OPENAI, true, mode));
 		contextManager.ensureSystemPrompt(scopedSessionId, configuredSystemPrompt);
 		String systemPrompt = contextManager.getSystemPrompt(scopedSessionId);
 		persistentMessageStore.ensureSystemPrompt(scopedSessionId, systemPrompt);

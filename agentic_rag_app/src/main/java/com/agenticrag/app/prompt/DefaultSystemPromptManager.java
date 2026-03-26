@@ -18,7 +18,7 @@ public class DefaultSystemPromptManager implements SystemPromptManager {
 
 	@Override
 	public String build(SystemPromptContext context) {
-		String base = properties.getBase();
+		String base = resolveBasePrompt(context);
 		if (base == null) {
 			base = "";
 		}
@@ -40,5 +40,14 @@ public class DefaultSystemPromptManager implements SystemPromptManager {
 		}
 		return out.toString();
 	}
-}
 
+	private String resolveBasePrompt(SystemPromptContext context) {
+		if (context != null && context.isAgentMode()) {
+			String agentBase = properties.getAgentBase();
+			if (agentBase != null && !agentBase.trim().isEmpty()) {
+				return agentBase;
+			}
+		}
+		return properties.getBase();
+	}
+}

@@ -51,10 +51,22 @@ public class PersistentMessageStore {
 
 	public void ensureSystemPrompt(String sessionId, String systemPrompt) {
 		String sid = normalize(sessionId);
+		String incoming = systemPrompt != null ? systemPrompt : "";
 		if (repo.existsBySessionIdAndType(sid, ChatMessageType.SYSTEM.name())) {
-			return;
+			List<StoredMessageEntity> messages = repo.findBySessionIdOrderByIdAsc(sid);
+			for (StoredMessageEntity message : messages) {
+				if (message == null || !ChatMessageType.SYSTEM.name().equals(message.getType())) {
+					continue;
+				}
+				String existing = message.getContent() != null ? message.getContent() : "";
+				if (!existing.equals(incoming)) {
+					message.setContent(incoming);
+					repo.save(message);
+				}
+				return;
+			}
 		}
-		append(sid, new SystemMessage(systemPrompt != null ? systemPrompt : ""));
+		append(sid, new SystemMessage(incoming));
 	}
 
 	public List<StoredMessageEntity> list(String sessionId) {

@@ -13,6 +13,7 @@ import com.agenticrag.app.chat.message.SystemMessage;
 import com.agenticrag.app.memory.MemoryFlushService;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
+import com.agenticrag.app.prompt.SystemPromptMode;
 import com.agenticrag.app.session.ChatSession;
 import com.agenticrag.app.session.SessionManager;
 import com.agenticrag.app.session.SessionScope;
@@ -179,7 +180,7 @@ public class StreamingChatService {
 					return;
 				}
 
-				String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, true));
+				String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, includeTools, SystemPromptMode.LLM));
 				contextManager.ensureSystemPrompt(scopedSid, configuredSystemPrompt);
 				String systemPrompt = contextManager.getSystemPrompt(scopedSid);
 				persistentMessageStore.ensureSystemPrompt(scopedSid, systemPrompt);

@@ -19,6 +19,7 @@ import com.agenticrag.app.llm.MinimaxReasoningSupport;
 import com.agenticrag.app.memory.MemoryFlushService;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
+import com.agenticrag.app.prompt.SystemPromptMode;
 import com.agenticrag.app.session.ChatSession;
 import com.agenticrag.app.session.SessionManager;
 import com.agenticrag.app.session.SessionScope;
@@ -222,7 +223,7 @@ public class AgentStreamingService {
 				try {
 					OpenAIClient client = provider == LlmProvider.MINIMAX ? minimaxClient : openAiClient;
 					String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
-					String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, true));
+					String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, includeTools, SystemPromptMode.AGENT));
 					OpenAiMessageAdapter adapter = new OpenAiMessageAdapter(objectMapper);
 
 					if (isSessionSwitchCommand(prompt)) {
