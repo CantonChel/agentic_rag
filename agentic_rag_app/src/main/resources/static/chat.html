@@ -1248,6 +1248,19 @@
         }
       }
 
+      const THINKING_SOURCE_LABELS = {
+        thinking_tool: '计划思考',
+        reasoning_details: '模型推理中',
+        reasoning_field: '推理片段',
+        assistant_content: '内容解析思考'
+      };
+
+      function getThinkingSourceLabel(source) {
+        const normalized = source ? String(source).trim() : '';
+        if (!normalized) return '思考';
+        return THINKING_SOURCE_LABELS[normalized] || '思考';
+      }
+
       function ensureToolCard(target, data) {
         if (!target || !target.toolContainer) return null;
         const toolCallId = resolveToolCallId(data);
@@ -1386,11 +1399,15 @@
         ) {
           const wrapper = document.createElement('div');
           wrapper.className = 'thinking-block';
+          if (data && data.source) {
+            wrapper.dataset.sources = String(data.source);
+            wrapper.title = 'thinking source: ' + String(data.source);
+          }
           const head = document.createElement('div');
           head.className = 'thinking-head';
           const title = document.createElement('div');
           title.className = 'thinking-title';
-          title.textContent = '思考' + (data && data.source ? ' · ' + data.source : '');
+          title.textContent = getThinkingSourceLabel(data && data.source ? data.source : '');
           head.appendChild(title);
           if (roundId !== null) {
             const roundLabel = document.createElement('div');
