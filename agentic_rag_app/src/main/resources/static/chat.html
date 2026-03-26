@@ -1128,6 +1128,11 @@
         if (!sid) return;
         try {
           setCurrentSessionSelection(sid);
+          const restoredFromReplay = await loadSessionReplayById(sid);
+          if (restoredFromReplay) {
+            setCurrentSessionSelection(sid);
+            return;
+          }
           const query = new URLSearchParams({ userId: currentUserId() });
           const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sid)}/messages`) + '?' + query.toString());
           if (!res.ok) throw new Error('load messages failed: ' + res.status);
@@ -1141,14 +1146,19 @@
                 appendMessage('user', msg.content || '');
                 lastAssistantMsg = null;
               } else if (msg.type === 'ASSISTANT') {
-                lastAssistantMsg = appendMessage('assistant', msg.content || '');
+                lastAssistantMsg = ensureLegacyAssistantMessage(lastAssistantMsg);
+                appendLegacyAssistantContent(lastAssistantMsg, msg.content || '');
               } else if (msg.type === 'THINKING') {
-                if (lastAssistantMsg) {
-                  appendThinkingToMessage(lastAssistantMsg, msg.content || '');
-                } else {
-                  appendThinkingOnly(msg.content || '');
-                }
-              } else if (msg.type === 'TOOL_CALL' && lastAssistantMsg && Array.isArray(msg.toolCalls)) {
+                lastAssistantMsg = ensureLegacyAssistantMessage(lastAssistantMsg);
+                withAssistantTarget(lastAssistantMsg, () => {
+                  handleThinkingEvent({
+                    type: 'thinking',
+                    content: msg.content || '',
+                    source: 'assistant_content'
+                  });
+                });
+              } else if (msg.type === 'TOOL_CALL' && Array.isArray(msg.toolCalls)) {
+                lastAssistantMsg = ensureLegacyAssistantMessage(lastAssistantMsg);
                 withAssistantTarget(lastAssistantMsg, () => {
                   for (const call of msg.toolCalls) {
                     handleToolStartEvent({
@@ -1158,7 +1168,8 @@
                     });
                   }
                 });
-              } else if (msg.type === 'TOOL_RESULT' && lastAssistantMsg) {
+              } else if (msg.type === 'TOOL_RESULT') {
+                lastAssistantMsg = ensureLegacyAssistantMessage(lastAssistantMsg);
                 withAssistantTarget(lastAssistantMsg, () => {
                   handleToolEndEvent({
                     toolCallId: msg.toolCallId || undefined,
@@ -1172,7 +1183,7 @@
             }
           }
           setCurrentSessionSelection(sid);
-          updateSessionStatus('历史会话已加载');
+          updateSessionStatus('历史会话已通过兼容模式恢复');
         } catch (_) {
           // ignore load errors
         }
@@ -1193,6 +1204,91 @@
           fn();
         } finally {
           currentAssistant = previous;
+        }
+      }
+
+      function ensureLegacyAssistantMessage(target) {
+        if (target) return target;
+        return appendMessage('assistant', '');
+      }
+
+      function appendLegacyAssistantContent(target, content) {
+        const normalized = content || '';
+        if (!target || !normalized) return;
+        withAssistantTarget(target, () => {
+          handleContentEvent({ content: normalized });
+        });
+      }
+
+      function resolveReplayAssistantTarget(state, item) {
+        if (!state) return appendMessage('assistant', '');
+        const turnId = item && item.turnId ? String(item.turnId) : '';
+        if (turnId && state.targetsByTurnId[turnId]) {
+          state.activeTurnId = turnId;
+          state.lastAssistantTarget = state.targetsByTurnId[turnId];
+          return state.lastAssistantTarget;
+        }
+
+        const shouldCreateNewTarget =
+          !state.lastAssistantTarget ||
+          (item && item.type === 'turn_start') ||
+          (turnId && state.activeTurnId && state.activeTurnId !== turnId);
+
+        const target = shouldCreateNewTarget
+          ? appendMessage('assistant', '')
+          : state.lastAssistantTarget;
+
+        if (turnId) {
+          state.targetsByTurnId[turnId] = target;
+          state.activeTurnId = turnId;
+          target.turnId = turnId;
+        }
+        state.lastAssistantTarget = target;
+        return target;
+      }
+
+      async function loadSessionReplayById(sid) {
+        if (!sid) return false;
+        try {
+          const query = new URLSearchParams({ userId: currentUserId() });
+          const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sid)}/replay`) + '?' + query.toString());
+          if (!res.ok) {
+            return false;
+          }
+          const data = await res.json();
+          if (!Array.isArray(data) || data.length === 0) {
+            return false;
+          }
+
+          clearChatBox();
+          const replayState = {
+            targetsByTurnId: Object.create(null),
+            activeTurnId: null,
+            lastAssistantTarget: null
+          };
+
+          for (const item of data) {
+            if (!item || !item.kind) continue;
+            if (item.kind === 'user_message') {
+              appendMessage('user', item.content || '');
+              replayState.activeTurnId = null;
+              replayState.lastAssistantTarget = null;
+              continue;
+            }
+            if (item.kind !== 'assistant_event' || !item.type) {
+              continue;
+            }
+            const target = resolveReplayAssistantTarget(replayState, item);
+            withAssistantTarget(target, () => {
+              handleStreamEvent(item);
+            });
+          }
+
+          setCurrentSessionSelection(sid);
+          updateSessionStatus('历史会话已通过精确回放恢复');
+          return true;
+        } catch (_) {
+          return false;
         }
       }
 
