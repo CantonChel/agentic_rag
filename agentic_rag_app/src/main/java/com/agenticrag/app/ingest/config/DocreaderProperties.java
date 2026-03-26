@@ -8,6 +8,7 @@ public class DocreaderProperties {
 	private String readPath = "/read";
 	private int connectTimeoutMillis = 3000;
 	private int readTimeoutMillis = 10000;
+	private int maxInMemorySizeBytes = 10 * 1024 * 1024;
 
 	public String getBaseUrl() {
 		return baseUrl;
@@ -39,5 +40,13 @@ public class DocreaderProperties {
 
 	public void setReadTimeoutMillis(int readTimeoutMillis) {
 		this.readTimeoutMillis = readTimeoutMillis;
+	}
+
+	public int getMaxInMemorySizeBytes() {
+		return maxInMemorySizeBytes;
+	}
+
+	public void setMaxInMemorySizeBytes(int maxInMemorySizeBytes) {
+		this.maxInMemorySizeBytes = maxInMemorySizeBytes;
 	}
 }

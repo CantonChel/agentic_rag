@@ -1053,6 +1053,92 @@
         }
       }
 
+      function escapeHtml(value) {
+        return String(value == null ? '' : value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function effectiveParseStatus(doc) {
+        const jobStatus = doc && doc.parseJob && doc.parseJob.status ? String(doc.parseJob.status).trim() : '';
+        if (jobStatus) return jobStatus.toLowerCase();
+        return String((doc && doc.parseStatus) || 'unknown').toLowerCase();
+      }
+
+      function formatStatusLabel(status) {
+        const s = String(status || 'unknown').toLowerCase();
+        if (s === 'retry_wait') return '重试中';
+        if (s === 'queued') return '排队中';
+        if (s === 'dispatched') return '已分发';
+        if (s === 'parsing') return '解析中';
+        if (s === 'indexing') return '索引中';
+        if (s === 'success') return '成功';
+        if (s === 'failed') return '失败';
+        if (s === 'dead_letter') return '死信';
+        if (s === 'completed') return '完成';
+        return s;
+      }
+
+      function parseJobErrorSummary(parseJob) {
+        if (!parseJob) return '';
+        const code = parseJob.lastErrorCode ? String(parseJob.lastErrorCode).trim() : '';
+        const message = parseJob.lastErrorMessage ? String(parseJob.lastErrorMessage).trim() : '';
+        if (code && message) return code + ': ' + message;
+        return code || message;
+      }
+
+      function buildDocumentListMeta(doc) {
+        const parts = [];
+        const status = effectiveParseStatus(doc);
+        parts.push('状态: ' + formatStatusLabel(status));
+        if (doc && doc.parseJob && Number.isFinite(Number(doc.parseJob.retryCount)) && Number.isFinite(Number(doc.parseJob.maxRetry))) {
+          const retryCount = Number(doc.parseJob.retryCount);
+          const maxRetry = Number(doc.parseJob.maxRetry);
+          if (retryCount > 0 || status === 'retry_wait') {
+            parts.push('重试: ' + retryCount + '/' + maxRetry);
+          }
+        }
+        parts.push('大小: ' + formatBytes(doc && doc.fileSize));
+        parts.push('ID: ' + ((doc && doc.knowledgeId) || '-'));
+        const error = parseJobErrorSummary(doc && doc.parseJob);
+        if (error) {
+          parts.push('错误: ' + error);
+        }
+        return parts.join(' | ');
+      }
+
+      function buildDocumentDetailMeta(detail) {
+        const lines = [];
+        const status = effectiveParseStatus(detail);
+        lines.push('大小: ' + formatBytes(detail && detail.fileSize));
+        lines.push('状态: ' + formatStatusLabel(status));
+        if (detail && detail.createdAt) {
+          lines.push('创建时间: ' + detail.createdAt);
+        }
+        if (detail && detail.updatedAt) {
+          lines.push('更新时间: ' + detail.updatedAt);
+        }
+        if (detail && detail.parseJob) {
+          if (detail.parseJob.jobId) {
+            lines.push('任务 ID: ' + detail.parseJob.jobId);
+          }
+          if (Number.isFinite(Number(detail.parseJob.retryCount)) && Number.isFinite(Number(detail.parseJob.maxRetry))) {
+            lines.push('重试次数: ' + Number(detail.parseJob.retryCount) + '/' + Number(detail.parseJob.maxRetry));
+          }
+          if (detail.parseJob.nextRetryAt) {
+            lines.push('下次重试: ' + detail.parseJob.nextRetryAt);
+          }
+          const error = parseJobErrorSummary(detail.parseJob);
+          if (error) {
+            lines.push('最近错误: ' + error);
+          }
+        }
+        return lines.map(escapeHtml).join('<br>');
+      }
+
       function isPreviewable(url) {
         if (!url) return false;
         return /^https?:\/\//i.test(url) || /^data:image\//i.test(url);
@@ -1183,7 +1269,7 @@
 
           const meta = document.createElement('div');
           meta.className = 'doc-meta';
-          meta.textContent = '状态: ' + (doc.parseStatus || '-') + ' | 大小: ' + formatBytes(doc.fileSize) + ' | ID: ' + (doc.knowledgeId || '-');
+          meta.textContent = buildDocumentListMeta(doc);
           btn.appendChild(meta);
 
           btn.addEventListener('click', () => loadDocumentAndChunks(doc));
@@ -1222,7 +1308,7 @@
         docKnowledgeIdInput.value = detail.knowledgeId || knowledgeId;
         docKbIdInput.value = detail.knowledgeBaseId || '';
         docFileNameInput.value = detail.fileName || '';
-        docEnableStatusSelect.value = detail.enabled === false ? 'disabled' : 'enabled';
+        docEnableStatusSelect.value = String(detail.enableStatus || '').toLowerCase() === 'disabled' ? 'disabled' : 'enabled';
         
         try {
           docMetadataInput.value = JSON.stringify(detail.metadata || {}, null, 2);
@@ -1230,9 +1316,7 @@
           docMetadataInput.value = '{}';
         }
 
-        selectedDocMeta.innerHTML = '大小: ' + formatBytes(detail.fileSize) + 
-          ' | 状态: ' + (detail.parseStatus || '-') + 
-          ' | 创建时间: ' + (detail.createdAt || '-');
+        selectedDocMeta.innerHTML = buildDocumentDetailMeta(detail);
       }
 
       async function loadChunks(doc) {

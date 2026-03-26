@@ -16,6 +16,10 @@ public interface ParseJobRepository extends JpaRepository<ParseJobEntity, String
 
 	List<ParseJobEntity> findByKnowledgeId(String knowledgeId);
 
+	Optional<ParseJobEntity> findTopByKnowledgeIdOrderByCreatedAtDesc(String knowledgeId);
+
+	List<ParseJobEntity> findByKnowledgeIdInOrderByCreatedAtDesc(Collection<String> knowledgeIds);
+
 	long deleteByKnowledgeId(String knowledgeId);
 
 	List<ParseJobEntity> findTop100ByStatusAndNextRetryAtLessThanEqualOrderByNextRetryAtAsc(ParseJobStatus status, Instant now);

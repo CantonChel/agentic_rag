@@ -30,6 +30,9 @@ class ParseJobFailureCleanupIntegrationTest {
 	private ParseJobService parseJobService;
 
 	@Autowired
+	private KnowledgeCrudService knowledgeCrudService;
+
+	@Autowired
 	private KnowledgeBaseRepository knowledgeBaseRepository;
 
 	@Autowired
@@ -58,7 +61,7 @@ class ParseJobFailureCleanupIntegrationTest {
 	}
 
 	@Test
-	void nonRetryableFailureShouldHardDeleteKnowledgeAndCascadeData() {
+	void nonRetryableFailureShouldKeepFailureStateForRetryAndCleanup() {
 		knowledgeBaseRepository.save(base("kb-failed"));
 		knowledgeRepository.save(doc("doc-failed", "kb-failed", "failed.txt", KnowledgeParseStatus.PARSING));
 		chunkRepository.save(chunk("doc-failed", "c-failed-1", "chunk-failed"));
@@ -74,15 +77,23 @@ class ParseJobFailureCleanupIntegrationTest {
 		);
 
 		Assertions.assertEquals(JobFailureAction.Decision.FAILED, action.getDecision());
-		Assertions.assertFalse(knowledgeRepository.findById("doc-failed").isPresent());
-		Assertions.assertFalse(parseJobRepository.findById("job-failed").isPresent());
-		Assertions.assertEquals(0L, chunkRepository.count());
-		Assertions.assertEquals(0L, embeddingRepository.count());
-		Assertions.assertEquals(0L, callbackEventRepository.count());
+		KnowledgeEntity knowledge = knowledgeRepository.findById("doc-failed").orElse(null);
+		Assertions.assertNotNull(knowledge);
+		Assertions.assertEquals(KnowledgeParseStatus.FAILED, knowledge.getParseStatus());
+		Assertions.assertEquals(KnowledgeEnableStatus.DISABLED, knowledge.getEnableStatus());
+
+		ParseJobEntity job = parseJobRepository.findById("job-failed").orElse(null);
+		Assertions.assertNotNull(job);
+		Assertions.assertEquals(ParseJobStatus.FAILED, job.getStatus());
+		Assertions.assertEquals("unsupported_file", job.getLastErrorCode());
+
+		Assertions.assertEquals(1L, chunkRepository.count());
+		Assertions.assertEquals(1L, embeddingRepository.count());
+		Assertions.assertEquals(1L, callbackEventRepository.count());
 	}
 
 	@Test
-	void retryExhaustedShouldHardDeleteKnowledgeAndCascadeData() {
+	void retryExhaustedShouldKeepDeadLetterStateForManualRecovery() {
 		knowledgeBaseRepository.save(base("kb-dead"));
 		knowledgeRepository.save(doc("doc-dead", "kb-dead", "dead.txt", KnowledgeParseStatus.PARSING));
 		chunkRepository.save(chunk("doc-dead", "c-dead-1", "chunk-dead"));
@@ -98,11 +109,18 @@ class ParseJobFailureCleanupIntegrationTest {
 		);
 
 		Assertions.assertEquals(JobFailureAction.Decision.DEAD_LETTER, action.getDecision());
-		Assertions.assertFalse(knowledgeRepository.findById("doc-dead").isPresent());
-		Assertions.assertFalse(parseJobRepository.findById("job-dead").isPresent());
-		Assertions.assertEquals(0L, chunkRepository.count());
-		Assertions.assertEquals(0L, embeddingRepository.count());
-		Assertions.assertEquals(0L, callbackEventRepository.count());
+		KnowledgeEntity knowledge = knowledgeRepository.findById("doc-dead").orElse(null);
+		Assertions.assertNotNull(knowledge);
+		Assertions.assertEquals(KnowledgeParseStatus.FAILED, knowledge.getParseStatus());
+
+		ParseJobEntity job = parseJobRepository.findById("job-dead").orElse(null);
+		Assertions.assertNotNull(job);
+		Assertions.assertEquals(ParseJobStatus.DEAD_LETTER, job.getStatus());
+		Assertions.assertEquals("network_timeout", job.getLastErrorCode());
+
+		Assertions.assertEquals(1L, chunkRepository.count());
+		Assertions.assertEquals(1L, embeddingRepository.count());
+		Assertions.assertEquals(1L, callbackEventRepository.count());
 	}
 
 	@Test
@@ -137,6 +155,27 @@ class ParseJobFailureCleanupIntegrationTest {
 		Assertions.assertEquals(1L, chunkRepository.count());
 		Assertions.assertEquals(1L, embeddingRepository.count());
 		Assertions.assertEquals(1L, callbackEventRepository.count());
+	}
+
+	@Test
+	void residualFailureCleanupShouldSkipTrackedFailedJobsAndDeleteOnlyOrphans() {
+		knowledgeBaseRepository.save(base("kb-clean"));
+		knowledgeRepository.save(doc("doc-tracked", "kb-clean", "tracked.txt", KnowledgeParseStatus.FAILED));
+		knowledgeRepository.save(doc("doc-orphan", "kb-clean", "orphan.txt", KnowledgeParseStatus.FAILED));
+		parseJobRepository.save(job("job-tracked", "doc-tracked", ParseJobStatus.FAILED, 1, 3));
+		chunkRepository.save(chunk("doc-tracked", "c-tracked-1", "tracked"));
+		chunkRepository.save(chunk("doc-orphan", "c-orphan-1", "orphan"));
+		embeddingRepository.save(embedding("doc-tracked", "c-tracked-1", "tracked"));
+		embeddingRepository.save(embedding("doc-orphan", "c-orphan-1", "orphan"));
+
+		long cleaned = knowledgeCrudService.cleanupResidualFailedKnowledgeDocuments(100);
+
+		Assertions.assertEquals(1L, cleaned);
+		Assertions.assertTrue(knowledgeRepository.findById("doc-tracked").isPresent());
+		Assertions.assertFalse(knowledgeRepository.findById("doc-orphan").isPresent());
+		Assertions.assertTrue(parseJobRepository.findById("job-tracked").isPresent());
+		Assertions.assertEquals(1L, chunkRepository.count());
+		Assertions.assertEquals(1L, embeddingRepository.count());
 	}
 
 	private KnowledgeBaseEntity base(String id) {

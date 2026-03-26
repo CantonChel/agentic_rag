@@ -15,8 +15,11 @@ import com.agenticrag.app.ingest.repo.EmbeddingRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeBaseRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeRepository;
 import com.agenticrag.app.ingest.repo.ParseJobRepository;
+import com.agenticrag.app.rag.embedding.EmbeddingModel;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -58,6 +61,9 @@ class DocumentParseDispatcherIntegrationTest {
 	@MockBean
 	private DocreaderClient docreaderClient;
 
+	@MockBean
+	private EmbeddingModel embeddingModel;
+
 	@BeforeEach
 	void setUp() {
 		callbackEventRepository.deleteAll();
@@ -66,11 +72,11 @@ class DocumentParseDispatcherIntegrationTest {
 		chunkRepository.deleteAll();
 		knowledgeRepository.deleteAll();
 		knowledgeBaseRepository.deleteAll();
-		Mockito.reset(documentParseQueue, docreaderClient);
+		Mockito.reset(documentParseQueue, docreaderClient, embeddingModel);
 	}
 
 	@Test
-	void unsupportedFileShouldHardDeleteKnowledgeWithoutResidue() {
+	void unsupportedFileShouldRemainVisibleAsFailed() {
 		KnowledgeUploadResult uploadResult = knowledgeIngestService.createAndEnqueue(
 			"kb-unsupported",
 			"bad.xyz",
@@ -84,8 +90,15 @@ class DocumentParseDispatcherIntegrationTest {
 
 		documentParseDispatcher.dispatch(new ReservedJob(uploadResult.getJobId(), null));
 
-		Assertions.assertFalse(knowledgeRepository.findById(uploadResult.getKnowledgeId()).isPresent());
-		Assertions.assertFalse(parseJobRepository.findById(uploadResult.getJobId()).isPresent());
+		KnowledgeEntity knowledge = knowledgeRepository.findById(uploadResult.getKnowledgeId()).orElse(null);
+		Assertions.assertNotNull(knowledge);
+		Assertions.assertEquals(KnowledgeParseStatus.FAILED, knowledge.getParseStatus());
+
+		ParseJobEntity job = parseJobRepository.findById(uploadResult.getJobId()).orElse(null);
+		Assertions.assertNotNull(job);
+		Assertions.assertEquals(ParseJobStatus.FAILED, job.getStatus());
+		Assertions.assertEquals("unsupported_file", job.getLastErrorCode());
+
 		Assertions.assertEquals(0L, chunkRepository.count());
 		Assertions.assertEquals(0L, embeddingRepository.count());
 		Mockito.verify(documentParseQueue, Mockito.atLeastOnce()).ack(ArgumentMatchers.any(ReservedJob.class));
@@ -118,5 +131,69 @@ class DocumentParseDispatcherIntegrationTest {
 		Assertions.assertEquals(0L, embeddingRepository.count());
 		Mockito.verify(documentParseQueue, Mockito.atLeastOnce())
 			.retry(ArgumentMatchers.any(ReservedJob.class), ArgumentMatchers.any());
+	}
+
+	@Test
+	void responseTooLargeShouldFailWithoutRetrying() {
+		KnowledgeUploadResult uploadResult = knowledgeIngestService.createAndEnqueue(
+			"kb-large",
+			"large.pdf",
+			"large-file".getBytes(StandardCharsets.UTF_8),
+			Collections.singletonMap("user_id", "test-user")
+		);
+
+		Mockito.when(docreaderClient.readDocument(ArgumentMatchers.any()))
+			.thenThrow(new RuntimeException("200 OK from POST http://127.0.0.1:8090/read; nested exception is org.springframework.core.io.buffer.DataBufferLimitException: Exceeded limit on max bytes to buffer : 262144"));
+
+		documentParseDispatcher.dispatch(new ReservedJob(uploadResult.getJobId(), null));
+
+		KnowledgeEntity knowledge = knowledgeRepository.findById(uploadResult.getKnowledgeId()).orElse(null);
+		Assertions.assertNotNull(knowledge);
+		Assertions.assertEquals(KnowledgeParseStatus.FAILED, knowledge.getParseStatus());
+
+		ParseJobEntity job = parseJobRepository.findById(uploadResult.getJobId()).orElse(null);
+		Assertions.assertNotNull(job);
+		Assertions.assertEquals(ParseJobStatus.FAILED, job.getStatus());
+		Assertions.assertEquals("response_too_large", job.getLastErrorCode());
+
+		Mockito.verify(documentParseQueue, Mockito.never())
+			.retry(ArgumentMatchers.any(ReservedJob.class), ArgumentMatchers.any());
+		Mockito.verify(documentParseQueue, Mockito.atLeastOnce()).ack(ArgumentMatchers.any(ReservedJob.class));
+	}
+
+	@Test
+	void nulCharactersShouldBeSanitizedBeforePersistence() {
+		KnowledgeUploadResult uploadResult = knowledgeIngestService.createAndEnqueue(
+			"kb-sanitize",
+			"sanitize.txt",
+			"sanitize-file".getBytes(StandardCharsets.UTF_8),
+			Collections.singletonMap("user_id", "test-user")
+		);
+
+		DocreaderReadResponse response = new DocreaderReadResponse();
+		response.setMarkdownContent("hello\u0000world");
+		response.setMetadata(Collections.singletonMap("source", "nul\u0000source"));
+		Mockito.when(docreaderClient.readDocument(ArgumentMatchers.any())).thenReturn(response);
+		Mockito.when(embeddingModel.embedTexts(ArgumentMatchers.anyList()))
+			.thenReturn(Collections.singletonList(Arrays.asList(0.1d, 0.2d)));
+
+		documentParseDispatcher.dispatch(new ReservedJob(uploadResult.getJobId(), null));
+
+		KnowledgeEntity knowledge = knowledgeRepository.findById(uploadResult.getKnowledgeId()).orElse(null);
+		Assertions.assertNotNull(knowledge);
+		Assertions.assertEquals(KnowledgeParseStatus.COMPLETED, knowledge.getParseStatus());
+
+		ParseJobEntity job = parseJobRepository.findById(uploadResult.getJobId()).orElse(null);
+		Assertions.assertNotNull(job);
+		Assertions.assertEquals(ParseJobStatus.SUCCESS, job.getStatus());
+
+		List<com.agenticrag.app.ingest.entity.ChunkEntity> chunks = chunkRepository.findByKnowledgeIdOrderByChunkIndexAsc(uploadResult.getKnowledgeId());
+		Assertions.assertFalse(chunks.isEmpty());
+		Assertions.assertFalse(chunks.get(0).getContent().contains("\u0000"));
+		Assertions.assertFalse(chunks.get(0).getMetadataJson().contains("\u0000"));
+
+		List<com.agenticrag.app.ingest.entity.EmbeddingEntity> embeddings = embeddingRepository.findAll();
+		Assertions.assertFalse(embeddings.isEmpty());
+		Assertions.assertFalse(embeddings.get(0).getContent().contains("\u0000"));
 	}
 }

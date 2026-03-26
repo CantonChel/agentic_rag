@@ -20,7 +20,9 @@ public class FailureClassifier {
 		"unsupported_file",
 		"corrupted_file",
 		"schema_invalid",
-		"invalid_signature"
+		"invalid_signature",
+		"response_too_large",
+		"invalid_text_data"
 	));
 
 	public boolean isRetryable(String code, Throwable error) {

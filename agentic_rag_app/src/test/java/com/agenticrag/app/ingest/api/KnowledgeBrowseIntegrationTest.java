@@ -2,12 +2,15 @@ package com.agenticrag.app.ingest.api;
 
 import com.agenticrag.app.ingest.entity.ChunkEntity;
 import com.agenticrag.app.ingest.entity.KnowledgeEntity;
+import com.agenticrag.app.ingest.entity.ParseJobEntity;
 import com.agenticrag.app.ingest.model.ChunkType;
 import com.agenticrag.app.ingest.model.KnowledgeEnableStatus;
 import com.agenticrag.app.ingest.model.KnowledgeParseStatus;
+import com.agenticrag.app.ingest.model.ParseJobStatus;
 import com.agenticrag.app.ingest.repo.ChunkRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeBaseRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeRepository;
+import com.agenticrag.app.ingest.repo.ParseJobRepository;
 import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,8 +35,12 @@ class KnowledgeBrowseIntegrationTest {
 	@Autowired
 	private KnowledgeBaseRepository knowledgeBaseRepository;
 
+	@Autowired
+	private ParseJobRepository parseJobRepository;
+
 	@BeforeEach
 	void setUp() {
+		parseJobRepository.deleteAll();
 		chunkRepository.deleteAll();
 		knowledgeRepository.deleteAll();
 		knowledgeBaseRepository.deleteAll();
@@ -43,8 +50,13 @@ class KnowledgeBrowseIntegrationTest {
 	void listKnowledgeBasesAndDocuments() {
 		KnowledgeEntity k1 = baseKnowledge("k1", "kb-demo", "doc-a.txt");
 		KnowledgeEntity k2 = baseKnowledge("k2", "kb-demo", "doc-b.txt");
-		knowledgeRepository.save(k1);
+		k2.setCreatedAt(Instant.parse("2026-03-26T00:00:00Z"));
+		k2.setUpdatedAt(Instant.parse("2026-03-26T00:00:00Z"));
+		k1.setCreatedAt(Instant.parse("2026-03-26T00:01:00Z"));
+		k1.setUpdatedAt(Instant.parse("2026-03-26T00:01:00Z"));
 		knowledgeRepository.save(k2);
+		knowledgeRepository.save(k1);
+		parseJobRepository.save(job("job-k1", "k1", ParseJobStatus.RETRY_WAIT));
 
 		webTestClient.get()
 			.uri("/api/knowledge-bases")
@@ -62,7 +74,11 @@ class KnowledgeBrowseIntegrationTest {
 			.expectStatus().isOk()
 			.expectBody()
 			.jsonPath("$[0].knowledgeId").isNotEmpty()
-			.jsonPath("$[0].parseStatus").isEqualTo("completed");
+			.jsonPath("$[0].parseStatus").isEqualTo("completed")
+			.jsonPath("$[0].parseJob.status").isEqualTo("retry_wait")
+			.jsonPath("$[0].parseJob.jobId").isEqualTo("job-k1")
+			.jsonPath("$[0].parseJob.retryCount").isEqualTo(1)
+			.jsonPath("$[0].parseJob.lastErrorCode").isEqualTo("network_timeout");
 	}
 
 	@Test
@@ -123,5 +139,23 @@ class KnowledgeBrowseIntegrationTest {
 		k.setCreatedAt(Instant.now());
 		k.setUpdatedAt(Instant.now());
 		return k;
+	}
+
+	private ParseJobEntity job(String id, String knowledgeId, ParseJobStatus status) {
+		ParseJobEntity job = new ParseJobEntity();
+		job.setId(id);
+		job.setKnowledgeId(knowledgeId);
+		job.setStatus(status);
+		job.setRetryCount(1);
+		job.setMaxRetry(5);
+		job.setNextRetryAt(Instant.now().plusSeconds(60));
+		job.setLeaseUntil(null);
+		job.setLastErrorCode("network_timeout");
+		job.setLastErrorMessage("temporary timeout");
+		job.setPipelineVersion("v1");
+		job.setIdempotencyKey(id + ":idem");
+		job.setCreatedAt(Instant.now());
+		job.setUpdatedAt(Instant.now());
+		return job;
 	}
 }

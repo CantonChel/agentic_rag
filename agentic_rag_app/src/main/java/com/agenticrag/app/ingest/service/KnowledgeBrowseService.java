@@ -3,20 +3,25 @@ package com.agenticrag.app.ingest.service;
 import com.agenticrag.app.ingest.entity.ChunkEntity;
 import com.agenticrag.app.ingest.entity.KnowledgeBaseEntity;
 import com.agenticrag.app.ingest.entity.KnowledgeEntity;
+import com.agenticrag.app.ingest.entity.ParseJobEntity;
 import com.agenticrag.app.ingest.model.KnowledgeEnableStatus;
 import com.agenticrag.app.ingest.model.KnowledgeParseStatus;
 import com.agenticrag.app.ingest.repo.ChunkRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeBaseRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeRepository;
+import com.agenticrag.app.ingest.repo.ParseJobRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -24,17 +29,20 @@ public class KnowledgeBrowseService {
 	private final KnowledgeRepository knowledgeRepository;
 	private final KnowledgeBaseRepository knowledgeBaseRepository;
 	private final ChunkRepository chunkRepository;
+	private final ParseJobRepository parseJobRepository;
 	private final ObjectMapper objectMapper;
 
 	public KnowledgeBrowseService(
 		KnowledgeRepository knowledgeRepository,
 		KnowledgeBaseRepository knowledgeBaseRepository,
 		ChunkRepository chunkRepository,
+		ParseJobRepository parseJobRepository,
 		ObjectMapper objectMapper
 	) {
 		this.knowledgeRepository = knowledgeRepository;
 		this.knowledgeBaseRepository = knowledgeBaseRepository;
 		this.chunkRepository = chunkRepository;
+		this.parseJobRepository = parseJobRepository;
 		this.objectMapper = objectMapper;
 	}
 
@@ -84,6 +92,7 @@ public class KnowledgeBrowseService {
 			return new ArrayList<>();
 		}
 		List<KnowledgeEntity> docs = knowledgeRepository.findByKnowledgeBaseIdOrderByCreatedAtDesc(kbId);
+		Map<String, ParseJobSummaryView> jobSummaries = buildParseJobSummaries(docs);
 		List<KnowledgeDocumentView> out = new ArrayList<>();
 		for (KnowledgeEntity doc : docs) {
 			if (doc == null) {
@@ -101,6 +110,7 @@ public class KnowledgeBrowseService {
 				doc.getFileSize(),
 				parseStatus != null ? parseStatus.name().toLowerCase(Locale.ROOT) : "unknown",
 				enableStatus != null ? enableStatus.name().toLowerCase(Locale.ROOT) : "unknown",
+				jobSummaries.get(doc.getId()),
 				createdAt != null ? createdAt.toString() : null,
 				updatedAt != null ? updatedAt.toString() : null
 			));
@@ -211,6 +221,32 @@ public class KnowledgeBrowseService {
 
 	private String safe(String value) {
 		return value != null ? value.trim() : "";
+	}
+
+	private Map<String, ParseJobSummaryView> buildParseJobSummaries(List<KnowledgeEntity> docs) {
+		if (docs == null || docs.isEmpty()) {
+			return Collections.emptyMap();
+		}
+		List<String> knowledgeIds = docs.stream()
+			.map(doc -> doc != null ? safe(doc.getId()) : "")
+			.filter(id -> !id.isEmpty())
+			.collect(Collectors.toList());
+		if (knowledgeIds.isEmpty()) {
+			return Collections.emptyMap();
+		}
+		Map<String, ParseJobSummaryView> out = new HashMap<>();
+		List<ParseJobEntity> jobs = parseJobRepository.findByKnowledgeIdInOrderByCreatedAtDesc(knowledgeIds);
+		for (ParseJobEntity job : jobs) {
+			if (job == null) {
+				continue;
+			}
+			String knowledgeId = safe(job.getKnowledgeId());
+			if (knowledgeId.isEmpty() || out.containsKey(knowledgeId)) {
+				continue;
+			}
+			out.put(knowledgeId, ParseJobSummaryView.from(job));
+		}
+		return out;
 	}
 
 	private String asString(Object value) {
@@ -328,6 +364,7 @@ public class KnowledgeBrowseService {
 		private final long fileSize;
 		private final String parseStatus;
 		private final String enableStatus;
+		private final ParseJobSummaryView parseJob;
 		private final String createdAt;
 		private final String updatedAt;
 
@@ -339,6 +376,7 @@ public class KnowledgeBrowseService {
 			long fileSize,
 			String parseStatus,
 			String enableStatus,
+			ParseJobSummaryView parseJob,
 			String createdAt,
 			String updatedAt
 		) {
@@ -349,6 +387,7 @@ public class KnowledgeBrowseService {
 			this.fileSize = fileSize;
 			this.parseStatus = parseStatus;
 			this.enableStatus = enableStatus;
+			this.parseJob = parseJob;
 			this.createdAt = createdAt;
 			this.updatedAt = updatedAt;
 		}
@@ -379,6 +418,10 @@ public class KnowledgeBrowseService {
 
 		public String getEnableStatus() {
 			return enableStatus;
+		}
+
+		public ParseJobSummaryView getParseJob() {
+			return parseJob;
 		}
 
 		public String getCreatedAt() {

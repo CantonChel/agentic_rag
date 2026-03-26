@@ -162,7 +162,6 @@ public class ParseJobService {
 			job.setNextRetryAt(null);
 			parseJobRepository.save(job);
 			setKnowledgeParseStatusByKnowledgeId(job.getKnowledgeId(), KnowledgeParseStatus.FAILED);
-			hardDeleteAfterTerminalFailure(job.getKnowledgeId(), ParseJobStatus.FAILED, errorCode, errorMessage);
 			return new JobFailureAction(JobFailureAction.Decision.FAILED, null);
 		}
 
@@ -173,7 +172,6 @@ public class ParseJobService {
 			job.setNextRetryAt(null);
 			parseJobRepository.save(job);
 			setKnowledgeParseStatusByKnowledgeId(job.getKnowledgeId(), KnowledgeParseStatus.FAILED);
-			hardDeleteAfterTerminalFailure(job.getKnowledgeId(), ParseJobStatus.DEAD_LETTER, errorCode, errorMessage);
 			return new JobFailureAction(JobFailureAction.Decision.DEAD_LETTER, null);
 		}
 
@@ -292,36 +290,4 @@ public class ParseJobService {
 		knowledgeRepository.save(knowledge);
 	}
 
-	private void hardDeleteAfterTerminalFailure(
-		String knowledgeId,
-		ParseJobStatus status,
-		String errorCode,
-		String errorMessage
-	) {
-		if (knowledgeId == null || knowledgeId.trim().isEmpty()) {
-			return;
-		}
-		KnowledgeCrudService.KnowledgeDocumentDeleteResult deleted = knowledgeCrudService.hardDeleteKnowledgeDocumentIfExists(knowledgeId);
-		if (!deleted.isDeleted()) {
-			log.warn(
-				"terminal failure cleanup skipped: knowledgeId={}, status={}, errorCode={}, message={}",
-				knowledgeId,
-				status,
-				errorCode,
-				errorMessage
-			);
-			return;
-		}
-		log.info(
-			"terminal failure cleanup done: knowledgeId={}, status={}, deletedParseJobs={}, deletedCallbackEvents={}, deletedChunks={}, deletedEmbeddings={}, deletedFilesSucceeded={}, deletedFilesFailed={}",
-			knowledgeId,
-			status,
-			deleted.getDeletedParseJobs(),
-			deleted.getDeletedCallbackEvents(),
-			deleted.getDeletedChunks(),
-			deleted.getDeletedEmbeddings(),
-			deleted.getDeletedFilesSucceeded(),
-			deleted.getDeletedFilesFailed()
-		);
-	}
 }

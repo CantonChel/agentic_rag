@@ -41,6 +41,7 @@ public class KnowledgeCrudService {
 	private final KnowledgeFileStorageService fileStorageService;
 	private final List<ChunkIndexer> chunkIndexers;
 	private final ObjectMapper objectMapper;
+	private final TextSanitizer textSanitizer;
 
 	public KnowledgeCrudService(
 		KnowledgeBaseRepository knowledgeBaseRepository,
@@ -51,7 +52,8 @@ public class KnowledgeCrudService {
 		CallbackEventRepository callbackEventRepository,
 		KnowledgeFileStorageService fileStorageService,
 		List<ChunkIndexer> chunkIndexers,
-		ObjectMapper objectMapper
+		ObjectMapper objectMapper,
+		TextSanitizer textSanitizer
 	) {
 		this.knowledgeBaseRepository = knowledgeBaseRepository;
 		this.knowledgeRepository = knowledgeRepository;
@@ -62,6 +64,7 @@ public class KnowledgeCrudService {
 		this.fileStorageService = fileStorageService;
 		this.chunkIndexers = chunkIndexers;
 		this.objectMapper = objectMapper;
+		this.textSanitizer = textSanitizer;
 	}
 
 	@Transactional
@@ -264,6 +267,9 @@ public class KnowledgeCrudService {
 			if (count >= size) {
 				break;
 			}
+			if (!parseJobRepository.findByKnowledgeId(knowledge.getId()).isEmpty()) {
+				continue;
+			}
 			if (deleteKnowledgeInternal(knowledge.getId(), counter)) {
 				count++;
 			}
@@ -457,10 +463,10 @@ public class KnowledgeCrudService {
 					return "{}";
 				}
 				Map<?, ?> map = objectMapper.readValue(text, Map.class);
-				return objectMapper.writeValueAsString(map != null ? map : new HashMap<>());
+				return objectMapper.writeValueAsString(textSanitizer.sanitizeJsonValue(map != null ? map : new HashMap<>(), objectMapper));
 			}
 			Map<?, ?> converted = objectMapper.convertValue(metadata, Map.class);
-			return objectMapper.writeValueAsString(converted != null ? converted : new HashMap<>());
+			return objectMapper.writeValueAsString(textSanitizer.sanitizeJsonValue(converted != null ? converted : new HashMap<>(), objectMapper));
 		} catch (Exception e) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "metadata must be valid JSON object");
 		}
@@ -481,6 +487,9 @@ public class KnowledgeCrudService {
 	private KnowledgeDocumentView toKnowledgeDocumentView(KnowledgeEntity knowledge) {
 		KnowledgeParseStatus parseStatus = knowledge.getParseStatus();
 		KnowledgeEnableStatus enableStatus = knowledge.getEnableStatus();
+		ParseJobSummaryView parseJob = parseJobRepository.findTopByKnowledgeIdOrderByCreatedAtDesc(knowledge.getId())
+			.map(ParseJobSummaryView::from)
+			.orElse(null);
 		return new KnowledgeDocumentView(
 			knowledge.getId(),
 			knowledge.getKnowledgeBaseId(),
@@ -491,6 +500,7 @@ public class KnowledgeCrudService {
 			knowledge.getFilePath(),
 			parseStatus != null ? parseStatus.name().toLowerCase(Locale.ROOT) : "unknown",
 			enableStatus != null ? enableStatus.name().toLowerCase(Locale.ROOT) : "unknown",
+			parseJob,
 			parseMetadataJson(knowledge.getMetadataJson()),
 			knowledge.getCreatedAt() != null ? knowledge.getCreatedAt().toString() : null,
 			knowledge.getUpdatedAt() != null ? knowledge.getUpdatedAt().toString() : null
@@ -705,6 +715,7 @@ public class KnowledgeCrudService {
 		private final String filePath;
 		private final String parseStatus;
 		private final String enableStatus;
+		private final ParseJobSummaryView parseJob;
 		private final Map<String, Object> metadata;
 		private final String createdAt;
 		private final String updatedAt;
@@ -719,6 +730,7 @@ public class KnowledgeCrudService {
 			String filePath,
 			String parseStatus,
 			String enableStatus,
+			ParseJobSummaryView parseJob,
 			Map<String, Object> metadata,
 			String createdAt,
 			String updatedAt
@@ -732,6 +744,7 @@ public class KnowledgeCrudService {
 			this.filePath = filePath;
 			this.parseStatus = parseStatus;
 			this.enableStatus = enableStatus;
+			this.parseJob = parseJob;
 			this.metadata = metadata;
 			this.createdAt = createdAt;
 			this.updatedAt = updatedAt;
@@ -771,6 +784,10 @@ public class KnowledgeCrudService {
 
 		public String getEnableStatus() {
 			return enableStatus;
+		}
+
+		public ParseJobSummaryView getParseJob() {
+			return parseJob;
 		}
 
 		public Map<String, Object> getMetadata() {

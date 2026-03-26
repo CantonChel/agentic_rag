@@ -249,6 +249,25 @@ class KnowledgeCrudIntegrationTest {
 			.jsonPath("$.documentCount").isEqualTo(1);
 	}
 
+	@Test
+	void getKnowledgeDocumentShouldIncludeParseJobSummary() {
+		knowledgeBaseRepository.save(base("kb-detail"));
+		knowledgeRepository.save(doc("doc-detail", "kb-detail", "detail.txt", KnowledgeParseStatus.PARSING));
+		parseJobRepository.save(job("job-detail", "doc-detail", ParseJobStatus.RETRY_WAIT));
+
+		webTestClient.get()
+			.uri("/api/knowledge/{knowledgeId}", "doc-detail")
+			.exchange()
+			.expectStatus().isOk()
+			.expectBody()
+			.jsonPath("$.knowledgeId").isEqualTo("doc-detail")
+			.jsonPath("$.parseStatus").isEqualTo("parsing")
+			.jsonPath("$.parseJob.status").isEqualTo("retry_wait")
+			.jsonPath("$.parseJob.jobId").isEqualTo("job-detail")
+			.jsonPath("$.parseJob.retryCount").isEqualTo(0)
+			.jsonPath("$.parseJob.maxRetry").isEqualTo(3);
+	}
+
 	private KnowledgeBaseEntity base(String id) {
 		KnowledgeBaseEntity kb = new KnowledgeBaseEntity();
 		kb.setId(id);
@@ -308,10 +327,14 @@ class KnowledgeCrudIntegrationTest {
 	}
 
 	private ParseJobEntity job(String id, String knowledgeId) {
+		return job(id, knowledgeId, ParseJobStatus.SUCCESS);
+	}
+
+	private ParseJobEntity job(String id, String knowledgeId, ParseJobStatus status) {
 		ParseJobEntity j = new ParseJobEntity();
 		j.setId(id);
 		j.setKnowledgeId(knowledgeId);
-		j.setStatus(ParseJobStatus.SUCCESS);
+		j.setStatus(status);
 		j.setRetryCount(0);
 		j.setMaxRetry(3);
 		j.setPipelineVersion("v1");

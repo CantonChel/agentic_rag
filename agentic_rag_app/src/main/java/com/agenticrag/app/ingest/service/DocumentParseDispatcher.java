@@ -20,9 +20,11 @@ import java.util.Locale;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import org.springframework.core.io.buffer.DataBufferLimitException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
 
 @Service
 public class DocumentParseDispatcher {
@@ -141,10 +143,10 @@ public class DocumentParseDispatcher {
 			queue.ack(reservedJob);
 			log.info("sync docreader processed success: jobId={}, chunks={}, embeddings={}", jobId, result.getChunks(), result.getEmbeddings());
 		} catch (Exception e) {
-			boolean retryable = failureClassifier.isRetryable("network_timeout", e);
-			JobFailureAction action = parseJobService.registerFailure(jobId, "network_timeout", e.getMessage(), retryable);
+			DispatchFailure failure = classifyDispatchFailure(e);
+			JobFailureAction action = parseJobService.registerFailure(jobId, failure.errorCode, failure.errorMessage, failure.retryable);
 			applyFailureQueueAction(reservedJob, action);
-			log.warn("dispatch job failed: jobId={}, retryable={}, error={}", jobId, retryable, e.getMessage());
+			log.warn("dispatch job failed: jobId={}, retryable={}, errorCode={}, error={}", jobId, failure.retryable, failure.errorCode, failure.errorMessage);
 		}
 	}
 
@@ -223,5 +225,82 @@ public class DocumentParseDispatcher {
 		}
 		String out = value.asText();
 		return out != null && !out.trim().isEmpty() ? out : null;
+	}
+
+	private DispatchFailure classifyDispatchFailure(Exception error) {
+		if (hasCause(error, DataBufferLimitException.class) || containsMessage(error, "Exceeded limit on max bytes to buffer")) {
+			return new DispatchFailure(
+				"response_too_large",
+				"docreader response exceeded in-memory limit of " + docreaderProperties.getMaxInMemorySizeBytes() + " bytes",
+				false
+			);
+		}
+		if (containsMessage(error, "invalid byte sequence for encoding")
+			|| containsMessage(error, "invalid byte sequence for encoding \"utf8\"")
+			|| containsMessage(error, "0x00")) {
+			return new DispatchFailure("invalid_text_data", "parsed content contains unsupported NUL characters", false);
+		}
+
+		String errorCode = "service_unavailable";
+		String errorMessage = mostSpecificMessage(error);
+		if (hasCause(error, java.util.concurrent.TimeoutException.class) || containsMessage(error, "timeout")) {
+			errorCode = "network_timeout";
+		} else if (hasCause(error, WebClientRequestException.class) || containsMessage(error, "connection")) {
+			errorCode = "service_unavailable";
+		}
+		return new DispatchFailure(errorCode, errorMessage, failureClassifier.isRetryable(errorCode, error));
+	}
+
+	private boolean hasCause(Throwable error, Class<? extends Throwable> type) {
+		Throwable current = error;
+		while (current != null) {
+			if (type.isInstance(current)) {
+				return true;
+			}
+			current = current.getCause();
+		}
+		return false;
+	}
+
+	private boolean containsMessage(Throwable error, String needle) {
+		if (needle == null || needle.trim().isEmpty()) {
+			return false;
+		}
+		String target = needle.toLowerCase(Locale.ROOT);
+		Throwable current = error;
+		while (current != null) {
+			String message = current.getMessage();
+			if (message != null && message.toLowerCase(Locale.ROOT).contains(target)) {
+				return true;
+			}
+			current = current.getCause();
+		}
+		return false;
+	}
+
+	private String mostSpecificMessage(Throwable error) {
+		String fallback = error != null && error.getMessage() != null ? error.getMessage() : "unexpected dispatch failure";
+		Throwable current = error;
+		String best = fallback;
+		while (current != null) {
+			String message = current.getMessage();
+			if (message != null && !message.trim().isEmpty()) {
+				best = message.trim();
+			}
+			current = current.getCause();
+		}
+		return best;
+	}
+
+	private static class DispatchFailure {
+		private final String errorCode;
+		private final String errorMessage;
+		private final boolean retryable;
+
+		private DispatchFailure(String errorCode, String errorMessage, boolean retryable) {
+			this.errorCode = errorCode;
+			this.errorMessage = errorMessage;
+			this.retryable = retryable;
+		}
 	}
 }

@@ -42,6 +42,7 @@ public class DocreaderReadResultService {
 	private final RagEmbeddingProperties ragEmbeddingProperties;
 	private final OpenAiEmbeddingProperties openAiEmbeddingProperties;
 	private final SiliconFlowEmbeddingProperties siliconFlowEmbeddingProperties;
+	private final TextSanitizer textSanitizer;
 
 	public DocreaderReadResultService(
 		EmbeddingModel embeddingModel,
@@ -51,7 +52,8 @@ public class DocreaderReadResultService {
 		ObjectMapper objectMapper,
 		RagEmbeddingProperties ragEmbeddingProperties,
 		OpenAiEmbeddingProperties openAiEmbeddingProperties,
-		SiliconFlowEmbeddingProperties siliconFlowEmbeddingProperties
+		SiliconFlowEmbeddingProperties siliconFlowEmbeddingProperties,
+		TextSanitizer textSanitizer
 	) {
 		this.embeddingModel = embeddingModel;
 		this.textSplitter = textSplitter;
@@ -61,6 +63,7 @@ public class DocreaderReadResultService {
 		this.ragEmbeddingProperties = ragEmbeddingProperties;
 		this.openAiEmbeddingProperties = openAiEmbeddingProperties;
 		this.siliconFlowEmbeddingProperties = siliconFlowEmbeddingProperties;
+		this.textSanitizer = textSanitizer;
 	}
 
 	public ProcessResult process(
@@ -68,7 +71,8 @@ public class DocreaderReadResultService {
 		String userId,
 		DocreaderReadResponse response
 	) {
-		String markdown = response != null && response.getMarkdownContent() != null ? response.getMarkdownContent().trim() : "";
+		String markdown = textSanitizer.sanitizeText(response != null ? response.getMarkdownContent() : null);
+		markdown = markdown != null ? markdown.trim() : "";
 		if (markdown.isEmpty()) {
 			throw new IllegalArgumentException("empty markdown content");
 		}
@@ -78,6 +82,7 @@ public class DocreaderReadResultService {
 			baseMetadata.putAll(response.getMetadata());
 		}
 		baseMetadata.put("user_id", userId);
+		baseMetadata = textSanitizer.sanitizeMap(baseMetadata, objectMapper);
 
 		List<StoredImageInfo> storedImages = storeImages(userId, knowledgeId, response != null ? response.getImageRefs() : null);
 		String replacedMarkdown = replaceImageRefs(markdown, storedImages);
@@ -214,7 +219,7 @@ public class DocreaderReadResultService {
 			entity.setParentChunkId(null);
 			entity.setPreChunkId(i > 0 ? normalizeChunkId(splitChunks.get(i - 1).getChunkId(), knowledgeId, i - 1) : null);
 			entity.setNextChunkId(i + 1 < splitChunks.size() ? normalizeChunkId(splitChunks.get(i + 1).getChunkId(), knowledgeId, i + 1) : null);
-			entity.setContent(split.getText() != null ? split.getText() : "");
+			entity.setContent(textSanitizer.sanitizeText(split.getText() != null ? split.getText() : ""));
 			entity.setImageInfoJson(chunkImages.isEmpty() ? null : toJson(chunkImages));
 			entity.setMetadataJson(toJson(metadata));
 			entity.setCreatedAt(Instant.now());
@@ -329,7 +334,7 @@ public class DocreaderReadResultService {
 		if (value == null) {
 			return null;
 		}
-		String out = value.trim();
+		String out = textSanitizer.sanitizeText(value).trim();
 		return out.isEmpty() ? null : out;
 	}
 
@@ -338,7 +343,7 @@ public class DocreaderReadResultService {
 			return null;
 		}
 		try {
-			return objectMapper.writeValueAsString(obj);
+			return objectMapper.writeValueAsString(textSanitizer.sanitizeJsonValue(obj, objectMapper));
 		} catch (Exception e) {
 			return null;
 		}

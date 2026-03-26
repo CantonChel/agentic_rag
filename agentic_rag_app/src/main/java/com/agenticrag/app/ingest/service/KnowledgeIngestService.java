@@ -32,6 +32,7 @@ public class KnowledgeIngestService {
 	private final IngestAsyncProperties asyncProperties;
 	private final ObjectMapper objectMapper;
 	private final KnowledgeCrudService knowledgeCrudService;
+	private final TextSanitizer textSanitizer;
 
 	public KnowledgeIngestService(
 		KnowledgeRepository knowledgeRepository,
@@ -41,7 +42,8 @@ public class KnowledgeIngestService {
 		ParseJobService parseJobService,
 		IngestAsyncProperties asyncProperties,
 		ObjectMapper objectMapper,
-		KnowledgeCrudService knowledgeCrudService
+		KnowledgeCrudService knowledgeCrudService,
+		TextSanitizer textSanitizer
 	) {
 		this.knowledgeRepository = knowledgeRepository;
 		this.parseJobRepository = parseJobRepository;
@@ -51,6 +53,7 @@ public class KnowledgeIngestService {
 		this.asyncProperties = asyncProperties;
 		this.objectMapper = objectMapper;
 		this.knowledgeCrudService = knowledgeCrudService;
+		this.textSanitizer = textSanitizer;
 	}
 
 	public KnowledgeUploadResult createAndEnqueue(
@@ -151,7 +154,7 @@ public class KnowledgeIngestService {
 			safe.putAll(metadata);
 		}
 		try {
-			return objectMapper.writeValueAsString(safe);
+			return objectMapper.writeValueAsString(textSanitizer.sanitizeJsonValue(safe, objectMapper));
 		} catch (Exception e) {
 			return "{}";
 		}

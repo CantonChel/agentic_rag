@@ -29,9 +29,11 @@ public class IngestConfig {
 		HttpClient client = HttpClient.create()
 			.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, properties.getConnectTimeoutMillis())
 			.doOnConnected(conn -> conn.addHandlerLast(new ReadTimeoutHandler(properties.getReadTimeoutMillis(), TimeUnit.MILLISECONDS)));
+		int maxInMemorySize = properties.getMaxInMemorySizeBytes() > 0 ? properties.getMaxInMemorySizeBytes() : 10 * 1024 * 1024;
 		return WebClient.builder()
 			.baseUrl(properties.getBaseUrl())
 			.clientConnector(new ReactorClientHttpConnector(client))
+			.codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(maxInMemorySize))
 			.build();
 	}
 }
