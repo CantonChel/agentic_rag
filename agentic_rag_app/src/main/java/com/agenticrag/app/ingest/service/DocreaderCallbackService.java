@@ -7,6 +7,7 @@ import com.agenticrag.app.ingest.entity.EmbeddingEntity;
 import com.agenticrag.app.ingest.entity.ParseJobEntity;
 import com.agenticrag.app.ingest.model.ChunkType;
 import com.agenticrag.app.ingest.model.JobFailureAction;
+import com.agenticrag.app.ingest.model.ParseJobStatus;
 import com.agenticrag.app.ingest.queue.DocumentParseQueue;
 import com.agenticrag.app.ingest.queue.ReservedJob;
 import com.agenticrag.app.ingest.repo.CallbackEventRepository;
@@ -36,6 +37,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @Service
 public class DocreaderCallbackService {
@@ -95,9 +98,26 @@ public class DocreaderCallbackService {
 			return CallbackProcessResult.duplicate();
 		}
 
-		Optional<ParseJobEntity> jobOpt = parseJobService.findById(jobId.trim());
-		if (!jobOpt.isPresent()) {
+		if (!parseJobService.findById(jobId.trim()).isPresent()) {
 			return CallbackProcessResult.notFound();
+		}
+
+		processAsync(jobId.trim(), request);
+		return CallbackProcessResult.accepted();
+	}
+
+	private void processAsync(String jobId, DocreaderCallbackRequest request) {
+		Mono.fromRunnable(() -> processInternal(jobId, request))
+			.subscribeOn(Schedulers.boundedElastic())
+			.doOnError(e -> log.warn("async callback processing failed: jobId={}, error={}", jobId, e.getMessage()))
+			.subscribe();
+	}
+
+	private void processInternal(String jobId, DocreaderCallbackRequest request) {
+		Optional<ParseJobEntity> jobOpt = parseJobService.findById(jobId);
+		if (!jobOpt.isPresent()) {
+			log.warn("callback job not found when processing async: jobId={}", jobId);
+			return;
 		}
 		ParseJobEntity job = jobOpt.get();
 
@@ -108,11 +128,31 @@ public class DocreaderCallbackService {
 			boolean retryable = failureClassifier.isRetryable(code, null);
 			JobFailureAction action = parseJobService.registerFailure(job.getId(), code, message, retryable);
 			applyAction(job.getId(), action);
-			return CallbackProcessResult.failed(action.getDecision().name());
+			log.warn(
+				"callback reported failed status: jobId={}, status={}, decision={}",
+				job.getId(),
+				normalizedStatus,
+				action.getDecision()
+			);
+			return;
 		}
 
 		try {
-			parseJobService.markIndexing(job.getId());
+			boolean indexingMarked = parseJobService.markIndexing(job.getId());
+			if (!indexingMarked) {
+				ParseJobEntity latest = parseJobService.findById(job.getId()).orElse(null);
+				if (latest == null) {
+					log.warn("callback skip indexing because job disappeared: jobId={}", job.getId());
+					return;
+				}
+				ParseJobStatus latestStatus = latest.getStatus();
+				if (latestStatus != ParseJobStatus.INDEXING
+					&& latestStatus != ParseJobStatus.PARSING
+					&& latestStatus != ParseJobStatus.DISPATCHED) {
+					log.info("callback skip indexing due to terminal status: jobId={}, status={}", job.getId(), latestStatus);
+					return;
+				}
+			}
 			Assembly assembly = assembleChunks(job.getKnowledgeId(), request.getChunks());
 			List<EmbeddingEntity> embeddings;
 			try {
@@ -123,13 +163,19 @@ public class DocreaderCallbackService {
 			}
 			chunkPersistenceService.replaceKnowledgeData(job.getKnowledgeId(), assembly.getChunkEntities(), embeddings, assembly.getIndexChunks());
 			parseJobService.markSuccess(job.getId());
-			return CallbackProcessResult.success(assembly.getChunkEntities().size(), embeddings.size());
+			log.info(
+				"callback processed success: jobId={}, chunks={}, embeddings={}",
+				job.getId(),
+				assembly.getChunkEntities().size(),
+				embeddings.size()
+			);
+			return;
 		} catch (Exception e) {
 			boolean retryable = failureClassifier.isRetryable("service_unavailable", e);
 			JobFailureAction action = parseJobService.registerFailure(job.getId(), "indexing_failed", e.getMessage(), retryable);
 			applyAction(job.getId(), action);
 			log.warn("callback handling failed: jobId={}, retryable={}, error={}", job.getId(), retryable, e.getMessage());
-			return CallbackProcessResult.failed(action.getDecision().name());
+			return;
 		}
 	}
 
@@ -624,6 +670,10 @@ public class DocreaderCallbackService {
 
 		public static CallbackProcessResult success(int chunks, int embeddings) {
 			return new CallbackProcessResult(false, true, false, "success", chunks, embeddings);
+		}
+
+		public static CallbackProcessResult accepted() {
+			return new CallbackProcessResult(false, true, false, "accepted", 0, 0);
 		}
 
 		public static CallbackProcessResult failed(String state) {

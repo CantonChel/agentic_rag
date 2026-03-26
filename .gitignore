@@ -33,8 +33,7 @@ agentic项目技术总结/
 
 test-doc/
 memory/users/
-
 .venv/
 venv/
-
 node_modules/
+**/node_modules/

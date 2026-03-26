@@ -50,6 +50,13 @@ cd /Users/luolinhao/Documents/trae_projects/agentic_rag/agentic_rag_ragas
   --dataset ./datasets/sample_eval_qa.jsonl \
   --base-url http://127.0.0.1:8081 \
   --provider openai
+
+# 如需抓取 RAGAS judge 原始输出并自动做 schema 诊断
+./run_auto_ragas.sh \
+  --dataset ./datasets/sample_eval_qa.jsonl \
+  --base-url http://127.0.0.1:8081 \
+  --provider minimax \
+  --trace-ragas-judge
 ```
 
 ## 输出
@@ -61,6 +68,8 @@ cd /Users/luolinhao/Documents/trae_projects/agentic_rag/agentic_rag_ragas
 - `ragas_scores_per_sample.csv`: 样本级分数
 - `ragas_summary.json`: 聚合分数
 - `ragas_error.json`: RAGAS 阶段报错时生成
+- `ragas_judge_trace.jsonl`: （可选）judge 每次调用的 prompt 与原始输出
+- `ragas_judge_diagnostics.json`: （可选）自动诊断输出是否符合 RAGAS JSON schema
 
 ## 说明
 

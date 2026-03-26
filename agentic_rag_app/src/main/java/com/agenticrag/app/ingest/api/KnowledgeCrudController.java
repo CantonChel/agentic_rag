@@ -55,6 +55,14 @@ public class KnowledgeCrudController {
 			.subscribeOn(Schedulers.boundedElastic());
 	}
 
+	@PostMapping(value = "/knowledge-bases/{kbId}/cleanup-failed", produces = MediaType.APPLICATION_JSON_VALUE)
+	public Mono<KnowledgeCrudService.FailedKnowledgeCleanupResult> cleanupFailedKnowledge(
+		@PathVariable("kbId") String knowledgeBaseId
+	) {
+		return Mono.fromCallable(() -> knowledgeCrudService.cleanupFailedKnowledgeBase(knowledgeBaseId))
+			.subscribeOn(Schedulers.boundedElastic());
+	}
+
 	@GetMapping(value = "/knowledge/{knowledgeId}", produces = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<KnowledgeCrudService.KnowledgeDocumentView> getKnowledgeDocument(
 		@PathVariable("knowledgeId") String knowledgeId

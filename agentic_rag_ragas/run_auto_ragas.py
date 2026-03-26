@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -29,6 +30,14 @@ CONTEXT_BLOCK_PATTERN = re.compile(
     r"\[引用\s*\d+\]\s*来源:\s*(.*?)\n(.*?)(?=(?:\n\[引用\s*\d+\]\s*来源:)|(?:\n</context>)|$)",
     re.DOTALL,
 )
+CODE_BLOCK_PATTERN = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+THINK_BLOCK_PATTERN = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+THINK_TAG_PATTERN = re.compile(r"</?think>", re.IGNORECASE)
+
+PROMPT_SIGNATURE_CONTEXT_PRECISION = "Given question, answer and context verify if the context was useful"
+PROMPT_SIGNATURE_FAITHFULNESS_NLI = "Your task is to judge the faithfulness of a series of statements based on a given context."
+PROMPT_SIGNATURE_FAITHFULNESS_BREAKDOWN = "Given a question, an answer, and sentences from the answer analyze the complexity"
+PROMPT_SIGNATURE_FORMAT_REPAIR = "Below, the Completion did not satisfy the constraints given in the Prompt."
 
 
 @dataclass
@@ -97,6 +106,11 @@ def parse_args() -> argparse.Namespace:
         "--verify-ssl",
         action="store_true",
         help="Verify HTTPS certificates (default false for local dev)",
+    )
+    parser.add_argument(
+        "--trace-ragas-judge",
+        action="store_true",
+        help="Capture raw RAGAS judge prompt/output traces and schema diagnostics",
     )
     parser.set_defaults(verify_ssl=False)
 
@@ -349,7 +363,261 @@ def write_jsonl(path: Path, rows: Iterable[Dict[str, Any]]) -> None:
     path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
 
-def run_ragas(records: List[EvalRecord], output_dir: Path) -> Dict[str, Any]:
+class JsonlTraceWriter:
+    def __init__(self, path: Path):
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._seq = 0
+
+    def append(self, event: Dict[str, Any]) -> None:
+        with self._lock:
+            self._seq += 1
+            payload = {
+                "seq": self._seq,
+                "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                **event,
+            }
+            with self.path.open("a", encoding="utf-8") as fp:
+                fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def classify_ragas_prompt(prompt_text: str) -> str:
+    if PROMPT_SIGNATURE_CONTEXT_PRECISION in prompt_text:
+        return "context_precision_verification"
+    if PROMPT_SIGNATURE_FAITHFULNESS_NLI in prompt_text:
+        return "faithfulness_nli"
+    if PROMPT_SIGNATURE_FAITHFULNESS_BREAKDOWN in prompt_text:
+        return "faithfulness_statement_breakdown"
+    if PROMPT_SIGNATURE_FORMAT_REPAIR in prompt_text:
+        return "format_repair"
+    return "unknown"
+
+
+def parse_json_payload(raw_text: str) -> Tuple[Optional[Any], Optional[str], Optional[str]]:
+    text = str(raw_text or "").strip()
+    if not text:
+        return None, None, "empty_output"
+
+    try:
+        return json.loads(text), text, None
+    except Exception:
+        pass
+
+    match = CODE_BLOCK_PATTERN.search(text)
+    if match:
+        candidate = match.group(1).strip()
+        try:
+            return json.loads(candidate), candidate, None
+        except Exception as exc:
+            return None, candidate, f"json_decode_error:{exc}"
+
+    return None, None, "json_not_found"
+
+
+def extract_first_json_candidate(text: str) -> Optional[str]:
+    # 兜底提取：当模型在 JSON 前后夹杂解释文本时，尝试抓取首个可反序列化的 JSON 片段。
+    decoder = json.JSONDecoder()
+    for idx, ch in enumerate(text):
+        if ch not in "{[":
+            continue
+        try:
+            _, end = decoder.raw_decode(text[idx:])
+            return text[idx : idx + end]
+        except Exception:
+            continue
+    return None
+
+
+def sanitize_judge_output(raw_text: str) -> Tuple[str, bool]:
+    # 目标：在进入 RAGAS 解析器前，尽量把输出收敛为“纯 JSON”。
+    # 返回值：清洗后的文本，以及是否检测并剥离了 think 标签内容。
+    text = str(raw_text or "")
+    had_think = bool(THINK_TAG_PATTERN.search(text))
+    cleaned = THINK_BLOCK_PATTERN.sub("", text)
+
+    dangling_end = re.search(r"</think>", cleaned, re.IGNORECASE)
+    if dangling_end:
+        cleaned = cleaned[dangling_end.end() :]
+
+    cleaned = THINK_TAG_PATTERN.sub("", cleaned).strip()
+
+    if had_think:
+        # 常见情况 1：模型把合法 JSON 放在 ```json 代码块内。
+        block = CODE_BLOCK_PATTERN.search(cleaned)
+        if block:
+            payload = block.group(1).strip()
+            return f"```json\n{payload}\n```", True
+
+        # 常见情况 2：模型输出“解释 + JSON”，这里提取首个 JSON 主体。
+        candidate = extract_first_json_candidate(cleaned)
+        if candidate:
+            return candidate.strip(), True
+
+    return cleaned, had_think
+
+
+def _is_int_like(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, str):
+        return value.strip() in {"0", "1"}
+    return False
+
+
+def validate_schema(schema_name: str, payload: Any) -> Tuple[bool, str]:
+    if schema_name == "context_precision_verification":
+        if not isinstance(payload, dict):
+            return False, "expected_object"
+        if "reason" not in payload:
+            return False, "missing_reason"
+        if "verdict" not in payload:
+            return False, "missing_verdict"
+        if not isinstance(payload.get("reason"), str) or not payload.get("reason", "").strip():
+            return False, "invalid_reason"
+        if not _is_int_like(payload.get("verdict")):
+            return False, "invalid_verdict"
+        return True, "ok"
+
+    if schema_name == "faithfulness_nli":
+        if not isinstance(payload, list):
+            return False, "expected_array"
+        for idx, item in enumerate(payload):
+            if not isinstance(item, dict):
+                return False, f"item_{idx}_not_object"
+            for key in ("statement", "reason", "verdict"):
+                if key not in item:
+                    return False, f"item_{idx}_missing_{key}"
+            if not isinstance(item["statement"], str) or not item["statement"].strip():
+                return False, f"item_{idx}_invalid_statement"
+            if not isinstance(item["reason"], str) or not item["reason"].strip():
+                return False, f"item_{idx}_invalid_reason"
+            if not _is_int_like(item["verdict"]):
+                return False, f"item_{idx}_invalid_verdict"
+        return True, "ok"
+
+    if schema_name == "faithfulness_statement_breakdown":
+        if not isinstance(payload, list):
+            return False, "expected_array"
+        for idx, item in enumerate(payload):
+            if not isinstance(item, dict):
+                return False, f"item_{idx}_not_object"
+            if "sentence_index" not in item or "simpler_statements" not in item:
+                return False, f"item_{idx}_missing_fields"
+            if not _is_int_like(item["sentence_index"]):
+                return False, f"item_{idx}_invalid_sentence_index"
+            if not isinstance(item["simpler_statements"], list):
+                return False, f"item_{idx}_invalid_simpler_statements"
+        return True, "ok"
+
+    if schema_name == "format_repair":
+        # Format-repair prompt only asks for corrected completion text.
+        if isinstance(payload, (dict, list)):
+            return True, "ok"
+        return False, "expected_json_after_repair"
+
+    return True, "skip_unknown"
+
+
+def diagnose_judge_trace(trace_path: Path) -> Dict[str, Any]:
+    total_outputs = 0
+    parse_ok = 0
+    schema_ok = 0
+    failures: List[Dict[str, Any]] = []
+    by_schema: Dict[str, Dict[str, int]] = {}
+
+    if not trace_path.exists():
+        return {
+            "trace_file": str(trace_path),
+            "exists": False,
+            "total_outputs": 0,
+            "parse_ok": 0,
+            "schema_ok": 0,
+            "failures": [],
+        }
+
+    for line_no, line in enumerate(trace_path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except Exception:
+            failures.append(
+                {
+                    "line": line_no,
+                    "schema": "trace_line",
+                    "stage": "trace_decode",
+                    "reason": "invalid_jsonl_event",
+                    "snippet": line[:200],
+                }
+            )
+            continue
+
+        if event.get("event_type") != "judge_generation":
+            continue
+
+        schema_name = str(event.get("expected_schema") or "unknown")
+        stats = by_schema.setdefault(schema_name, {"total": 0, "parse_ok": 0, "schema_ok": 0})
+        outputs = event.get("outputs") or []
+
+        if not isinstance(outputs, list):
+            outputs = [outputs]
+
+        for idx, output in enumerate(outputs):
+            total_outputs += 1
+            stats["total"] += 1
+
+            payload, payload_text, parse_error = parse_json_payload(str(output))
+            if parse_error:
+                failures.append(
+                    {
+                        "line": line_no,
+                        "schema": schema_name,
+                        "stage": "parse",
+                        "reason": parse_error,
+                        "output_index": idx,
+                        "snippet": str(output)[:500],
+                    }
+                )
+                continue
+
+            parse_ok += 1
+            stats["parse_ok"] += 1
+
+            ok, reason = validate_schema(schema_name, payload)
+            if not ok:
+                failures.append(
+                    {
+                        "line": line_no,
+                        "schema": schema_name,
+                        "stage": "schema",
+                        "reason": reason,
+                        "output_index": idx,
+                        "snippet": str(payload_text)[:500] if payload_text else str(output)[:500],
+                    }
+                )
+                continue
+
+            schema_ok += 1
+            stats["schema_ok"] += 1
+
+    return {
+        "trace_file": str(trace_path),
+        "exists": True,
+        "total_outputs": total_outputs,
+        "parse_ok": parse_ok,
+        "schema_ok": schema_ok,
+        "parse_fail": total_outputs - parse_ok,
+        "schema_fail": parse_ok - schema_ok,
+        "failure_count": len(failures),
+        "counts_by_schema": by_schema,
+        "failures": failures[:100],
+    }
+
+
+def run_ragas(records: List[EvalRecord], output_dir: Path, trace_ragas_judge: bool = False) -> Dict[str, Any]:
     try:
         from datasets import Dataset
         from ragas import evaluate
@@ -370,6 +638,13 @@ def run_ragas(records: List[EvalRecord], output_dir: Path) -> Dict[str, Any]:
         raise RuntimeError("MINIMAX_API_KEY is empty. Please set it in .env.")
 
     has_ground_truth = all(bool(r.ground_truth.strip()) for r in valid)
+    trace_writer: Optional[JsonlTraceWriter] = None
+    trace_diag_path: Optional[Path] = None
+    trace_path: Optional[Path] = None
+
+    if trace_ragas_judge:
+        trace_path = output_dir / "ragas_judge_trace.jsonl"
+        trace_writer = JsonlTraceWriter(trace_path)
 
     ragas_rows: List[Dict[str, Any]] = []
     for row in valid:
@@ -382,14 +657,144 @@ def run_ragas(records: List[EvalRecord], output_dir: Path) -> Dict[str, Any]:
             }
         )
 
-    ragas_llm = LangchainLLMWrapper(
-        ChatOpenAI(
-            model=minimax_model,
-            api_key=minimax_api_key,
-            base_url=minimax_base_url,
-            temperature=0,
-        )
+    class TracingLangchainLLMWrapper(LangchainLLMWrapper):
+        def __init__(self, langchain_llm: Any, writer: Optional[JsonlTraceWriter]):
+            super().__init__(langchain_llm)
+            self._writer = writer
+
+        def _sanitize_result_outputs(self, result: Any) -> Tuple[List[str], List[str], int]:
+            # 统一对每个候选输出做清洗：
+            # 1) 保留原文用于追踪；2) 把清洗后的文本写回 result，供 RAGAS 后续解析。
+            raw_outputs: List[str] = []
+            sanitized_outputs: List[str] = []
+            stripped_count = 0
+
+            generations = getattr(result, "generations", None) or []
+            if not (generations and isinstance(generations, list)):
+                return raw_outputs, sanitized_outputs, stripped_count
+
+            first = generations[0]
+            if not isinstance(first, list):
+                return raw_outputs, sanitized_outputs, stripped_count
+
+            for item in first:
+                raw_text = str(getattr(item, "text", ""))
+                sanitized_text, had_think = sanitize_judge_output(raw_text)
+                raw_outputs.append(raw_text)
+                sanitized_outputs.append(sanitized_text)
+                if had_think:
+                    stripped_count += 1
+                if sanitized_text != raw_text:
+                    try:
+                        item.text = sanitized_text
+                    except Exception:
+                        pass
+
+            return raw_outputs, sanitized_outputs, stripped_count
+
+        def _record(
+            self,
+            prompt: Any,
+            n: int,
+            temperature: Optional[float],
+            stop: Optional[List[str]],
+            outputs_raw: List[str],
+            outputs_sanitized: List[str],
+            think_stripped_count: int,
+            mode: str,
+        ) -> None:
+            if self._writer is None:
+                return
+
+            try:
+                prompt_text = prompt.to_string()
+            except Exception:
+                prompt_text = str(prompt)
+
+            model_name = str(
+                getattr(self.langchain_llm, "model_name", None)
+                or getattr(self.langchain_llm, "model", None)
+                or ""
+            )
+            self._writer.append(
+                {
+                    "event_type": "judge_generation",
+                    "mode": mode,
+                    "model": model_name,
+                    "n": n,
+                    "temperature": temperature,
+                    "stop": stop,
+                    "expected_schema": classify_ragas_prompt(prompt_text),
+                    "prompt": prompt_text,
+                    "outputs": outputs_sanitized,  # 实际喂给 RAGAS 解析器的文本
+                    "outputs_raw": outputs_raw,  # 模型原始返回，便于排查格式漂移
+                    "think_stripped_count": think_stripped_count,  # 本次剥离 think 的条数
+                }
+            )
+
+        def generate_text(
+            self,
+            prompt: Any,
+            n: int = 1,
+            temperature: Optional[float] = None,
+            stop: Optional[List[str]] = None,
+            callbacks: Any = None,
+        ) -> Any:
+            result = super().generate_text(
+                prompt=prompt,
+                n=n,
+                temperature=temperature,
+                stop=stop,
+                callbacks=callbacks,
+            )
+            outputs_raw, outputs_sanitized, stripped_count = self._sanitize_result_outputs(result)
+            self._record(
+                prompt,
+                n,
+                temperature,
+                stop,
+                outputs_raw,
+                outputs_sanitized,
+                stripped_count,
+                mode="sync",
+            )
+            return result
+
+        async def agenerate_text(
+            self,
+            prompt: Any,
+            n: int = 1,
+            temperature: Optional[float] = None,
+            stop: Optional[List[str]] = None,
+            callbacks: Any = None,
+        ) -> Any:
+            result = await super().agenerate_text(
+                prompt=prompt,
+                n=n,
+                temperature=temperature,
+                stop=stop,
+                callbacks=callbacks,
+            )
+            outputs_raw, outputs_sanitized, stripped_count = self._sanitize_result_outputs(result)
+            self._record(
+                prompt,
+                n,
+                temperature,
+                stop,
+                outputs_raw,
+                outputs_sanitized,
+                stripped_count,
+                mode="async",
+            )
+            return result
+
+    judge_llm = ChatOpenAI(
+        model=minimax_model,
+        api_key=minimax_api_key,
+        base_url=minimax_base_url,
+        temperature=0,
     )
+    ragas_llm = TracingLangchainLLMWrapper(judge_llm, trace_writer)
 
     metrics = [faithfulness]
     if has_ground_truth:
@@ -411,6 +816,11 @@ def run_ragas(records: List[EvalRecord], output_dir: Path) -> Dict[str, Any]:
         mean_val = float(df[col].mean(skipna=True))
         overall_scores[col] = round(mean_val, 6)
 
+    if trace_path is not None:
+        trace_diag = diagnose_judge_trace(trace_path)
+        trace_diag_path = output_dir / "ragas_judge_diagnostics.json"
+        write_json(trace_diag_path, trace_diag)
+
     summary = {
         "record_count": len(valid),
         "metrics": list(overall_scores.keys()),
@@ -420,7 +830,13 @@ def run_ragas(records: List[EvalRecord], output_dir: Path) -> Dict[str, Any]:
         "judge_model": minimax_model,
         "judge_base_url": minimax_base_url,
         "per_sample_csv": str(csv_path),
+        "trace_ragas_judge": trace_ragas_judge,
     }
+    if trace_path is not None:
+        summary["judge_trace_jsonl"] = str(trace_path)
+    if trace_diag_path is not None:
+        summary["judge_trace_diagnostics_json"] = str(trace_diag_path)
+
     write_json(output_dir / "ragas_summary.json", summary)
     return summary
 
@@ -537,6 +953,7 @@ def main() -> int:
         "tools": args.tools,
         "tool_choice": args.tool_choice,
         "timeout_seconds": args.timeout_seconds,
+        "trace_ragas_judge": args.trace_ragas_judge,
         "total_samples": len(records),
         "failed_samples": sum(1 for r in records if r.error),
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -544,7 +961,7 @@ def main() -> int:
     write_json(run_dir / "run_meta.json", meta)
 
     try:
-        summary = run_ragas(records, run_dir)
+        summary = run_ragas(records, run_dir, trace_ragas_judge=args.trace_ragas_judge)
     except Exception as exc:
         write_json(
             run_dir / "ragas_error.json",

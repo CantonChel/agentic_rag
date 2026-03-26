@@ -82,7 +82,7 @@ public class MinioObjectService {
 		}
 	}
 
-	public void removeObject(String bucket, String objectKey) {
+	public boolean removeObject(String bucket, String objectKey) {
 		try {
 			minioClient.removeObject(
 				RemoveObjectArgs.builder()
@@ -90,7 +90,9 @@ public class MinioObjectService {
 					.object(objectKey)
 					.build()
 			);
+			return true;
 		} catch (Exception ignored) {
+			return false;
 		}
 	}
 

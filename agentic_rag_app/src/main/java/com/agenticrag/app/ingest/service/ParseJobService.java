@@ -16,11 +16,15 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.ArrayList;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ParseJobService {
+	private static final Logger log = LoggerFactory.getLogger(ParseJobService.class);
+
 	private static final List<Duration> RETRY_BACKOFF = Arrays.asList(
 		Duration.ofMinutes(1),
 		Duration.ofMinutes(5),
@@ -32,15 +36,18 @@ public class ParseJobService {
 	private final ParseJobRepository parseJobRepository;
 	private final KnowledgeRepository knowledgeRepository;
 	private final IngestAsyncProperties asyncProperties;
+	private final KnowledgeCrudService knowledgeCrudService;
 
 	public ParseJobService(
 		ParseJobRepository parseJobRepository,
 		KnowledgeRepository knowledgeRepository,
-		IngestAsyncProperties asyncProperties
+		IngestAsyncProperties asyncProperties,
+		KnowledgeCrudService knowledgeCrudService
 	) {
 		this.parseJobRepository = parseJobRepository;
 		this.knowledgeRepository = knowledgeRepository;
 		this.asyncProperties = asyncProperties;
+		this.knowledgeCrudService = knowledgeCrudService;
 	}
 
 	@Transactional(readOnly = true)
@@ -155,6 +162,7 @@ public class ParseJobService {
 			job.setNextRetryAt(null);
 			parseJobRepository.save(job);
 			setKnowledgeParseStatusByKnowledgeId(job.getKnowledgeId(), KnowledgeParseStatus.FAILED);
+			hardDeleteAfterTerminalFailure(job.getKnowledgeId(), ParseJobStatus.FAILED, errorCode, errorMessage);
 			return new JobFailureAction(JobFailureAction.Decision.FAILED, null);
 		}
 
@@ -165,6 +173,7 @@ public class ParseJobService {
 			job.setNextRetryAt(null);
 			parseJobRepository.save(job);
 			setKnowledgeParseStatusByKnowledgeId(job.getKnowledgeId(), KnowledgeParseStatus.FAILED);
+			hardDeleteAfterTerminalFailure(job.getKnowledgeId(), ParseJobStatus.DEAD_LETTER, errorCode, errorMessage);
 			return new JobFailureAction(JobFailureAction.Decision.DEAD_LETTER, null);
 		}
 
@@ -215,6 +224,30 @@ public class ParseJobService {
 		return recovered;
 	}
 
+	@Transactional
+	public List<String> recoverStaleIndexing(Instant now) {
+		Instant point = now != null ? now : Instant.now();
+		long staleSeconds = Math.max(asyncProperties.getLeaseSeconds() * 3L, 600L);
+		Instant cutoff = point.minusSeconds(staleSeconds);
+		List<ParseJobEntity> stale = parseJobRepository.findTop100ByStatusAndUpdatedAtLessThanEqualOrderByUpdatedAtAsc(
+			ParseJobStatus.INDEXING,
+			cutoff
+		);
+		List<String> recovered = new ArrayList<>();
+		for (ParseJobEntity job : stale) {
+			job.setStatus(ParseJobStatus.RETRY_WAIT);
+			job.setNextRetryAt(point);
+			job.setLeaseUntil(null);
+			job.setLastErrorCode("indexing_stale");
+			job.setLastErrorMessage("indexing has no progress for " + staleSeconds + " seconds");
+			job.setUpdatedAt(point);
+			parseJobRepository.save(job);
+			setKnowledgeParseStatusByKnowledgeId(job.getKnowledgeId(), KnowledgeParseStatus.PARSING);
+			recovered.add(job.getId());
+		}
+		return recovered;
+	}
+
 	@Transactional(readOnly = true)
 	public int maxRetry() {
 		return asyncProperties.getMaxRetry();
@@ -257,5 +290,38 @@ public class ParseJobService {
 		}
 		knowledge.setUpdatedAt(Instant.now());
 		knowledgeRepository.save(knowledge);
+	}
+
+	private void hardDeleteAfterTerminalFailure(
+		String knowledgeId,
+		ParseJobStatus status,
+		String errorCode,
+		String errorMessage
+	) {
+		if (knowledgeId == null || knowledgeId.trim().isEmpty()) {
+			return;
+		}
+		KnowledgeCrudService.KnowledgeDocumentDeleteResult deleted = knowledgeCrudService.hardDeleteKnowledgeDocumentIfExists(knowledgeId);
+		if (!deleted.isDeleted()) {
+			log.warn(
+				"terminal failure cleanup skipped: knowledgeId={}, status={}, errorCode={}, message={}",
+				knowledgeId,
+				status,
+				errorCode,
+				errorMessage
+			);
+			return;
+		}
+		log.info(
+			"terminal failure cleanup done: knowledgeId={}, status={}, deletedParseJobs={}, deletedCallbackEvents={}, deletedChunks={}, deletedEmbeddings={}, deletedFilesSucceeded={}, deletedFilesFailed={}",
+			knowledgeId,
+			status,
+			deleted.getDeletedParseJobs(),
+			deleted.getDeletedCallbackEvents(),
+			deleted.getDeletedChunks(),
+			deleted.getDeletedEmbeddings(),
+			deleted.getDeletedFilesSucceeded(),
+			deleted.getDeletedFilesFailed()
+		);
 	}
 }

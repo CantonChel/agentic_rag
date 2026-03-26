@@ -57,17 +57,11 @@ public class DocreaderCallbackController {
 			DocreaderCallbackRequest callbackRequest = objectMapper.readValue(rawBody, DocreaderCallbackRequest.class);
 			DocreaderCallbackService.CallbackProcessResult result = callbackService.process(jobId, callbackRequest, rawBody);
 
-			if (result.isNotFound()) {
-				Map<String, Object> notFound = new HashMap<>();
-				notFound.put("ok", false);
-				notFound.put("state", "not_found");
-				return ResponseEntity.status(HttpStatus.NOT_FOUND).body(notFound);
-			}
-
 			Map<String, Object> body = new HashMap<>();
 			body.put("ok", result.isSuccess());
 			body.put("duplicate", result.isDuplicate());
 			body.put("state", result.getState());
+			body.put("async", "accepted".equals(result.getState()));
 			body.put("chunks", result.getChunks());
 			body.put("embeddings", result.getEmbeddings());
 			return ResponseEntity.ok(body);

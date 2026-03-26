@@ -5,6 +5,12 @@ public interface KnowledgeFileStorageService {
 
 	String resolveReadUrl(String filePath);
 
+	default boolean deleteAndReport(String filePath) {
+		delete(filePath);
+		return true;
+	}
+
 	default void delete(String filePath) {
+		deleteAndReport(filePath);
 	}
 }

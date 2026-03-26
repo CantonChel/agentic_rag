@@ -159,14 +159,26 @@ class KnowledgeIngestSearchE2eIntegrationTest {
 			.expectStatus().isOk()
 			.expectBody()
 			.jsonPath("$.ok").isEqualTo(true)
-			.jsonPath("$.state").isEqualTo("success");
+			.jsonPath("$.state").isEqualTo("accepted");
 
-		webTestClient.get()
-			.uri("/api/jobs/{jobId}", jobId)
-			.exchange()
-			.expectStatus().isOk()
-			.expectBody()
-			.jsonPath("$.status").isEqualTo("success");
+		boolean reachedSuccess = false;
+		for (int i = 0; i < 20; i++) {
+			byte[] statusBody = webTestClient.get()
+				.uri("/api/jobs/{jobId}", jobId)
+				.exchange()
+				.expectStatus().isOk()
+				.expectBody()
+				.returnResult()
+				.getResponseBodyContent();
+			Assertions.assertNotNull(statusBody);
+			JsonNode statusJson = objectMapper.readTree(statusBody);
+			if ("success".equalsIgnoreCase(statusJson.path("status").asText())) {
+				reachedSuccess = true;
+				break;
+			}
+			Thread.sleep(100L);
+		}
+		Assertions.assertTrue(reachedSuccess, "job should reach success after async callback processing");
 
 		Tool tool = toolRouter.getTool("search_knowledge_base").orElseThrow();
 		ObjectNode args = objectMapper.createObjectNode().put("query", uniqueToken);
