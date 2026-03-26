@@ -7,6 +7,7 @@ public class MinimaxClientProperties {
 	private String apiKey;
 	private String baseUrl;
 	private String model;
+	private boolean reasoningSplit = true;
 
 	public String getApiKey() {
 		return apiKey;
@@ -31,5 +32,12 @@ public class MinimaxClientProperties {
 	public void setModel(String model) {
 		this.model = model;
 	}
-}
 
+	public boolean isReasoningSplit() {
+		return reasoningSplit;
+	}
+
+	public void setReasoningSplit(boolean reasoningSplit) {
+		this.reasoningSplit = reasoningSplit;
+	}
+}
