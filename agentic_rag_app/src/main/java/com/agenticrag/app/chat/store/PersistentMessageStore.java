@@ -77,6 +77,28 @@ public class PersistentMessageStore {
 		return repo.findDistinctSessionIds();
 	}
 
+	public List<SessionMessageStats> listSessionStats() {
+		List<StoredMessageRepository.SessionMessageStatsView> rows = repo.fetchSessionStats();
+		List<SessionMessageStats> out = new ArrayList<>();
+		if (rows == null) {
+			return out;
+		}
+		for (StoredMessageRepository.SessionMessageStatsView row : rows) {
+			if (row == null || row.getSessionId() == null || row.getSessionId().trim().isEmpty()) {
+				continue;
+			}
+			out.add(
+				new SessionMessageStats(
+					row.getSessionId(),
+					row.getFirstMessageAt(),
+					row.getLastMessageAt(),
+					row.getMessageCount()
+				)
+			);
+		}
+		return out;
+	}
+
 	@Transactional
 	public void clear(String sessionId) {
 		repo.deleteBySessionId(normalize(sessionId));
@@ -110,5 +132,35 @@ public class PersistentMessageStore {
 			return "default";
 		}
 		return sessionId.trim();
+	}
+
+	public static class SessionMessageStats {
+		private final String sessionId;
+		private final Instant firstMessageAt;
+		private final Instant lastMessageAt;
+		private final long messageCount;
+
+		public SessionMessageStats(String sessionId, Instant firstMessageAt, Instant lastMessageAt, long messageCount) {
+			this.sessionId = sessionId;
+			this.firstMessageAt = firstMessageAt;
+			this.lastMessageAt = lastMessageAt;
+			this.messageCount = messageCount;
+		}
+
+		public String getSessionId() {
+			return sessionId;
+		}
+
+		public Instant getFirstMessageAt() {
+			return firstMessageAt;
+		}
+
+		public Instant getLastMessageAt() {
+			return lastMessageAt;
+		}
+
+		public long getMessageCount() {
+			return messageCount;
+		}
 	}
 }

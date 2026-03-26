@@ -10,6 +10,7 @@ import com.agenticrag.app.llm.LlmToolCall;
 import com.agenticrag.app.session.ChatSession;
 import com.agenticrag.app.session.SessionScope;
 import com.agenticrag.app.session.SessionManager;
+import com.agenticrag.app.session.SessionSummaryService;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.springframework.http.MediaType;
@@ -27,11 +28,18 @@ public class SessionController {
 	private final SessionManager sessionManager;
 	private final ContextManager contextManager;
 	private final PersistentMessageStore persistentMessageStore;
+	private final SessionSummaryService sessionSummaryService;
 
-	public SessionController(SessionManager sessionManager, ContextManager contextManager, PersistentMessageStore persistentMessageStore) {
+	public SessionController(
+		SessionManager sessionManager,
+		ContextManager contextManager,
+		PersistentMessageStore persistentMessageStore,
+		SessionSummaryService sessionSummaryService
+	) {
 		this.sessionManager = sessionManager;
 		this.contextManager = contextManager;
 		this.persistentMessageStore = persistentMessageStore;
+		this.sessionSummaryService = sessionSummaryService;
 	}
 
 	@PostMapping(produces = MediaType.APPLICATION_JSON_VALUE)
@@ -43,19 +51,13 @@ public class SessionController {
 	}
 
 	@GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
-	public List<CreateSessionResponse> list(
+	public List<SessionSummaryResponse> list(
 		@RequestParam(value = "userId", defaultValue = "anonymous") String userId
 	) {
-		java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>();
-		String uid = SessionScope.normalizeUserId(userId);
-		sessionManager.list(uid).forEach(s -> ids.add(s.getId()));
-		persistentMessageStore.listSessionIds().stream()
-			.filter(scopedId -> uid.equals(SessionScope.userIdFromScopedSessionId(scopedId)))
-			.map(SessionScope::sessionIdFromScopedSessionId)
-			.forEach(ids::add);
-		return ids.stream()
-			.map(CreateSessionResponse::new)
-			.collect(Collectors.toList());
+		return sessionSummaryService.listForUser(userId)
+			.stream()
+			.map(SessionSummaryResponse::new)
+			.collect(java.util.stream.Collectors.toList());
 	}
 
 	@DeleteMapping("/{sessionId}")
@@ -116,6 +118,36 @@ public class SessionController {
 
 		public String getSessionId() {
 			return sessionId;
+		}
+	}
+
+	public static class SessionSummaryResponse {
+		private final String sessionId;
+		private final java.time.Instant createdAt;
+		private final java.time.Instant lastActiveAt;
+		private final boolean hasMessages;
+
+		public SessionSummaryResponse(SessionSummaryService.SessionSummary summary) {
+			this.sessionId = summary != null ? summary.getSessionId() : null;
+			this.createdAt = summary != null ? summary.getCreatedAt() : null;
+			this.lastActiveAt = summary != null ? summary.getLastActiveAt() : null;
+			this.hasMessages = summary != null && summary.isHasMessages();
+		}
+
+		public String getSessionId() {
+			return sessionId;
+		}
+
+		public java.time.Instant getCreatedAt() {
+			return createdAt;
+		}
+
+		public java.time.Instant getLastActiveAt() {
+			return lastActiveAt;
+		}
+
+		public boolean isHasMessages() {
+			return hasMessages;
 		}
 	}
 

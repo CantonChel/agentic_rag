@@ -1664,7 +1664,10 @@
       });
 
       (async function init() {
-        await createSession();
+        await refreshSessions(true);
+        if (!(sessionIdInput.value || '').trim()) {
+          await createSession();
+        }
         await refreshMemoryFiles(false);
       })();
     </script>
