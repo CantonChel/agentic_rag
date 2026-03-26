@@ -315,19 +315,17 @@
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
       }
 
-      .thinking-section {
-        margin-bottom: 12px;
-        padding: 12px;
-        background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
-        border-radius: 12px;
-        border-left: 4px solid #667eea;
+      .event-timeline {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin: 10px 0 12px;
       }
 
       .thinking-title {
         font-size: 12px;
         font-weight: 600;
         color: #667eea;
-        margin-bottom: 8px;
         display: flex;
         align-items: center;
         gap: 6px;
@@ -335,6 +333,13 @@
 
       .thinking-title::before {
         content: '💭';
+      }
+
+      .thinking-block {
+        padding: 12px;
+        background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+        border-radius: 12px;
+        border-left: 4px solid #667eea;
       }
 
       .thinking-content {
@@ -348,11 +353,19 @@
         margin-top: 10px;
       }
 
+      .thinking-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 6px;
+      }
+
       .thinking-round {
         font-size: 11px;
         font-weight: 600;
         color: #334155;
-        margin-bottom: 4px;
+        flex-shrink: 0;
       }
 
       .assistant-content {
@@ -365,26 +378,16 @@
         color: #6b7280;
       }
 
-      .tool-section {
-        margin: 12px 0;
-        padding: 10px 12px;
-        background: #f8fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 12px;
-      }
-
       .tool-title {
         font-size: 12px;
         font-weight: 600;
         color: #334155;
-        margin-bottom: 8px;
       }
 
       .tool-card {
         border: 1px solid #dbeafe;
         border-radius: 10px;
         background: #ffffff;
-        margin-bottom: 8px;
         overflow: hidden;
       }
 
@@ -861,6 +864,7 @@
         const contentDiv = document.createElement('div');
         contentDiv.className = 'message-content';
         
+        let eventTimelineEl = null;
         let thinkingContainer = null;
         let thinkingTitleEl = null;
         let assistantContentEl = null;
@@ -874,27 +878,13 @@
           turnMetaEl.style.display = 'none';
           contentDiv.appendChild(turnMetaEl);
 
-          thinkingTitleEl = document.createElement('div');
-          thinkingTitleEl.className = 'thinking-title';
-          thinkingTitleEl.textContent = '思考';
-          thinkingTitleEl.style.display = 'none';
-          contentDiv.appendChild(thinkingTitleEl);
+          eventTimelineEl = document.createElement('div');
+          eventTimelineEl.className = 'event-timeline';
+          eventTimelineEl.style.display = 'none';
+          contentDiv.appendChild(eventTimelineEl);
 
-          thinkingContainer = document.createElement('div');
-          thinkingContainer.className = 'thinking-section';
-          thinkingContainer.style.display = 'none';
-          contentDiv.appendChild(thinkingContainer);
-
-          toolTitleEl = document.createElement('div');
-          toolTitleEl.className = 'tool-title';
-          toolTitleEl.textContent = '工具调用';
-          toolTitleEl.style.display = 'none';
-          contentDiv.appendChild(toolTitleEl);
-
-          toolContainer = document.createElement('div');
-          toolContainer.className = 'tool-section';
-          toolContainer.style.display = 'none';
-          contentDiv.appendChild(toolContainer);
+          thinkingContainer = eventTimelineEl;
+          toolContainer = eventTimelineEl;
 
           assistantContentEl = document.createElement('div');
           assistantContentEl.className = 'assistant-content';
@@ -911,6 +901,7 @@
         return {
           container: messageDiv,
           contentEl: assistantContentEl || contentDiv,
+          eventTimelineEl,
           thinkingContainer,
           thinkingTitleEl,
           turnMetaEl,
@@ -920,6 +911,7 @@
           turnId: null,
           lastSequenceId: null,
           currentThinkingEl: null,
+          currentThinkingBlockKey: null,
           lastEventType: null,
           lastThinkingRoundId: null
         };
@@ -965,18 +957,7 @@
       function appendThinkingOnly(text) {
         const msg = appendMessage('assistant', '');
         if (!msg) return;
-        if (msg.thinkingTitleEl) {
-          msg.thinkingTitleEl.style.display = 'block';
-        }
-        if (msg.thinkingContainer) {
-          msg.thinkingContainer.style.display = 'block';
-          const box = document.createElement('div');
-          box.className = 'thinking-content';
-          box.textContent = text || '';
-          msg.thinkingContainer.appendChild(box);
-          msg.currentThinkingEl = box;
-          msg.lastEventType = 'thinking';
-        }
+        appendThinkingToMessage(msg, text);
         if (msg.contentEl) {
           msg.contentEl.textContent = '';
         }
@@ -984,15 +965,25 @@
 
       function appendThinkingToMessage(target, text) {
         if (!target || !text) return;
-        if (target.thinkingTitleEl) {
-          target.thinkingTitleEl.style.display = 'block';
-        }
         if (!target.thinkingContainer) return;
         target.thinkingContainer.style.display = 'block';
+        const wrapper = document.createElement('div');
+        wrapper.className = 'thinking-block';
+        const head = document.createElement('div');
+        head.className = 'thinking-head';
+        const title = document.createElement('div');
+        title.className = 'thinking-title';
+        title.textContent = '思考';
+        head.appendChild(title);
+        wrapper.appendChild(head);
         const box = document.createElement('div');
         box.className = 'thinking-content';
         box.textContent = text || '';
-        target.thinkingContainer.appendChild(box);
+        wrapper.appendChild(box);
+        target.thinkingContainer.appendChild(wrapper);
+        target.currentThinkingEl = box;
+        target.currentThinkingBlockKey = 'history';
+        target.lastEventType = 'thinking';
       }
 
       function setSendingState(sending) {
@@ -1263,9 +1254,6 @@
         let card = target.toolCardsById[toolCallId];
         if (card) return card;
 
-        if (target.toolTitleEl) {
-          target.toolTitleEl.style.display = 'block';
-        }
         target.toolContainer.style.display = 'block';
 
         const details = document.createElement('details');
@@ -1342,6 +1330,7 @@
         if ((data.toolName || '') === 'todo_write') {
           renderTodoPlan(card, data.argsPreview, null);
         }
+        currentAssistant.lastEventType = 'tool';
       }
 
       function handleToolEndEvent(data) {
@@ -1371,6 +1360,7 @@
         if ((data.toolName || '') === 'todo_write') {
           renderTodoPlan(card, data.argsPreview, data.resultPreview);
         }
+        currentAssistant.lastEventType = 'tool';
       }
 
       function handleThinkingEvent(data) {
@@ -1378,15 +1368,10 @@
         const content = data && data.content ? data.content : '';
         if (!content) return;
         const roundId = data && data.roundId !== undefined && data.roundId !== null ? data.roundId : null;
-        if (data && data.source && currentAssistant.thinkingTitleEl) {
-          currentAssistant.thinkingTitleEl.textContent = '思考 · ' + data.source;
-        }
-        if (currentAssistant.thinkingTitleEl) {
-          currentAssistant.thinkingTitleEl.style.display = 'block';
-        }
         if (currentAssistant.thinkingContainer) {
           currentAssistant.thinkingContainer.style.display = 'block';
         }
+        const blockKey = String(data && data.source ? data.source : 'thinking') + '::' + String(roundId);
 
         const roundChanged =
           roundId !== null &&
@@ -1396,21 +1381,30 @@
         if (
           currentAssistant.lastEventType !== 'thinking' ||
           !currentAssistant.currentThinkingEl ||
-          roundChanged
+          roundChanged ||
+          currentAssistant.currentThinkingBlockKey !== blockKey
         ) {
           const wrapper = document.createElement('div');
           wrapper.className = 'thinking-block';
+          const head = document.createElement('div');
+          head.className = 'thinking-head';
+          const title = document.createElement('div');
+          title.className = 'thinking-title';
+          title.textContent = '思考' + (data && data.source ? ' · ' + data.source : '');
+          head.appendChild(title);
           if (roundId !== null) {
             const roundLabel = document.createElement('div');
             roundLabel.className = 'thinking-round';
             roundLabel.textContent = '第 ' + roundId + ' 轮思考';
-            wrapper.appendChild(roundLabel);
+            head.appendChild(roundLabel);
           }
+          wrapper.appendChild(head);
           const box = document.createElement('div');
           box.className = 'thinking-content';
           wrapper.appendChild(box);
           currentAssistant.thinkingContainer.appendChild(wrapper);
           currentAssistant.currentThinkingEl = box;
+          currentAssistant.currentThinkingBlockKey = blockKey;
         }
 
         currentAssistant.currentThinkingEl.textContent += content;
