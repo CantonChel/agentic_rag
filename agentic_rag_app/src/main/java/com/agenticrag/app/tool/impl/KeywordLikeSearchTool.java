@@ -46,7 +46,7 @@ public class KeywordLikeSearchTool implements Tool {
 
 	@Override
 	public String description() {
-		return "Fast keyword retrieval over knowledge chunks (SQL LIKE style). Use for short keyword lookups, exact terms, model numbers, IDs, and phrase contains matching. Returns ranked excerpts in <context>.";
+		return "Fast keyword retrieval over knowledge chunks (SQL LIKE / BM25 style). Use this first for short anchors, exact terms, model numbers, IDs, entity names, or open-ended coverage discovery when you need to see what exists in the KB around a topic. Returns ranked excerpts in <context>.";
 	}
 
 	@Override
