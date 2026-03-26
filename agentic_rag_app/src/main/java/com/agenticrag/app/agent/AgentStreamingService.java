@@ -52,7 +52,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongSupplier;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -197,6 +199,25 @@ public class AgentStreamingService {
 
 		return Flux.create(sink -> {
 			Future<?> future = streamExecutor.submit(() -> {
+				String turnId = UUID.randomUUID().toString();
+				AtomicLong sequence = new AtomicLong(0L);
+				LongSupplier nextSequence = () -> sequence.incrementAndGet();
+				AtomicBoolean turnEnded = new AtomicBoolean(false);
+				AtomicReference<String> turnFinishReasonRef = new AtomicReference<>("completed");
+				AtomicReference<Integer> turnRoundIdRef = new AtomicReference<>(null);
+				java.util.function.BiConsumer<String, Integer> emitTurnEnd = (reason, roundId) -> {
+					if (turnEnded.compareAndSet(false, true)) {
+						sink.next(LlmStreamEvent.turnEnd(
+							turnId,
+							nextSequence.getAsLong(),
+							System.currentTimeMillis(),
+							reason,
+							roundId
+						));
+					}
+				};
+
+				sink.next(LlmStreamEvent.turnStart(turnId, nextSequence.getAsLong(), System.currentTimeMillis(), sid));
 				try {
 					OpenAIClient client = provider == LlmProvider.MINIMAX ? minimaxClient : openAiClient;
 					String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
@@ -221,8 +242,10 @@ public class AgentStreamingService {
 							);
 						}
 						String newSessionId = createNextSessionId(uid);
-						sink.next(LlmStreamEvent.sessionSwitched(newSessionId));
-						sink.next(LlmStreamEvent.done("session_switched", null));
+						sink.next(LlmStreamEvent.sessionSwitched(newSessionId, turnId, nextSequence.getAsLong(), System.currentTimeMillis()));
+						sink.next(LlmStreamEvent.done("session_switched", null, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), null));
+						turnFinishReasonRef.set("session_switched");
+						emitTurnEnd.accept("session_switched", null);
 						sink.complete();
 						return;
 					}
@@ -250,6 +273,7 @@ public class AgentStreamingService {
 					while (!finished && iteration < maxIterations) {
 						iteration++;
 						final int iterationFinal = iteration;
+						turnRoundIdRef.set(iterationFinal);
 						boolean isFinalIteration = iteration >= maxIterations;
 
 						localExecutionContextRecorder.record(scopedSid, systemPrompt, localContext, iteration);
@@ -307,7 +331,13 @@ public class AgentStreamingService {
 												content,
 												answerPart -> {
 													assistantContent.append(answerPart);
-													sink.next(LlmStreamEvent.delta(answerPart));
+													sink.next(LlmStreamEvent.delta(
+														answerPart,
+														turnId,
+														nextSequence.getAsLong(),
+														System.currentTimeMillis(),
+														iterationFinal
+													));
 												},
 												thinkPart -> {
 													inlineThinkBuffer.append(thinkPart);
@@ -316,7 +346,10 @@ public class AgentStreamingService {
 														thinkPart,
 														"assistant_content",
 														originModelRef.get(),
-														iterationFinal
+														iterationFinal,
+														turnId,
+														nextSequence.getAsLong(),
+														System.currentTimeMillis()
 													));
 												}
 											);
@@ -347,7 +380,16 @@ public class AgentStreamingService {
 						}
 
 						if (isFinalIteration) {
-							sink.next(LlmStreamEvent.done("max_iterations_fallback", null));
+							sink.next(LlmStreamEvent.done(
+								"max_iterations_fallback",
+								null,
+								turnId,
+								nextSequence.getAsLong(),
+								System.currentTimeMillis(),
+								iterationFinal
+							));
+							turnFinishReasonRef.set("max_iterations_fallback");
+							emitTurnEnd.accept("max_iterations_fallback", iterationFinal);
 							finished = true;
 							break;
 						}
@@ -362,9 +404,21 @@ public class AgentStreamingService {
 								iterationFinal,
 								sink,
 								scopedSid,
-								inlineThinkingEmitted.get()
+								inlineThinkingEmitted.get(),
+								turnId,
+								nextSequence
 							);
-							sink.next(LlmStreamEvent.done(finishReason != null ? finishReason : "stop", null));
+							String doneReason = finishReason != null ? finishReason : "stop";
+							sink.next(LlmStreamEvent.done(
+								doneReason,
+								null,
+								turnId,
+								nextSequence.getAsLong(),
+								System.currentTimeMillis(),
+								iterationFinal
+							));
+							turnFinishReasonRef.set(doneReason);
+							emitTurnEnd.accept(doneReason, iterationFinal);
 							finished = true;
 							break;
 						}
@@ -386,6 +440,15 @@ public class AgentStreamingService {
 							final String toolCallId = callId;
 							final JsonNode toolArgs = call.getArguments();
 							long toolStartNs = System.nanoTime();
+							sink.next(LlmStreamEvent.toolStart(
+								turnId,
+								nextSequence.getAsLong(),
+								System.currentTimeMillis(),
+								iterationFinal,
+								toolCallId,
+								toolName,
+								toPreviewJson(toolArgs, 400)
+							));
 							log.info(
 								"event=tool_call_start traceId={} provider={} userId={} sessionId={} iteration={} tool={} toolCallId={} argsChars={}",
 								effectiveTraceId,
@@ -399,6 +462,7 @@ public class AgentStreamingService {
 							);
 
 							ToolResult toolResult = null;
+							Exception toolFailure = null;
 							try {
 								toolResult = toolRouter.getTool(toolName)
 									.map(t -> {
@@ -412,6 +476,7 @@ public class AgentStreamingService {
 									})
 									.orElse(ToolResult.error("Tool not found: " + toolName));
 							} catch (Exception e) {
+								toolFailure = e;
 								toolResult = ToolResult.error("Tool execution failed: " + toolName + ": " + e.getClass().getSimpleName() + ": " + e.getMessage());
 							}
 
@@ -433,6 +498,19 @@ public class AgentStreamingService {
 								toolResult.getOutput() != null ? toolResult.getOutput().length() : 0,
 								toolResult.getError()
 							);
+							String toolStatus = resolveToolStatus(toolResult, toolFailure);
+							sink.next(LlmStreamEvent.toolEnd(
+								turnId,
+								nextSequence.getAsLong(),
+								System.currentTimeMillis(),
+								iterationFinal,
+								toolCallId,
+								toolName,
+								toolStatus,
+								toolDurationMs,
+								toPreviewResult(toolResult),
+								toolResult.getError()
+							));
 
 							if ("thinking".equals(toolName) && toolResult.isSuccess()) {
 								String thought = toolResult.getOutput();
@@ -441,7 +519,10 @@ public class AgentStreamingService {
 										thought,
 										"thinking_tool",
 										originModelRef.get(),
-										iterationFinal
+										iterationFinal,
+										turnId,
+										nextSequence.getAsLong(),
+										System.currentTimeMillis()
 									));
 									recordThinkingMessage(scopedSid, thought);
 									hasToolThinking = true;
@@ -470,13 +551,24 @@ public class AgentStreamingService {
 								iterationFinal,
 								sink,
 								scopedSid,
-								inlineThinkingEmitted.get()
+								inlineThinkingEmitted.get(),
+								turnId,
+								nextSequence
 							);
 						}
 					}
 
 					if (!finished) {
-						sink.next(LlmStreamEvent.done("max_iterations", null));
+						sink.next(LlmStreamEvent.done(
+							"max_iterations",
+							null,
+							turnId,
+							nextSequence.getAsLong(),
+							System.currentTimeMillis(),
+							turnRoundIdRef.get()
+						));
+						turnFinishReasonRef.set("max_iterations");
+						emitTurnEnd.accept("max_iterations", turnRoundIdRef.get());
 					}
 					log.info(
 						"event=agent_stream_complete traceId={} provider={} userId={} sessionId={} finished={} maxIterations={}",
@@ -496,7 +588,10 @@ public class AgentStreamingService {
 						sid,
 						e.getMessage()
 					);
-					sink.next(LlmStreamEvent.error("Unauthorized: check API key for provider=" + provider + " (401)"));
+					String err = "Unauthorized: check API key for provider=" + provider + " (401)";
+					sink.next(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
+					turnFinishReasonRef.set("error");
+					emitTurnEnd.accept("error", turnRoundIdRef.get());
 				} catch (OpenAIException e) {
 					log.warn(
 						"event=agent_stream_error traceId={} provider={} userId={} sessionId={} type={} message={}",
@@ -507,7 +602,10 @@ public class AgentStreamingService {
 						e.getClass().getSimpleName(),
 						e.getMessage()
 					);
-					sink.next(LlmStreamEvent.error("OpenAI SDK error: " + e.getClass().getSimpleName() + ": " + e.getMessage()));
+					String err = "OpenAI SDK error: " + e.getClass().getSimpleName() + ": " + e.getMessage();
+					sink.next(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
+					turnFinishReasonRef.set("error");
+					emitTurnEnd.accept("error", turnRoundIdRef.get());
 				} catch (Exception e) {
 					log.warn(
 						"event=agent_stream_error traceId={} provider={} userId={} sessionId={} type={} message={}",
@@ -518,9 +616,13 @@ public class AgentStreamingService {
 						e.getClass().getSimpleName(),
 						e.getMessage()
 					);
-					sink.next(LlmStreamEvent.error("Agent loop failed: " + e.getClass().getSimpleName() + ": " + e.getMessage()));
+					String err = "Agent loop failed: " + e.getClass().getSimpleName() + ": " + e.getMessage();
+					sink.next(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
+					turnFinishReasonRef.set("error");
+					emitTurnEnd.accept("error", turnRoundIdRef.get());
 				}
 
+				emitTurnEnd.accept(turnFinishReasonRef.get(), turnRoundIdRef.get());
 				sink.complete();
 			});
 
@@ -738,29 +840,117 @@ public class AgentStreamingService {
 		int iteration,
 		reactor.core.publisher.FluxSink<LlmStreamEvent> sink,
 		String sessionId,
-		boolean inlineThinkingEmitted
+		boolean inlineThinkingEmitted,
+		String turnId,
+		LongSupplier nextSequence
 	) {
 		if (hasToolThinking || sink == null) {
 			return;
 		}
 		String reasoning = reasoningBuffer == null ? "" : reasoningBuffer.toString().trim();
 		if (!reasoning.isEmpty()) {
-			sink.next(LlmStreamEvent.thinking(reasoning, "reasoning_field", originModel, iteration));
+			sink.next(LlmStreamEvent.thinking(
+				reasoning,
+				"reasoning_field",
+				originModel,
+				iteration,
+				turnId,
+				nextSequence.getAsLong(),
+				System.currentTimeMillis()
+			));
 			recordThinkingMessage(sessionId, reasoning);
 			return;
 		}
 		String inlineThinking = inlineThinkBuffer == null ? "" : inlineThinkBuffer.toString().trim();
 		if (!inlineThinking.isEmpty()) {
 			if (!inlineThinkingEmitted) {
-				sink.next(LlmStreamEvent.thinking(inlineThinking, "assistant_content", originModel, iteration));
+				sink.next(LlmStreamEvent.thinking(
+					inlineThinking,
+					"assistant_content",
+					originModel,
+					iteration,
+					turnId,
+					nextSequence.getAsLong(),
+					System.currentTimeMillis()
+				));
 			}
 			recordThinkingMessage(sessionId, inlineThinking);
 			return;
 		}
 		if (looksLikeStepByStep(assistantFinal)) {
-			sink.next(LlmStreamEvent.thinking(assistantFinal, "assistant_content", originModel, iteration));
+			sink.next(LlmStreamEvent.thinking(
+				assistantFinal,
+				"assistant_content",
+				originModel,
+				iteration,
+				turnId,
+				nextSequence.getAsLong(),
+				System.currentTimeMillis()
+			));
 			recordThinkingMessage(sessionId, assistantFinal);
 		}
+	}
+
+	private String resolveToolStatus(ToolResult toolResult, Exception toolFailure) {
+		if (toolResult != null && toolResult.isSuccess()) {
+			return "success";
+		}
+		String error = toolResult != null ? toolResult.getError() : null;
+		if (isTimeoutError(toolFailure, error)) {
+			return "timeout";
+		}
+		return "error";
+	}
+
+	private boolean isTimeoutError(Exception toolFailure, String errorMessage) {
+		if (toolFailure instanceof java.util.concurrent.TimeoutException) {
+			return true;
+		}
+		if (errorMessage == null) {
+			return false;
+		}
+		String normalized = errorMessage.toLowerCase();
+		return normalized.contains("timeout") || normalized.contains("timed out");
+	}
+
+	private JsonNode toPreviewResult(ToolResult toolResult) {
+		if (toolResult == null) {
+			return null;
+		}
+		if (!toolResult.isSuccess()) {
+			return objectMapper.createObjectNode().put("error", truncate(toolResult.getError(), 300));
+		}
+		String output = toolResult.getOutput();
+		if (output == null || output.trim().isEmpty()) {
+			return null;
+		}
+		try {
+			JsonNode asJson = objectMapper.readTree(output);
+			return toPreviewJson(asJson, 500);
+		} catch (Exception ignored) {
+			return objectMapper.createObjectNode().put("text", truncate(output, 500));
+		}
+	}
+
+	private JsonNode toPreviewJson(JsonNode node, int maxChars) {
+		if (node == null) {
+			return null;
+		}
+		String raw = node.toString();
+		if (raw.length() <= maxChars) {
+			return node;
+		}
+		return objectMapper.createObjectNode().put("_preview", truncate(raw, maxChars));
+	}
+
+	private String truncate(String value, int maxLength) {
+		if (value == null) {
+			return null;
+		}
+		if (value.length() <= maxLength) {
+			return value;
+		}
+		return value.substring(0, maxLength) + "...";
 	}
 
 	private static final class ThinkTagParser {
