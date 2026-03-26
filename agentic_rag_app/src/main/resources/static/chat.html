@@ -819,6 +819,8 @@
       let currentAssistant = null;
       let isStreaming = false;
       let streamDone = false;
+      let currentAbortController = null;
+      let activeStreamId = 0;
 
       function apiUrl(path) {
         const base = (apiBaseInput.value || '').trim();
@@ -851,6 +853,19 @@
       function updateSessionStatus(status) {
         if (sessionStatus) {
           sessionStatus.textContent = status;
+        }
+      }
+
+      function setCurrentSessionSelection(sessionId) {
+        const sid = (sessionId || '').trim();
+        if (sessionIdInput) {
+          sessionIdInput.value = sid;
+        }
+        if (historySessionSel) {
+          historySessionSel.value = sid;
+        }
+        if (sessionBadge) {
+          sessionBadge.textContent = sid ? ('会话: ' + sid.substring(0, 12) + '...') : '新会话';
         }
       }
 
@@ -927,40 +942,48 @@
         };
       }
 
-      async function createSession() {
+      async function createSession(options = {}) {
+        const stopCurrentStream = options.stopCurrentStream !== false;
+        if (stopCurrentStream && isStreaming) {
+          stopStream('已停止当前输出，正在创建新会话...');
+        }
+        clearChatBox();
         try {
           updateSessionStatus('创建会话中...');
           const query = new URLSearchParams({ userId: currentUserId() });
           const res = await fetch(apiUrl('/api/sessions') + '?' + query.toString(), { method: 'POST' });
           if (!res.ok) throw new Error('create session failed: ' + res.status);
           const data = await res.json();
-          sessionIdInput.value = data.sessionId || newSessionId();
-          if (sessionBadge) {
-            sessionBadge.textContent = '会话: ' + sessionIdInput.value.substring(0, 12) + '...';
-          }
-          await refreshSessions();
-          if (historySessionSel) {
-            historySessionSel.value = sessionIdInput.value;
-          }
-          updateSessionStatus('会话已创建');
+          const createdSessionId = data.sessionId || newSessionId();
+          setCurrentSessionSelection(createdSessionId);
+          await refreshSessions(false, createdSessionId);
+          clearChatBox();
+          updateSessionStatus('会话已创建并已切换');
         } catch (_) {
-          sessionIdInput.value = newSessionId();
-          if (sessionBadge) {
-            sessionBadge.textContent = '会话: ' + sessionIdInput.value.substring(0, 12) + '...';
-          }
+          setCurrentSessionSelection(newSessionId());
+          clearChatBox();
           updateSessionStatus('会话创建失败，使用本地ID');
         }
       }
 
-      function stopStream() {
+      function stopStream(statusMessage) {
+        activeStreamId += 1;
+        if (currentAbortController) {
+          currentAbortController.abort();
+          currentAbortController = null;
+        }
         if (es) {
           es.close();
           es = null;
         }
         setSendingState(false);
+        if (statusMessage) {
+          updateSessionStatus(statusMessage);
+        }
       }
 
       function clearChatBox() {
+        currentAssistant = null;
         chatBox.innerHTML = '<div class="empty-state"><div class="empty-state-icon">💬</div><div class="empty-state-text">开始一段新的对话吧！</div></div>';
       }
 
@@ -1008,9 +1031,9 @@
         }
       }
 
-      async function refreshSessions(autoLoad = true) {
+      async function refreshSessions(autoLoad = true, preferredSessionId = '') {
         if (!historySessionSel) return;
-        const previous = (historySessionSel.value || sessionIdInput.value || '').trim();
+        const previous = (preferredSessionId || historySessionSel.value || sessionIdInput.value || '').trim();
         try {
           const query = new URLSearchParams({ userId: currentUserId() });
           const res = await fetch(apiUrl('/api/sessions') + '?' + query.toString());
@@ -1028,22 +1051,18 @@
             }
             if (ids.length > 0) {
               const selected = ids.includes(previous) ? previous : ids[0];
-              historySessionSel.value = selected;
-              sessionIdInput.value = selected;
-              if (sessionBadge) {
-                sessionBadge.textContent = '会话: ' + selected.substring(0, 12) + '...';
-              }
+              setCurrentSessionSelection(selected);
               if (autoLoad) {
                 await loadSessionHistoryById(selected);
               }
             } else {
-              sessionIdInput.value = '';
+              setCurrentSessionSelection('');
               clearChatBox();
             }
           }
         } catch (_) {
           historySessionSel.innerHTML = '';
-          sessionIdInput.value = '';
+          setCurrentSessionSelection('');
         }
       }
 
@@ -1108,6 +1127,12 @@
       async function loadSessionHistoryById(sid) {
         if (!sid) return;
         try {
+          setCurrentSessionSelection(sid);
+          const restoredFromReplay = await loadSessionReplayById(sid);
+          if (restoredFromReplay) {
+            setCurrentSessionSelection(sid);
+            return;
+          }
           const query = new URLSearchParams({ userId: currentUserId() });
           const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sid)}/messages`) + '?' + query.toString());
           if (!res.ok) throw new Error('load messages failed: ' + res.status);
@@ -1121,14 +1146,19 @@
                 appendMessage('user', msg.content || '');
                 lastAssistantMsg = null;
               } else if (msg.type === 'ASSISTANT') {
-                lastAssistantMsg = appendMessage('assistant', msg.content || '');
+                lastAssistantMsg = ensureLegacyAssistantMessage(lastAssistantMsg);
+                appendLegacyAssistantContent(lastAssistantMsg, msg.content || '');
               } else if (msg.type === 'THINKING') {
-                if (lastAssistantMsg) {
-                  appendThinkingToMessage(lastAssistantMsg, msg.content || '');
-                } else {
-                  appendThinkingOnly(msg.content || '');
-                }
-              } else if (msg.type === 'TOOL_CALL' && lastAssistantMsg && Array.isArray(msg.toolCalls)) {
+                lastAssistantMsg = ensureLegacyAssistantMessage(lastAssistantMsg);
+                withAssistantTarget(lastAssistantMsg, () => {
+                  handleThinkingEvent({
+                    type: 'thinking',
+                    content: msg.content || '',
+                    source: 'assistant_content'
+                  });
+                });
+              } else if (msg.type === 'TOOL_CALL' && Array.isArray(msg.toolCalls)) {
+                lastAssistantMsg = ensureLegacyAssistantMessage(lastAssistantMsg);
                 withAssistantTarget(lastAssistantMsg, () => {
                   for (const call of msg.toolCalls) {
                     handleToolStartEvent({
@@ -1138,7 +1168,8 @@
                     });
                   }
                 });
-              } else if (msg.type === 'TOOL_RESULT' && lastAssistantMsg) {
+              } else if (msg.type === 'TOOL_RESULT') {
+                lastAssistantMsg = ensureLegacyAssistantMessage(lastAssistantMsg);
                 withAssistantTarget(lastAssistantMsg, () => {
                   handleToolEndEvent({
                     toolCallId: msg.toolCallId || undefined,
@@ -1151,7 +1182,8 @@
               }
             }
           }
-          sessionIdInput.value = sid;
+          setCurrentSessionSelection(sid);
+          updateSessionStatus('历史会话已通过兼容模式恢复');
         } catch (_) {
           // ignore load errors
         }
@@ -1159,6 +1191,9 @@
 
       async function loadSessionHistory() {
         const sid = historySessionSel && historySessionSel.value ? historySessionSel.value : '';
+        if (isStreaming) {
+          stopStream('已停止当前输出，正在切换会话...');
+        }
         await loadSessionHistoryById(sid);
       }
 
@@ -1169,6 +1204,91 @@
           fn();
         } finally {
           currentAssistant = previous;
+        }
+      }
+
+      function ensureLegacyAssistantMessage(target) {
+        if (target) return target;
+        return appendMessage('assistant', '');
+      }
+
+      function appendLegacyAssistantContent(target, content) {
+        const normalized = content || '';
+        if (!target || !normalized) return;
+        withAssistantTarget(target, () => {
+          handleContentEvent({ content: normalized });
+        });
+      }
+
+      function resolveReplayAssistantTarget(state, item) {
+        if (!state) return appendMessage('assistant', '');
+        const turnId = item && item.turnId ? String(item.turnId) : '';
+        if (turnId && state.targetsByTurnId[turnId]) {
+          state.activeTurnId = turnId;
+          state.lastAssistantTarget = state.targetsByTurnId[turnId];
+          return state.lastAssistantTarget;
+        }
+
+        const shouldCreateNewTarget =
+          !state.lastAssistantTarget ||
+          (item && item.type === 'turn_start') ||
+          (turnId && state.activeTurnId && state.activeTurnId !== turnId);
+
+        const target = shouldCreateNewTarget
+          ? appendMessage('assistant', '')
+          : state.lastAssistantTarget;
+
+        if (turnId) {
+          state.targetsByTurnId[turnId] = target;
+          state.activeTurnId = turnId;
+          target.turnId = turnId;
+        }
+        state.lastAssistantTarget = target;
+        return target;
+      }
+
+      async function loadSessionReplayById(sid) {
+        if (!sid) return false;
+        try {
+          const query = new URLSearchParams({ userId: currentUserId() });
+          const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sid)}/replay`) + '?' + query.toString());
+          if (!res.ok) {
+            return false;
+          }
+          const data = await res.json();
+          if (!Array.isArray(data) || data.length === 0) {
+            return false;
+          }
+
+          clearChatBox();
+          const replayState = {
+            targetsByTurnId: Object.create(null),
+            activeTurnId: null,
+            lastAssistantTarget: null
+          };
+
+          for (const item of data) {
+            if (!item || !item.kind) continue;
+            if (item.kind === 'user_message') {
+              appendMessage('user', item.content || '');
+              replayState.activeTurnId = null;
+              replayState.lastAssistantTarget = null;
+              continue;
+            }
+            if (item.kind !== 'assistant_event' || !item.type) {
+              continue;
+            }
+            const target = resolveReplayAssistantTarget(replayState, item);
+            withAssistantTarget(target, () => {
+              handleStreamEvent(item);
+            });
+          }
+
+          setCurrentSessionSelection(sid);
+          updateSessionStatus('历史会话已通过精确回放恢复');
+          return true;
+        } catch (_) {
+          return false;
         }
       }
 
@@ -1567,7 +1687,12 @@
         promptInput.value = '';
         setSendingState(true);
         streamDone = false;
-        currentAssistant = appendMessage('assistant', '');
+        const streamId = activeStreamId + 1;
+        activeStreamId = streamId;
+        const abortController = new AbortController();
+        currentAbortController = abortController;
+        const streamAssistant = appendMessage('assistant', '');
+        currentAssistant = streamAssistant;
 
         const sid = sessionIdInput.value;
         const provider = providerSel.value;
@@ -1587,7 +1712,8 @@
 
         try {
           const response = await fetch(url, {
-            method: 'GET'
+            method: 'GET',
+            signal: abortController.signal
           });
           if (!response.ok) {
             throw new Error('Request failed: ' + response.status);
@@ -1598,6 +1724,10 @@
           let buffer = '';
 
           while (true) {
+            if (streamId !== activeStreamId) {
+              await reader.cancel();
+              break;
+            }
             const { done, value } = await reader.read();
             if (done) break;
 
@@ -1614,7 +1744,9 @@
                 }
                 try {
                   const data = JSON.parse(dataStr);
-                  handleStreamEvent(data);
+                  if (streamId === activeStreamId) {
+                    handleStreamEvent(data);
+                  }
                 } catch (e) {
                   console.error('Failed to parse SSE data:', e);
                 }
@@ -1622,12 +1754,21 @@
             }
           }
         } catch (error) {
+          const aborted = abortController.signal.aborted || (error && error.name === 'AbortError');
+          if (aborted) {
+            return;
+          }
           console.error('Stream error:', error);
-          if (currentAssistant && currentAssistant.contentEl) {
-            currentAssistant.contentEl.textContent = '发送失败: ' + error.message;
+          if (streamAssistant && streamAssistant.contentEl) {
+            streamAssistant.contentEl.textContent = '发送失败: ' + error.message;
           }
         } finally {
-          setSendingState(false);
+          if (currentAbortController === abortController) {
+            currentAbortController = null;
+          }
+          if (streamId === activeStreamId) {
+            setSendingState(false);
+          }
           es = null;
         }
       }
@@ -1648,6 +1789,7 @@
 
       newSessionBtn.addEventListener('click', createSession);
       loadSessionBtn.addEventListener('click', loadSessionHistory);
+      historySessionSel.addEventListener('change', loadSessionHistory);
       refreshSessionsBtn.addEventListener('click', () => refreshSessions(true));
       refreshMemoryBtn.addEventListener('click', () => refreshMemoryFiles(false));
       openMemoryBtn.addEventListener('click', openMemoryFile);
@@ -1664,7 +1806,10 @@
       });
 
       (async function init() {
-        await createSession();
+        await refreshSessions(true);
+        if (!(sessionIdInput.value || '').trim()) {
+          await createSession();
+        }
         await refreshMemoryFiles(false);
       })();
     </script>

@@ -9,6 +9,7 @@ import com.agenticrag.app.chat.message.ToolCallMessage;
 import com.agenticrag.app.chat.message.UserMessage;
 import com.agenticrag.app.chat.message.ThinkingMessage;
 import com.agenticrag.app.chat.store.PersistentMessageStore;
+import com.agenticrag.app.chat.store.SessionReplayStore;
 import com.agenticrag.app.chat.message.SystemMessage;
 import com.agenticrag.app.memory.MemoryFlushService;
 import com.agenticrag.app.prompt.SystemPromptContext;
@@ -46,9 +47,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import com.openai.errors.UnauthorizedException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class StreamingChatService {
+	private static final Logger log = LoggerFactory.getLogger(StreamingChatService.class);
 	private final OpenAIClient openAiClient;
 	private final OpenAIClient minimaxClient;
 	private final OpenAiClientProperties openAiProperties;
@@ -59,6 +63,7 @@ public class StreamingChatService {
 	private final SystemPromptManager systemPromptManager;
 	private final ContextManager contextManager;
 	private final PersistentMessageStore persistentMessageStore;
+	private final SessionReplayStore sessionReplayStore;
 	private final SessionManager sessionManager;
 	private final MemoryFlushService memoryFlushService;
 	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+\\.?|Step\\s*\\d+\\.?|\\d+\\.)\\s+)");
@@ -87,6 +92,7 @@ public class StreamingChatService {
 			contextManager,
 			persistentMessageStore,
 			null,
+			null,
 			null
 		);
 	}
@@ -102,6 +108,7 @@ public class StreamingChatService {
 		SystemPromptManager systemPromptManager,
 		ContextManager contextManager,
 		PersistentMessageStore persistentMessageStore,
+		SessionReplayStore sessionReplayStore,
 		SessionManager sessionManager,
 		MemoryFlushService memoryFlushService
 	) {
@@ -115,6 +122,7 @@ public class StreamingChatService {
 		this.systemPromptManager = systemPromptManager;
 		this.contextManager = contextManager;
 		this.persistentMessageStore = persistentMessageStore;
+		this.sessionReplayStore = sessionReplayStore;
 		this.sessionManager = sessionManager;
 		this.memoryFlushService = memoryFlushService;
 	}
@@ -163,6 +171,10 @@ public class StreamingChatService {
 				String uid = SessionScope.normalizeUserId(userId);
 				String sid = SessionScope.normalizeSessionId(sessionId);
 				String scopedSid = SessionScope.scopedSessionId(uid, sid);
+				String turnId = java.util.UUID.randomUUID().toString();
+				java.util.concurrent.atomic.AtomicLong sequence = new java.util.concurrent.atomic.AtomicLong(0L);
+				java.util.function.LongSupplier nextSequence = () -> sequence.incrementAndGet();
+				java.util.function.Consumer<LlmStreamEvent> emit = event -> emitStreamEvent(sink, scopedSid, event);
 
 				if (isSessionSwitchCommand(prompt)) {
 					if (memoryFlushService != null) {
@@ -174,8 +186,8 @@ public class StreamingChatService {
 						);
 					}
 					String newSessionId = createNextSessionId(uid);
-					sink.next(LlmStreamEvent.sessionSwitched(newSessionId));
-					sink.next(LlmStreamEvent.done("session_switched", null));
+					emit.accept(LlmStreamEvent.sessionSwitched(newSessionId));
+					emit.accept(LlmStreamEvent.done("session_switched", null, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), null));
 					sink.complete();
 					return;
 				}
@@ -215,6 +227,8 @@ public class StreamingChatService {
 					paramsBuilder.toolChoice(ChatCompletionToolChoiceOption.Auto.NONE);
 				}
 
+				emit.accept(LlmStreamEvent.turnStart(turnId, nextSequence.getAsLong(), System.currentTimeMillis(), sid));
+
 				try (StreamResponse<ChatCompletionChunk> streamResponse = client.chat().completions().createStreaming(paramsBuilder.build())) {
 					for (ChatCompletionChunk chunk : (Iterable<ChatCompletionChunk>) streamResponse.stream()::iterator) {
 						if (chunk == null || chunk.choices() == null) {
@@ -236,16 +250,19 @@ public class StreamingChatService {
 										content,
 										answerPart -> {
 											assistantContent.append(answerPart);
-											sink.next(LlmStreamEvent.delta(answerPart));
+											emit.accept(LlmStreamEvent.delta(answerPart, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), 1));
 										},
 										thinkPart -> {
 											inlineThinkBuffer.append(thinkPart);
 											inlineThinkingEmitted.set(true);
-											sink.next(LlmStreamEvent.thinking(
+											emit.accept(LlmStreamEvent.thinking(
 												thinkPart,
 												"assistant_content",
 												originModelRef.get(),
-												1
+												1,
+												turnId,
+												nextSequence.getAsLong(),
+												System.currentTimeMillis()
 											));
 										}
 									);
@@ -259,11 +276,14 @@ public class StreamingChatService {
 							String reasoningPart = appendReasoningFromDelta(delta, reasoningBuffer, reasoningSourceRef);
 							if (reasoningPart != null && !reasoningPart.isEmpty() && !hasToolCallsInDelta) {
 								structuredReasoningEmitted.set(true);
-								sink.next(LlmStreamEvent.thinking(
+								emit.accept(LlmStreamEvent.thinking(
 									reasoningPart,
 									reasoningSourceRef.get(),
 									originModelRef.get(),
-									1
+									1,
+									turnId,
+									nextSequence.getAsLong(),
+									System.currentTimeMillis()
 								));
 							}
 
@@ -284,29 +304,68 @@ public class StreamingChatService {
 								String reasoning = reasoningBuffer.toString().trim();
 								if (!reasoning.isEmpty()) {
 									if (!structuredReasoningEmitted.get()) {
-										sink.next(LlmStreamEvent.thinking(reasoning, reasoningSourceRef.get(), originModelRef.get(), 1));
+										emit.accept(LlmStreamEvent.thinking(
+											reasoning,
+											reasoningSourceRef.get(),
+											originModelRef.get(),
+											1,
+											turnId,
+											nextSequence.getAsLong(),
+											System.currentTimeMillis()
+										));
 									}
 									recordThinkingMessage(scopedSid, reasoning);
 								} else {
 									String inlineThinking = inlineThinkBuffer.toString().trim();
 									if (!inlineThinking.isEmpty()) {
 										if (!inlineThinkingEmitted.get()) {
-											sink.next(LlmStreamEvent.thinking(inlineThinking, "assistant_content", originModelRef.get(), 1));
+											emit.accept(LlmStreamEvent.thinking(
+												inlineThinking,
+												"assistant_content",
+												originModelRef.get(),
+												1,
+												turnId,
+												nextSequence.getAsLong(),
+												System.currentTimeMillis()
+											));
 										}
 										recordThinkingMessage(scopedSid, inlineThinking);
 									} else if (looksLikeStepByStep(assistantFinal)) {
-										sink.next(LlmStreamEvent.thinking(assistantFinal, "assistant_content", originModelRef.get(), 1));
+										emit.accept(LlmStreamEvent.thinking(
+											assistantFinal,
+											"assistant_content",
+											originModelRef.get(),
+											1,
+											turnId,
+											nextSequence.getAsLong(),
+											System.currentTimeMillis()
+										));
 										recordThinkingMessage(scopedSid, assistantFinal);
 									}
 								}
-								sink.next(LlmStreamEvent.done(finishReason, toolCalls));
+								emit.accept(LlmStreamEvent.done(finishReason, toolCalls, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), 1));
+								emit.accept(LlmStreamEvent.turnEnd(turnId, nextSequence.getAsLong(), System.currentTimeMillis(), finishReason, 1));
 							}
 						}
 					}
 				} catch (UnauthorizedException e) {
-					sink.next(LlmStreamEvent.error("Unauthorized: check API key for provider=" + provider + " (401)"));
+					emit.accept(LlmStreamEvent.error(
+						"Unauthorized: check API key for provider=" + provider + " (401)",
+						turnId,
+						nextSequence.getAsLong(),
+						System.currentTimeMillis(),
+						1
+					));
+					emit.accept(LlmStreamEvent.turnEnd(turnId, nextSequence.getAsLong(), System.currentTimeMillis(), "error", 1));
 				} catch (Exception e) {
-					sink.next(LlmStreamEvent.error("LLM stream failed: " + e.getMessage()));
+					emit.accept(LlmStreamEvent.error(
+						"LLM stream failed: " + e.getMessage(),
+						turnId,
+						nextSequence.getAsLong(),
+						System.currentTimeMillis(),
+						1
+					));
+					emit.accept(LlmStreamEvent.turnEnd(turnId, nextSequence.getAsLong(), System.currentTimeMillis(), "error", 1));
 				}
 
 				sink.complete();
@@ -490,6 +549,21 @@ public class StreamingChatService {
 			return;
 		}
 		persistentMessageStore.append(sessionId, new ThinkingMessage(content));
+	}
+
+	private void emitStreamEvent(reactor.core.publisher.FluxSink<LlmStreamEvent> sink, String sessionId, LlmStreamEvent event) {
+		if (sink == null || event == null) {
+			return;
+		}
+		sink.next(event);
+		if (sessionReplayStore == null) {
+			return;
+		}
+		try {
+			sessionReplayStore.append(sessionId, event);
+		} catch (Exception e) {
+			log.warn("event=session_replay_append_failed sessionId={} type={} message={}", sessionId, event.getType(), e.getMessage());
+		}
 	}
 
 	private static final class ThinkTagParser {

@@ -9,6 +9,7 @@ import com.agenticrag.app.chat.message.ToolCallMessage;
 import com.agenticrag.app.chat.message.ToolResultMessage;
 import com.agenticrag.app.chat.message.UserMessage;
 import com.agenticrag.app.chat.store.PersistentMessageStore;
+import com.agenticrag.app.chat.store.SessionReplayStore;
 import com.agenticrag.app.config.MinimaxClientProperties;
 import com.agenticrag.app.config.OpenAiClientProperties;
 import com.agenticrag.app.llm.LlmProvider;
@@ -77,6 +78,7 @@ public class AgentStreamingService {
 	private final SystemPromptManager systemPromptManager;
 	private final ContextManager contextManager;
 	private final PersistentMessageStore persistentMessageStore;
+	private final SessionReplayStore sessionReplayStore;
 	private final com.agenticrag.app.chat.context.LocalExecutionContextRecorder localExecutionContextRecorder;
 	private final AgentProperties agentProperties;
 	private final ToolArgumentValidator toolArgumentValidator;
@@ -110,6 +112,7 @@ public class AgentStreamingService {
 			systemPromptManager,
 			contextManager,
 			persistentMessageStore,
+			null,
 			localExecutionContextRecorder,
 			agentProperties,
 			toolArgumentValidator,
@@ -129,6 +132,7 @@ public class AgentStreamingService {
 		SystemPromptManager systemPromptManager,
 		ContextManager contextManager,
 		PersistentMessageStore persistentMessageStore,
+		SessionReplayStore sessionReplayStore,
 		com.agenticrag.app.chat.context.LocalExecutionContextRecorder localExecutionContextRecorder,
 		AgentProperties agentProperties,
 		ToolArgumentValidator toolArgumentValidator,
@@ -145,6 +149,7 @@ public class AgentStreamingService {
 		this.systemPromptManager = systemPromptManager;
 		this.contextManager = contextManager;
 		this.persistentMessageStore = persistentMessageStore;
+		this.sessionReplayStore = sessionReplayStore;
 		this.localExecutionContextRecorder = localExecutionContextRecorder;
 		this.agentProperties = agentProperties;
 		this.toolArgumentValidator = toolArgumentValidator;
@@ -204,12 +209,13 @@ public class AgentStreamingService {
 				String turnId = UUID.randomUUID().toString();
 				AtomicLong sequence = new AtomicLong(0L);
 				LongSupplier nextSequence = () -> sequence.incrementAndGet();
+				java.util.function.Consumer<LlmStreamEvent> emit = event -> emitStreamEvent(sink, scopedSid, event);
 				AtomicBoolean turnEnded = new AtomicBoolean(false);
 				AtomicReference<String> turnFinishReasonRef = new AtomicReference<>("completed");
 				AtomicReference<Integer> turnRoundIdRef = new AtomicReference<>(null);
 				java.util.function.BiConsumer<String, Integer> emitTurnEnd = (reason, roundId) -> {
 					if (turnEnded.compareAndSet(false, true)) {
-						sink.next(LlmStreamEvent.turnEnd(
+						emit.accept(LlmStreamEvent.turnEnd(
 							turnId,
 							nextSequence.getAsLong(),
 							System.currentTimeMillis(),
@@ -219,7 +225,7 @@ public class AgentStreamingService {
 					}
 				};
 
-				sink.next(LlmStreamEvent.turnStart(turnId, nextSequence.getAsLong(), System.currentTimeMillis(), sid));
+				emit.accept(LlmStreamEvent.turnStart(turnId, nextSequence.getAsLong(), System.currentTimeMillis(), sid));
 				try {
 					OpenAIClient client = provider == LlmProvider.MINIMAX ? minimaxClient : openAiClient;
 					String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
@@ -244,8 +250,8 @@ public class AgentStreamingService {
 							);
 						}
 						String newSessionId = createNextSessionId(uid);
-						sink.next(LlmStreamEvent.sessionSwitched(newSessionId, turnId, nextSequence.getAsLong(), System.currentTimeMillis()));
-						sink.next(LlmStreamEvent.done("session_switched", null, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), null));
+						emit.accept(LlmStreamEvent.sessionSwitched(newSessionId, turnId, nextSequence.getAsLong(), System.currentTimeMillis()));
+						emit.accept(LlmStreamEvent.done("session_switched", null, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), null));
 						turnFinishReasonRef.set("session_switched");
 						emitTurnEnd.accept("session_switched", null);
 						sink.complete();
@@ -336,21 +342,21 @@ public class AgentStreamingService {
 												content,
 												answerPart -> {
 													assistantContent.append(answerPart);
-													sink.next(LlmStreamEvent.delta(
-														answerPart,
-														turnId,
-														nextSequence.getAsLong(),
-														System.currentTimeMillis(),
-														iterationFinal
+														emit.accept(LlmStreamEvent.delta(
+															answerPart,
+															turnId,
+															nextSequence.getAsLong(),
+															System.currentTimeMillis(),
+															iterationFinal
 													));
 												},
 												thinkPart -> {
 													inlineThinkBuffer.append(thinkPart);
 													inlineThinkingEmitted.set(true);
-													sink.next(LlmStreamEvent.thinking(
-														thinkPart,
-														"assistant_content",
-														originModelRef.get(),
+														emit.accept(LlmStreamEvent.thinking(
+															thinkPart,
+															"assistant_content",
+															originModelRef.get(),
 														iterationFinal,
 														turnId,
 														nextSequence.getAsLong(),
@@ -368,7 +374,7 @@ public class AgentStreamingService {
 									String reasoningPart = appendReasoningFromDelta(delta, reasoningBuffer, reasoningSourceRef);
 									if (reasoningPart != null && !reasoningPart.isEmpty() && !hasToolCallsInDelta) {
 										structuredReasoningEmitted.set(true);
-										sink.next(LlmStreamEvent.thinking(
+										emit.accept(LlmStreamEvent.thinking(
 											reasoningPart,
 											reasoningSourceRef.get(),
 											originModelRef.get(),
@@ -398,7 +404,7 @@ public class AgentStreamingService {
 						}
 
 						if (isFinalIteration) {
-							sink.next(LlmStreamEvent.done(
+							emit.accept(LlmStreamEvent.done(
 								"max_iterations_fallback",
 								null,
 								turnId,
@@ -429,7 +435,7 @@ public class AgentStreamingService {
 								nextSequence
 							);
 							String doneReason = finishReason != null ? finishReason : "stop";
-							sink.next(LlmStreamEvent.done(
+							emit.accept(LlmStreamEvent.done(
 								doneReason,
 								null,
 								turnId,
@@ -460,7 +466,7 @@ public class AgentStreamingService {
 							final String toolCallId = callId;
 							final JsonNode toolArgs = call.getArguments();
 							long toolStartNs = System.nanoTime();
-							sink.next(LlmStreamEvent.toolStart(
+							emit.accept(LlmStreamEvent.toolStart(
 								turnId,
 								nextSequence.getAsLong(),
 								System.currentTimeMillis(),
@@ -519,7 +525,7 @@ public class AgentStreamingService {
 								toolResult.getError()
 							);
 							String toolStatus = resolveToolStatus(toolResult, toolFailure);
-							sink.next(LlmStreamEvent.toolEnd(
+							emit.accept(LlmStreamEvent.toolEnd(
 								turnId,
 								nextSequence.getAsLong(),
 								System.currentTimeMillis(),
@@ -535,9 +541,9 @@ public class AgentStreamingService {
 							if ("thinking".equals(toolName) && toolResult.isSuccess()) {
 								String thought = toolResult.getOutput();
 								if (thought != null && !thought.trim().isEmpty()) {
-									sink.next(LlmStreamEvent.thinking(
-										thought,
-										"thinking_tool",
+										emit.accept(LlmStreamEvent.thinking(
+											thought,
+											"thinking_tool",
 										originModelRef.get(),
 										iterationFinal,
 										turnId,
@@ -581,7 +587,7 @@ public class AgentStreamingService {
 					}
 
 					if (!finished) {
-						sink.next(LlmStreamEvent.done(
+						emit.accept(LlmStreamEvent.done(
 							"max_iterations",
 							null,
 							turnId,
@@ -611,7 +617,7 @@ public class AgentStreamingService {
 						e.getMessage()
 					);
 					String err = "Unauthorized: check API key for provider=" + provider + " (401)";
-					sink.next(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
+					emit.accept(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
 					turnFinishReasonRef.set("error");
 					emitTurnEnd.accept("error", turnRoundIdRef.get());
 				} catch (OpenAIException e) {
@@ -625,7 +631,7 @@ public class AgentStreamingService {
 						e.getMessage()
 					);
 					String err = "OpenAI SDK error: " + e.getClass().getSimpleName() + ": " + e.getMessage();
-					sink.next(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
+					emit.accept(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
 					turnFinishReasonRef.set("error");
 					emitTurnEnd.accept("error", turnRoundIdRef.get());
 				} catch (Exception e) {
@@ -639,7 +645,7 @@ public class AgentStreamingService {
 						e.getMessage()
 					);
 					String err = "Agent loop failed: " + e.getClass().getSimpleName() + ": " + e.getMessage();
-					sink.next(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
+					emit.accept(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
 					turnFinishReasonRef.set("error");
 					emitTurnEnd.accept("error", turnRoundIdRef.get());
 				}
@@ -843,23 +849,23 @@ public class AgentStreamingService {
 				String source = reasoningSourceRef != null && reasoningSourceRef.get() != null
 					? reasoningSourceRef.get()
 					: MinimaxReasoningSupport.SOURCE_REASONING_FIELD;
-				sink.next(LlmStreamEvent.thinking(
-					reasoning,
-					source,
-					originModel,
+					emitStreamEvent(sink, sessionId, LlmStreamEvent.thinking(
+						reasoning,
+						source,
+						originModel,
 					iteration,
 					turnId,
 					nextSequence.getAsLong(),
 					System.currentTimeMillis()
-				));
-			}
+					));
+				}
 			recordThinkingMessage(sessionId, reasoning);
 			return;
 		}
 		String inlineThinking = inlineThinkBuffer == null ? "" : inlineThinkBuffer.toString().trim();
 		if (!inlineThinking.isEmpty()) {
 			if (!inlineThinkingEmitted) {
-				sink.next(LlmStreamEvent.thinking(
+				emitStreamEvent(sink, sessionId, LlmStreamEvent.thinking(
 					inlineThinking,
 					"assistant_content",
 					originModel,
@@ -873,7 +879,7 @@ public class AgentStreamingService {
 			return;
 		}
 		if (looksLikeStepByStep(assistantFinal)) {
-			sink.next(LlmStreamEvent.thinking(
+			emitStreamEvent(sink, sessionId, LlmStreamEvent.thinking(
 				assistantFinal,
 				"assistant_content",
 				originModel,
@@ -924,6 +930,21 @@ public class AgentStreamingService {
 			return toPreviewJson(asJson, 500);
 		} catch (Exception ignored) {
 			return objectMapper.createObjectNode().put("text", truncate(output, 500));
+		}
+	}
+
+	private void emitStreamEvent(reactor.core.publisher.FluxSink<LlmStreamEvent> sink, String sessionId, LlmStreamEvent event) {
+		if (sink == null || event == null) {
+			return;
+		}
+		sink.next(event);
+		if (sessionReplayStore == null) {
+			return;
+		}
+		try {
+			sessionReplayStore.append(sessionId, event);
+		} catch (Exception e) {
+			log.warn("event=session_replay_append_failed sessionId={} type={} message={}", sessionId, event.getType(), e.getMessage());
 		}
 	}
 
