@@ -1302,6 +1302,19 @@
           : '';
       }
 
+      function closeCurrentThinkingBlock(target, nextEventType) {
+        if (!target) return;
+        target.currentThinkingWrapper = null;
+        target.currentThinkingEl = null;
+        target.currentThinkingTitleEl = null;
+        target.currentThinkingSourceMetaEl = null;
+        target.currentThinkingSources = [];
+        target.currentThinkingBlockKey = null;
+        if (nextEventType) {
+          target.lastEventType = nextEventType;
+        }
+      }
+
       function ensureToolCard(target, data) {
         if (!target || !target.toolContainer) return null;
         const toolCallId = resolveToolCallId(data);
@@ -1347,6 +1360,7 @@
 
       function handleTurnStartEvent(data) {
         if (!currentAssistant) return;
+        closeCurrentThinkingBlock(currentAssistant, 'turn');
         if (data && data.turnId) {
           currentAssistant.turnId = data.turnId;
         }
@@ -1360,6 +1374,7 @@
 
       function handleTurnEndEvent(data) {
         if (!currentAssistant || !currentAssistant.turnMetaEl) return;
+        closeCurrentThinkingBlock(currentAssistant, 'turn');
         const reason = data && data.finishReason ? data.finishReason : 'done';
         currentAssistant.turnMetaEl.style.display = 'block';
         currentAssistant.turnMetaEl.textContent =
@@ -1369,6 +1384,7 @@
 
       function handleToolStartEvent(data) {
         if (!currentAssistant) return;
+        closeCurrentThinkingBlock(currentAssistant, 'tool');
         const card = ensureToolCard(currentAssistant, data);
         if (!card) return;
         card.details.dataset.status = 'running';
@@ -1384,11 +1400,11 @@
         if ((data.toolName || '') === 'todo_write') {
           renderTodoPlan(card, data.argsPreview, null);
         }
-        currentAssistant.lastEventType = 'tool';
       }
 
       function handleToolEndEvent(data) {
         if (!currentAssistant) return;
+        closeCurrentThinkingBlock(currentAssistant, 'tool');
         const card = ensureToolCard(currentAssistant, data);
         if (!card) return;
         const status = data.status || 'success';
@@ -1414,7 +1430,6 @@
         if ((data.toolName || '') === 'todo_write') {
           renderTodoPlan(card, data.argsPreview, data.resultPreview);
         }
-        currentAssistant.lastEventType = 'tool';
       }
 
       function handleThinkingEvent(data) {
@@ -1480,10 +1495,10 @@
 
       function handleContentEvent(data) {
         if (!currentAssistant || !currentAssistant.contentEl) return;
+        closeCurrentThinkingBlock(currentAssistant, 'content');
         const content = data && data.content ? data.content : '';
         if (!content) return;
         currentAssistant.contentEl.textContent += content;
-        currentAssistant.lastEventType = 'content';
         chatBox.scrollTop = chatBox.scrollHeight;
       }
 
