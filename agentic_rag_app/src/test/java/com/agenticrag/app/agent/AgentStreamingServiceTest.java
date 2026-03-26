@@ -10,7 +10,9 @@ import com.agenticrag.app.config.OpenAiClientProperties;
 import com.agenticrag.app.llm.LlmProvider;
 import com.agenticrag.app.llm.LlmStreamEvent;
 import com.agenticrag.app.llm.LlmToolChoiceMode;
+import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
+import com.agenticrag.app.prompt.SystemPromptMode;
 import com.agenticrag.app.rag.splitter.TokenCounter;
 import com.agenticrag.app.tool.ToolArgumentValidator;
 import com.agenticrag.app.tool.ToolRouter;
@@ -507,6 +509,63 @@ class AgentStreamingServiceTest {
 		Mockito.verify(minimaxClient.chat().completions()).createStreaming(paramsCaptor.capture());
 		ChatCompletionCreateParams params = paramsCaptor.getValue();
 		Assertions.assertEquals(Boolean.TRUE, params._additionalBodyProperties().get("reasoning_split").convert(Boolean.class));
+	}
+
+	@Test
+	void agentPromptUsesAgentModeContext() {
+		ObjectMapper objectMapper = new ObjectMapper();
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		StreamResponse<ChatCompletionChunk> r1 = new FakeStreamResponse(Stream.of(textChunk("ok")));
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(r1);
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(2);
+		agentProps.setToolTimeoutSeconds(5);
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			new ToolRouter(),
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			new ToolArgumentValidator()
+		);
+
+		List<LlmStreamEvent> events = service.stream(LlmProvider.OPENAI, "s1", "hello", false, LlmToolChoiceMode.NONE)
+			.collectList()
+			.block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		ArgumentCaptor<SystemPromptContext> contextCaptor = ArgumentCaptor.forClass(SystemPromptContext.class);
+		Mockito.verify(systemPromptManager).build(contextCaptor.capture());
+		SystemPromptContext promptContext = contextCaptor.getValue();
+		Assertions.assertEquals(SystemPromptMode.AGENT, promptContext.getMode());
+		Assertions.assertFalse(promptContext.isIncludeTools());
 	}
 
 	private static ChatCompletionChunk toolCallsChunk() {
