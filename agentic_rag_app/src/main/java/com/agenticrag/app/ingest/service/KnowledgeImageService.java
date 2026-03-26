@@ -1,24 +1,22 @@
 package com.agenticrag.app.ingest.service;
 
-import com.agenticrag.app.ingest.storage.MinioObjectService;
-import java.util.Optional;
+import com.agenticrag.app.ingest.storage.KnowledgeFileStorageService;
+import com.agenticrag.app.ingest.storage.StoredBinary;
 import org.springframework.stereotype.Service;
 
 @Service
 public class KnowledgeImageService {
-	private final Optional<MinioObjectService> minioObjectService;
+	private final KnowledgeFileStorageService fileStorageService;
 
-	public KnowledgeImageService(Optional<MinioObjectService> minioObjectService) {
-		this.minioObjectService = minioObjectService;
+	public KnowledgeImageService(KnowledgeFileStorageService fileStorageService) {
+		this.fileStorageService = fileStorageService;
 	}
 
-	public MinioObjectService.StoredObject loadImage(String bucket, String key) {
-		String safeBucket = bucket != null ? bucket.trim() : "";
-		String safeKey = key != null ? key.trim() : "";
-		if (safeBucket.isEmpty() || safeKey.isEmpty()) {
-			throw new IllegalArgumentException("bucket and key are required");
+	public StoredBinary loadImage(String filePath) {
+		String safeFilePath = filePath != null ? filePath.trim() : "";
+		if (safeFilePath.isEmpty()) {
+			throw new IllegalArgumentException("filePath is required");
 		}
-		MinioObjectService service = minioObjectService.orElseThrow(() -> new IllegalStateException("minio storage unavailable"));
-		return service.getObject(safeBucket, safeKey);
+		return fileStorageService.load(safeFilePath);
 	}
 }

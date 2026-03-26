@@ -175,6 +175,7 @@ public class KnowledgeBrowseService {
 			intOf(node, "end_pos", "endPos"),
 			textOf(node, "caption"),
 			firstNonBlank(textOf(node, "ocr_text"), textOf(node, "ocrText")),
+			firstNonBlank(textOf(node, "file_path"), textOf(node, "filePath")),
 			firstNonBlank(textOf(node, "storage_bucket"), textOf(node, "storageBucket")),
 			firstNonBlank(textOf(node, "storage_key"), textOf(node, "storageKey"))
 		);
@@ -473,6 +474,7 @@ public class KnowledgeBrowseService {
 		private final Integer endPos;
 		private final String caption;
 		private final String ocrText;
+		private final String filePath;
 		private final String storageBucket;
 		private final String storageKey;
 
@@ -483,6 +485,7 @@ public class KnowledgeBrowseService {
 			Integer endPos,
 			String caption,
 			String ocrText,
+			String filePath,
 			String storageBucket,
 			String storageKey
 		) {
@@ -492,6 +495,7 @@ public class KnowledgeBrowseService {
 			this.endPos = endPos;
 			this.caption = caption;
 			this.ocrText = ocrText;
+			this.filePath = filePath;
 			this.storageBucket = storageBucket;
 			this.storageKey = storageKey;
 		}
@@ -518,6 +522,10 @@ public class KnowledgeBrowseService {
 
 		public String getOcrText() {
 			return ocrText;
+		}
+
+		public String getFilePath() {
+			return filePath;
 		}
 
 		public String getStorageBucket() {

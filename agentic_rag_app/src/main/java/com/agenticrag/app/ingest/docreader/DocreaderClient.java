@@ -16,18 +16,18 @@ public class DocreaderClient {
 		this.properties = properties;
 	}
 
-	public DocreaderJobSubmitResponse submitJob(DocreaderJobSubmitRequest request) {
-		DocreaderJobSubmitResponse response = webClient.post()
-			.uri(properties.getJobsPath())
+	public DocreaderReadResponse readDocument(DocreaderReadRequest request) {
+		DocreaderReadResponse response = webClient.post()
+			.uri(properties.getReadPath())
 			.contentType(MediaType.APPLICATION_JSON)
 			.bodyValue(request)
 			.retrieve()
-			.bodyToMono(DocreaderJobSubmitResponse.class)
+			.bodyToMono(DocreaderReadResponse.class)
 			.timeout(Duration.ofMillis(properties.getReadTimeoutMillis()))
 			.block();
 
 		if (response == null) {
-			response = new DocreaderJobSubmitResponse();
+			response = new DocreaderReadResponse();
 		}
 		return response;
 	}

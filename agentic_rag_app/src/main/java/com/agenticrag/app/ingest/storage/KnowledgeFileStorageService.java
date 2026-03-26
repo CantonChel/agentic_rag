@@ -5,6 +5,8 @@ public interface KnowledgeFileStorageService {
 
 	String resolveReadUrl(String filePath);
 
+	StoredBinary load(String filePath);
+
 	default boolean deleteAndReport(String filePath) {
 		delete(filePath);
 		return true;

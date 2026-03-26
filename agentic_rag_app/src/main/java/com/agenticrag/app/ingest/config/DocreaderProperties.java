@@ -5,6 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "docreader")
 public class DocreaderProperties {
 	private String baseUrl = "http://localhost:8090";
+	private String readPath = "/read";
 	private String jobsPath = "/jobs";
 	private String callbackBaseUrl = "http://localhost:8081";
 	private String callbackSecret = "";
@@ -28,6 +29,14 @@ public class DocreaderProperties {
 
 	public void setJobsPath(String jobsPath) {
 		this.jobsPath = jobsPath;
+	}
+
+	public String getReadPath() {
+		return readPath;
+	}
+
+	public void setReadPath(String readPath) {
+		this.readPath = readPath;
 	}
 
 	public String getCallbackBaseUrl() {

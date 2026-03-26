@@ -3,10 +3,12 @@ package com.agenticrag.app.ingest.service;
 import com.agenticrag.app.ingest.config.DocreaderProperties;
 import com.agenticrag.app.ingest.config.IngestAsyncProperties;
 import com.agenticrag.app.ingest.docreader.DocreaderClient;
-import com.agenticrag.app.ingest.docreader.DocreaderJobSubmitRequest;
-import com.agenticrag.app.ingest.docreader.DocreaderJobSubmitResponse;
+import com.agenticrag.app.ingest.docreader.DocreaderReadRequest;
+import com.agenticrag.app.ingest.docreader.DocreaderReadResponse;
 import com.agenticrag.app.ingest.entity.KnowledgeEntity;
+import com.agenticrag.app.ingest.entity.ParseJobEntity;
 import com.agenticrag.app.ingest.model.JobFailureAction;
+import com.agenticrag.app.ingest.model.ParseJobStatus;
 import com.agenticrag.app.ingest.queue.DocumentParseQueue;
 import com.agenticrag.app.ingest.queue.ReservedJob;
 import com.agenticrag.app.ingest.repo.KnowledgeRepository;
@@ -14,6 +16,7 @@ import com.agenticrag.app.ingest.storage.KnowledgeFileStorageService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
+import java.util.Locale;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -34,6 +37,7 @@ public class DocumentParseDispatcher {
 	private final DocumentParseQueue queue;
 	private final KnowledgeFileStorageService fileStorageService;
 	private final ObjectMapper objectMapper;
+	private final DocreaderReadResultService docreaderReadResultService;
 
 	public DocumentParseDispatcher(
 		ParseJobService parseJobService,
@@ -44,7 +48,8 @@ public class DocumentParseDispatcher {
 		FailureClassifier failureClassifier,
 		DocumentParseQueue queue,
 		KnowledgeFileStorageService fileStorageService,
-		ObjectMapper objectMapper
+		ObjectMapper objectMapper,
+		DocreaderReadResultService docreaderReadResultService
 	) {
 		this.parseJobService = parseJobService;
 		this.knowledgeRepository = knowledgeRepository;
@@ -55,6 +60,7 @@ public class DocumentParseDispatcher {
 		this.queue = queue;
 		this.fileStorageService = fileStorageService;
 		this.objectMapper = objectMapper;
+		this.docreaderReadResultService = docreaderReadResultService;
 	}
 
 	public void dispatch(ReservedJob reservedJob) {
@@ -62,7 +68,7 @@ public class DocumentParseDispatcher {
 			return;
 		}
 		String jobId = reservedJob.getJobId().trim();
-		Instant leaseUntil = Instant.now().plusSeconds(asyncProperties.getLeaseSeconds());
+		Instant leaseUntil = Instant.now().plusSeconds(resolveLeaseSeconds());
 
 		boolean claimed = parseJobService.tryMarkDispatched(jobId, leaseUntil);
 		if (!claimed) {
@@ -84,11 +90,10 @@ public class DocumentParseDispatcher {
 		}
 
 		try {
-			DocreaderJobSubmitRequest request = new DocreaderJobSubmitRequest();
+			DocreaderReadRequest request = new DocreaderReadRequest();
 			request.setJobId(jobId);
 			request.setKnowledgeId(knowledge.getId());
 			request.setFileUrl(fileStorageService.resolveReadUrl(knowledge.getFilePath()));
-			request.setCallbackUrl(docreaderProperties.getCallbackBaseUrl() + "/internal/docreader/jobs/" + jobId + "/result");
 			request.setPipelineVersion(jobOpt.get().getPipelineVersion());
 			Map<String, Object> options = new HashMap<>();
 			options.put("file_type", knowledge.getFileType());
@@ -97,15 +102,44 @@ public class DocumentParseDispatcher {
 			options.put("user_id", extractUserId(knowledge.getMetadataJson()));
 			request.setOptions(options);
 
-			DocreaderJobSubmitResponse response = docreaderClient.submitJob(request);
-			if (response == null || !response.isAccepted()) {
-				JobFailureAction action = parseJobService.registerFailure(jobId, "service_unavailable", "docreader rejected request", true);
+			parseJobService.markParsing(jobId, leaseUntil);
+			DocreaderReadResponse response = docreaderClient.readDocument(request);
+			String error = response != null ? response.getError() : null;
+			if (error != null && !error.trim().isEmpty()) {
+				String errorCode = parseErrorCode(error);
+				String errorMessage = parseErrorMessage(error);
+				boolean retryable = failureClassifier.isRetryable(errorCode, null);
+				JobFailureAction action = parseJobService.registerFailure(jobId, errorCode, errorMessage, retryable);
 				applyFailureQueueAction(reservedJob, action);
+				log.warn("docreader read failed: jobId={}, retryable={}, errorCode={}, error={}", jobId, retryable, errorCode, errorMessage);
 				return;
 			}
 
-			parseJobService.markParsing(jobId, leaseUntil);
+			boolean indexingMarked = parseJobService.markIndexing(jobId);
+			if (!indexingMarked) {
+				ParseJobEntity latest = parseJobService.findById(jobId).orElse(null);
+				if (latest == null) {
+					queue.ack(reservedJob);
+					log.warn("sync docreader skip indexing because job disappeared: jobId={}", jobId);
+					return;
+				}
+				ParseJobStatus latestStatus = latest.getStatus();
+				if (latestStatus != ParseJobStatus.INDEXING
+					&& latestStatus != ParseJobStatus.PARSING
+					&& latestStatus != ParseJobStatus.DISPATCHED) {
+					queue.ack(reservedJob);
+					log.info("sync docreader skip due to terminal status: jobId={}, status={}", jobId, latestStatus);
+					return;
+				}
+			}
+			DocreaderReadResultService.ProcessResult result = docreaderReadResultService.process(
+				knowledge.getId(),
+				extractUserId(knowledge.getMetadataJson()),
+				response
+			);
+			parseJobService.markSuccess(jobId);
 			queue.ack(reservedJob);
+			log.info("sync docreader processed success: jobId={}, chunks={}, embeddings={}", jobId, result.getChunks(), result.getEmbeddings());
 		} catch (Exception e) {
 			boolean retryable = failureClassifier.isRetryable("network_timeout", e);
 			JobFailureAction action = parseJobService.registerFailure(jobId, "network_timeout", e.getMessage(), retryable);
@@ -152,6 +186,31 @@ public class DocumentParseDispatcher {
 		} catch (Exception ignored) {
 			return "anonymous";
 		}
+	}
+
+	private long resolveLeaseSeconds() {
+		long baseLeaseSeconds = Math.max(1L, asyncProperties.getLeaseSeconds());
+		long docreaderReadSeconds = Math.max(1L, docreaderProperties.getReadTimeoutMillis() / 1000L);
+		return Math.max(baseLeaseSeconds, docreaderReadSeconds + 120L);
+	}
+
+	private String parseErrorCode(String error) {
+		String safe = error != null ? error.trim() : "";
+		if (safe.isEmpty()) {
+			return "service_unavailable";
+		}
+		int idx = safe.indexOf(':');
+		String code = idx > 0 ? safe.substring(0, idx).trim() : safe;
+		return code.isEmpty() ? "service_unavailable" : code.toLowerCase(Locale.ROOT);
+	}
+
+	private String parseErrorMessage(String error) {
+		String safe = error != null ? error.trim() : "";
+		int idx = safe.indexOf(':');
+		if (idx < 0 || idx >= safe.length() - 1) {
+			return safe;
+		}
+		return safe.substring(idx + 1).trim();
 	}
 
 	private String text(JsonNode node, String field) {

@@ -2,7 +2,7 @@ package com.agenticrag.app.ingest.api;
 
 import com.agenticrag.app.ingest.service.KnowledgeBrowseService;
 import com.agenticrag.app.ingest.service.KnowledgeImageService;
-import com.agenticrag.app.ingest.storage.MinioObjectService;
+import com.agenticrag.app.ingest.storage.StoredBinary;
 import java.util.List;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -50,11 +50,10 @@ public class KnowledgeBrowseController {
 
 	@GetMapping(value = "/knowledge/images")
 	public Mono<ResponseEntity<byte[]>> fetchImage(
-		@RequestParam("bucket") String bucket,
-		@RequestParam("key") String key
+		@RequestParam("filePath") String filePath
 	) {
 		return Mono.fromCallable(() -> {
-			MinioObjectService.StoredObject obj = knowledgeImageService.loadImage(bucket, key);
+			StoredBinary obj = knowledgeImageService.loadImage(filePath);
 			return ResponseEntity.ok()
 				.header(HttpHeaders.CONTENT_TYPE, obj.getContentType())
 				.body(obj.getBytes());

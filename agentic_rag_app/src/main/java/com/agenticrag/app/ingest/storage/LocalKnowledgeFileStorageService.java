@@ -42,6 +42,21 @@ public class LocalKnowledgeFileStorageService implements KnowledgeFileStorageSer
 	}
 
 	@Override
+	public StoredBinary load(String filePath) {
+		if (filePath == null || filePath.trim().isEmpty()) {
+			throw new IllegalArgumentException("filePath is required");
+		}
+		try {
+			Path file = Paths.get(filePath).toAbsolutePath().normalize();
+			byte[] bytes = Files.readAllBytes(file);
+			String contentType = Files.probeContentType(file);
+			return new StoredBinary(bytes, contentType != null ? contentType : "application/octet-stream");
+		} catch (IOException e) {
+			throw new IllegalStateException("failed to load knowledge file", e);
+		}
+	}
+
+	@Override
 	public boolean deleteAndReport(String filePath) {
 		if (filePath == null || filePath.trim().isEmpty()) {
 			return false;

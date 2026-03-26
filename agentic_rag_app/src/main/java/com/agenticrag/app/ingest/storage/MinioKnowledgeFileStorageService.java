@@ -35,6 +35,13 @@ public class MinioKnowledgeFileStorageService implements KnowledgeFileStorageSer
 	}
 
 	@Override
+	public StoredBinary load(String filePath) {
+		MinioPath parsed = parseMinioUri(filePath);
+		MinioObjectService.StoredObject object = minioObjectService.getObject(parsed.bucket, parsed.key);
+		return new StoredBinary(object.getBytes(), object.getContentType());
+	}
+
+	@Override
 	public boolean deleteAndReport(String filePath) {
 		if (filePath == null || filePath.trim().isEmpty()) {
 			return false;
