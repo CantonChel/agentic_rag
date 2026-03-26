@@ -178,9 +178,9 @@ print_diag_section() {
 
 print_startup_diagnostics() {
   log "================ Startup Diagnostics ================"
-  print_diag_section "Environment Summary" bash -c "printf 'INGEST_FILE_STORAGE_BACKEND=%s\nDOCREADER_BASE_URL=%s\nDOCREADER_CALLBACK_BASE_URL=%s\nDOCREADER_CALLBACK_SECRET=%s\nMINIO_ENDPOINT=%s\n' \"${INGEST_FILE_STORAGE_BACKEND}\" \"${DOCREADER_BASE_URL:-}\" \"${DOCREADER_CALLBACK_BASE_URL:-}\" \"$( [[ -n \"${DOCREADER_CALLBACK_SECRET:-}\" ]] && echo 'set' || echo 'empty' )\" \"${MINIO_ENDPOINT_APP}\""
-  print_diag_section "App Parse Events (last 40)" bash -c "tail -n 500 \"${APP_LOG_FILE}\" 2>/dev/null | grep -E 'dispatch job failed|callback processed success|invalid callback signature|lease recover|stale indexing|residual failed knowledge cleanup' | tail -n 40"
-  print_diag_section "Docreader Callback Events (last 40)" bash -c "tail -n 500 \"${DOCREADER_LOG_FILE}\" 2>/dev/null | grep -E 'callback non-2xx|callback exception|callback failed after retries|status=failed|status=success' | tail -n 40"
+  print_diag_section "Environment Summary" bash -c "printf 'INGEST_FILE_STORAGE_BACKEND=%s\nDOCREADER_BASE_URL=%s\nDOCREADER_READ_PATH=%s\nDOCREADER_READ_TIMEOUT_MILLIS=%s\nMINIO_ENDPOINT=%s\n' \"${INGEST_FILE_STORAGE_BACKEND}\" \"${DOCREADER_BASE_URL:-}\" \"${DOCREADER_READ_PATH:-/read}\" \"${DOCREADER_READ_TIMEOUT_MILLIS:-120000}\" \"${MINIO_ENDPOINT_APP}\""
+  print_diag_section "App Parse Events (last 40)" bash -c "tail -n 500 \"${APP_LOG_FILE}\" 2>/dev/null | grep -E 'dispatch job failed|synchronous docreader read failed|docreader returned terminal error|lease recover|stale indexing|residual failed knowledge cleanup|docreader read completed|indexing failed' | tail -n 40"
+  print_diag_section "Docreader Read Events (last 40)" bash -c "tail -n 500 \"${DOCREADER_LOG_FILE}\" 2>/dev/null | grep -E 'POST /read|unsupported_file|error|exception' | tail -n 40"
   print_diag_section "Queue Poller Warnings (last 20)" bash -c "tail -n 500 \"${APP_LOG_FILE}\" 2>/dev/null | grep -E 'queue poll failed|Redis command interrupted' | tail -n 20"
   log "================ End Diagnostics ===================="
 }
@@ -521,12 +521,7 @@ ensure_docreader_dependency
   export MINIO_SECRET_KEY="${MINIO_SECRET_KEY}"
   export MINIO_BUCKET="${MINIO_BUCKET}"
   export MINIO_SECURE="${MINIO_SECURE}"
-  export DOCREADER_CALLBACK_SECRET="${DOCREADER_CALLBACK_SECRET:-}"
-  export DOCREADER_SIGNATURE_HEADER="${DOCREADER_SIGNATURE_HEADER:-X-Docreader-Signature}"
-  export DOCREADER_TIMESTAMP_HEADER="${DOCREADER_TIMESTAMP_HEADER:-X-Docreader-Timestamp}"
-  export DOCREADER_CALLBACK_TIMEOUT_SECONDS="${DOCREADER_CALLBACK_TIMEOUT_SECONDS:-120}"
-  export DOCREADER_CALLBACK_RETRY_MAX="${DOCREADER_CALLBACK_RETRY_MAX:-3}"
-  
+
   # 使用 uvicorn 启动 FastAPI 应用
   # main:app 表示 main.py 文件中的 app 对象
   # --host 0.0.0.0 允许外部访问
@@ -632,9 +627,9 @@ log "Starting agentic_rag_app (port ${JAVA_PORT})"
   
   # Docreader 配置
   export DOCREADER_BASE_URL="${DOCREADER_BASE_URL:-http://127.0.0.1:${DOCREADER_PORT}}"
-  export DOCREADER_CALLBACK_BASE_URL="${DOCREADER_CALLBACK_BASE_URL:-http://127.0.0.1:${JAVA_PORT}}"
-  export DOCREADER_CALLBACK_SECRET="${DOCREADER_CALLBACK_SECRET:-}"
-  
+  export DOCREADER_READ_PATH="${DOCREADER_READ_PATH:-/read}"
+  export DOCREADER_READ_TIMEOUT_MILLIS="${DOCREADER_READ_TIMEOUT_MILLIS:-120000}"
+
   # LLM API Keys
   export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
   export MINIMAX_API_KEY="${MINIMAX_API_KEY:-}"

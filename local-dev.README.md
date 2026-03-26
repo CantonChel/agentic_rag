@@ -29,7 +29,7 @@ REDIS_PORT=6379 \
 INGEST_ASYNC_ENABLED=true \
 INGEST_FILE_ROOT=/tmp/knowledge-files-local \
 DOCREADER_BASE_URL=http://127.0.0.1:8090 \
-DOCREADER_CALLBACK_BASE_URL=http://127.0.0.1:8081 \
+DOCREADER_READ_PATH=/read \
 ./mvnw -q spring-boot:run
 ```
 

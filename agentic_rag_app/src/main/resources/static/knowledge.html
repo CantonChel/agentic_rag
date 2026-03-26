@@ -1059,10 +1059,9 @@
       }
 
       function buildImageApiUrl(info) {
-        const bucket = info && info.storageBucket ? String(info.storageBucket).trim() : '';
-        const key = info && info.storageKey ? String(info.storageKey).trim() : '';
-        if (!bucket || !key) return '';
-        return apiUrl('/api/knowledge/images?bucket=' + encodeURIComponent(bucket) + '&key=' + encodeURIComponent(key));
+        const filePath = info && info.filePath ? String(info.filePath).trim() : '';
+        if (!filePath) return '';
+        return apiUrl('/api/knowledge/images?filePath=' + encodeURIComponent(filePath));
       }
 
       function addLinkLine(root, title, url) {
@@ -1600,7 +1599,7 @@
           return;
         }
         
-        const res = await fetch(apiUrl('/api/parse-jobs/' + encodeURIComponent(jobId)));
+        const res = await fetch(apiUrl('/api/jobs/' + encodeURIComponent(jobId)));
         const text = await res.text();
         jobOut.textContent = '状态: ' + res.status + '\n' + text;
         
@@ -1638,7 +1637,7 @@
           return;
         }
         
-        const res = await fetch(apiUrl('/api/parse-jobs/' + encodeURIComponent(jobId) + '/retry'), {
+        const res = await fetch(apiUrl('/api/jobs/' + encodeURIComponent(jobId) + '/retry'), {
           method: 'POST'
         });
         const text = await res.text();
