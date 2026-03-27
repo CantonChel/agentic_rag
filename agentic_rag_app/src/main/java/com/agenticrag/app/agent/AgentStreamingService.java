@@ -1,5 +1,6 @@
 package com.agenticrag.app.agent;
 
+import com.agenticrag.app.agent.execution.AgentExecutionControl;
 import com.agenticrag.app.chat.context.ContextManager;
 import com.agenticrag.app.chat.message.AssistantMessage;
 import com.agenticrag.app.chat.message.ChatMessage;
@@ -164,7 +165,16 @@ public class AgentStreamingService {
 		boolean includeTools,
 		LlmToolChoiceMode toolChoiceMode
 	) {
-		return stream(provider, "anonymous", sessionId, prompt, includeTools, toolChoiceMode, null, null);
+		return stream(
+			provider,
+			"anonymous",
+			sessionId,
+			prompt,
+			includeTools,
+			toolChoiceMode,
+			null,
+			AgentExecutionControl.defaults(null)
+		);
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -175,7 +185,16 @@ public class AgentStreamingService {
 		boolean includeTools,
 		LlmToolChoiceMode toolChoiceMode
 	) {
-		return stream(provider, userId, sessionId, prompt, includeTools, toolChoiceMode, null, null);
+		return stream(
+			provider,
+			userId,
+			sessionId,
+			prompt,
+			includeTools,
+			toolChoiceMode,
+			null,
+			AgentExecutionControl.defaults(null)
+		);
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -187,7 +206,16 @@ public class AgentStreamingService {
 		LlmToolChoiceMode toolChoiceMode,
 		String traceId
 	) {
-		return stream(provider, userId, sessionId, prompt, includeTools, toolChoiceMode, traceId, null);
+		return stream(
+			provider,
+			userId,
+			sessionId,
+			prompt,
+			includeTools,
+			toolChoiceMode,
+			traceId,
+			AgentExecutionControl.defaults(null)
+		);
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -200,20 +228,39 @@ public class AgentStreamingService {
 		String traceId,
 		String knowledgeBaseId
 	) {
+		return stream(provider, userId, sessionId, prompt, includeTools, toolChoiceMode, traceId, AgentExecutionControl.defaults(knowledgeBaseId));
+	}
+
+	public Flux<LlmStreamEvent> stream(
+		LlmProvider provider,
+		String userId,
+		String sessionId,
+		String prompt,
+		boolean includeTools,
+		LlmToolChoiceMode toolChoiceMode,
+		String traceId,
+		AgentExecutionControl executionControl
+	) {
 		String uid = SessionScope.normalizeUserId(userId);
 		String sid = SessionScope.normalizeSessionId(sessionId);
 		String scopedSid = SessionScope.scopedSessionId(uid, sid);
 		String effectiveTraceId = TraceIdUtil.normalizeOrGenerate(traceId);
-		String scopedKnowledgeBaseId = normalizeKnowledgeBaseId(knowledgeBaseId);
+		AgentExecutionControl control = executionControl != null ? executionControl : AgentExecutionControl.defaults(null);
+		String scopedKnowledgeBaseId = normalizeKnowledgeBaseId(control.getKnowledgeBaseId());
 		int maxIterations = agentProperties.getMaxIterations() > 0 ? agentProperties.getMaxIterations() : 6;
 		long toolTimeoutSeconds = agentProperties.getToolTimeoutSeconds() > 0 ? agentProperties.getToolTimeoutSeconds() : 30;
 		log.info(
-			"event=agent_stream_start traceId={} provider={} userId={} sessionId={} knowledgeBaseId={} includeTools={} toolChoice={} promptChars={}",
+			"event=agent_stream_start traceId={} provider={} userId={} sessionId={} knowledgeBaseId={} buildId={} kbScope={} evalMode={} thinkingProfile={} memoryEnabled={} includeTools={} toolChoice={} promptChars={}",
 			effectiveTraceId,
 			provider,
 			uid,
 			sid,
 			scopedKnowledgeBaseId,
+			control.getBuildId(),
+			control.getKbScope(),
+			control.getEvalMode(),
+			control.getThinkingProfile(),
+			control.isMemoryEnabled(),
 			includeTools,
 			toolChoiceMode,
 			prompt != null ? prompt.length() : 0
