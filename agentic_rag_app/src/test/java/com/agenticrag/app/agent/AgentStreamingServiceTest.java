@@ -4,6 +4,8 @@ import com.agenticrag.app.agent.execution.AgentEvalMode;
 import com.agenticrag.app.agent.execution.AgentExecutionControl;
 import com.agenticrag.app.agent.execution.AgentKbScope;
 import com.agenticrag.app.agent.execution.AgentThinkingProfile;
+import com.agenticrag.app.benchmark.execution.BenchmarkTurnExecutionSummaryService;
+import com.agenticrag.app.benchmark.execution.BenchmarkTurnExecutionSummaryWriteModel;
 import com.agenticrag.app.chat.context.InMemorySessionContextManager;
 import com.agenticrag.app.chat.context.LocalExecutionContextRecorder;
 import com.agenticrag.app.chat.context.SessionContextProperties;
@@ -908,6 +910,246 @@ class AgentStreamingServiceTest {
 		);
 	}
 
+	@Test
+	void savesTurnExecutionSummaryOnSuccessfulToolRun() {
+		ObjectMapper objectMapper = new ObjectMapper();
+		BenchmarkTurnExecutionSummaryService summaryService = Mockito.mock(BenchmarkTurnExecutionSummaryService.class);
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		StreamResponse<ChatCompletionChunk> r1 = new FakeStreamResponse(Stream.of(toolCallsChunk()));
+		StreamResponse<ChatCompletionChunk> r2 = new FakeStreamResponse(Stream.of(textChunk("final answer")));
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(r1, r2);
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		ToolRouter toolRouter = new ToolRouter();
+		toolRouter.register(new RetrievalSidecarTool(objectMapper, "kb-1"));
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(4);
+		agentProps.setToolTimeoutSeconds(5);
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			new ToolArgumentValidator(),
+			summaryService
+		);
+
+		List<LlmStreamEvent> events = service.stream(
+			LlmProvider.OPENAI,
+			"user-1",
+			"s1",
+			"question",
+			true,
+			LlmToolChoiceMode.AUTO,
+			"trace-1",
+			new AgentExecutionControl("build-1", "kb-1", AgentKbScope.BENCHMARK_BUILD, AgentEvalMode.SINGLE_TURN, AgentThinkingProfile.DEFAULT, false)
+		).collectList().block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+
+		ArgumentCaptor<BenchmarkTurnExecutionSummaryWriteModel> captor = ArgumentCaptor.forClass(BenchmarkTurnExecutionSummaryWriteModel.class);
+		Mockito.verify(summaryService).saveSummary(captor.capture());
+		BenchmarkTurnExecutionSummaryWriteModel summary = captor.getValue();
+
+		Assertions.assertEquals("s1", summary.sessionId());
+		Assertions.assertEquals("user-1", summary.userId());
+		Assertions.assertEquals("trace-1", summary.traceId());
+		Assertions.assertEquals("OPENAI", summary.provider());
+		Assertions.assertEquals("gpt-test", summary.originModel());
+		Assertions.assertEquals("build-1", summary.buildId());
+		Assertions.assertEquals("kb-1", summary.knowledgeBaseId());
+		Assertions.assertEquals("BENCHMARK_BUILD", summary.kbScope());
+		Assertions.assertEquals("SINGLE_TURN", summary.evalMode());
+		Assertions.assertEquals("DEFAULT", summary.thinkingProfile());
+		Assertions.assertFalse(summary.memoryEnabled());
+		Assertions.assertEquals("question", summary.userQuestion());
+		Assertions.assertEquals("final answer", summary.finalAnswer());
+		Assertions.assertTrue(summary.finishReason().equalsIgnoreCase("stop"));
+		Assertions.assertNull(summary.errorMessage());
+		Assertions.assertEquals(1, summary.toolCalls().size());
+		Assertions.assertEquals("call_1", summary.toolCalls().get(0).toolCallId());
+		Assertions.assertEquals("calculator", summary.toolCalls().get(0).toolName());
+		Assertions.assertEquals("success", summary.toolCalls().get(0).status());
+		Assertions.assertEquals(List.of("trace-r1"), summary.retrievalTraceIds());
+		Assertions.assertEquals(1, summary.retrievalTraceRefs().size());
+		Assertions.assertEquals("trace-r1", summary.retrievalTraceRefs().get(0).traceId());
+		Assertions.assertEquals("call_1", summary.retrievalTraceRefs().get(0).toolCallId());
+		Assertions.assertEquals("calculator", summary.retrievalTraceRefs().get(0).toolName());
+		Assertions.assertNotNull(summary.latencyMs());
+		Assertions.assertNotNull(summary.completedAt());
+	}
+
+	@Test
+	void savesTurnExecutionSummaryOnAgentError() {
+		ObjectMapper objectMapper = new ObjectMapper();
+		BenchmarkTurnExecutionSummaryService summaryService = Mockito.mock(BenchmarkTurnExecutionSummaryService.class);
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenThrow(new RuntimeException("boom"));
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(2);
+		agentProps.setToolTimeoutSeconds(5);
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			new ToolRouter(),
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			new ToolArgumentValidator(),
+			summaryService
+		);
+
+		List<LlmStreamEvent> events = service.stream(
+			LlmProvider.OPENAI,
+			"user-1",
+			"s1",
+			"question",
+			false,
+			LlmToolChoiceMode.NONE,
+			"trace-err",
+			AgentExecutionControl.defaults(null)
+		).collectList().block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		Assertions.assertTrue(events.stream().anyMatch(event -> "error".equals(event.getType())));
+
+		ArgumentCaptor<BenchmarkTurnExecutionSummaryWriteModel> captor = ArgumentCaptor.forClass(BenchmarkTurnExecutionSummaryWriteModel.class);
+		Mockito.verify(summaryService).saveSummary(captor.capture());
+		BenchmarkTurnExecutionSummaryWriteModel summary = captor.getValue();
+
+		Assertions.assertEquals("error", summary.finishReason());
+		Assertions.assertNull(summary.finalAnswer());
+		Assertions.assertTrue(summary.toolCalls().isEmpty());
+		Assertions.assertTrue(summary.retrievalTraceIds().isEmpty());
+		Assertions.assertNotNull(summary.errorMessage());
+		Assertions.assertTrue(summary.errorMessage().contains("RuntimeException: boom"));
+	}
+
+	@Test
+	void savesTurnExecutionSummaryOnClientCancellation() {
+		ObjectMapper objectMapper = new ObjectMapper();
+		BenchmarkTurnExecutionSummaryService summaryService = Mockito.mock(BenchmarkTurnExecutionSummaryService.class);
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenAnswer(invocation -> {
+				try {
+					Thread.sleep(3000);
+				} catch (InterruptedException e) {
+					throw new RuntimeException(e);
+				}
+				return new FakeStreamResponse(Stream.of(textChunk("late")));
+			});
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			new ToolRouter(),
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			Mockito.mock(PersistentMessageStore.class),
+			new LocalExecutionContextRecorder(),
+			new AgentProperties(),
+			new ToolArgumentValidator(),
+			summaryService
+		);
+
+		List<LlmStreamEvent> firstEvent = service.stream(
+			LlmProvider.OPENAI,
+			"user-1",
+			"s1",
+			"question",
+			false,
+			LlmToolChoiceMode.NONE,
+			"trace-cancel",
+			AgentExecutionControl.defaults(null)
+		).take(1).collectList().block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(firstEvent);
+		Assertions.assertEquals(1, firstEvent.size());
+		Assertions.assertEquals("turn_start", firstEvent.get(0).getType());
+
+		ArgumentCaptor<BenchmarkTurnExecutionSummaryWriteModel> captor = ArgumentCaptor.forClass(BenchmarkTurnExecutionSummaryWriteModel.class);
+		Mockito.verify(summaryService, Mockito.timeout(3000)).saveSummary(captor.capture());
+		BenchmarkTurnExecutionSummaryWriteModel summary = captor.getValue();
+
+		Assertions.assertEquals("cancelled", summary.finishReason());
+		Assertions.assertNull(summary.finalAnswer());
+		Assertions.assertTrue(summary.toolCalls().isEmpty());
+		Assertions.assertTrue(summary.retrievalTraceIds().isEmpty());
+	}
+
 	private static ChatCompletionChunk toolCallsChunk() {
 		ChatCompletionChunk.Choice.Delta.ToolCall.Function fn = ChatCompletionChunk.Choice.Delta.ToolCall.Function.builder()
 			.name("calculator")
@@ -1101,6 +1343,50 @@ class AgentStreamingServiceTest {
 		public Mono<ToolResult> execute(JsonNode arguments, ToolExecutionContext context) {
 			capturedContext.set(context);
 			return Mono.just(ToolResult.ok("42"));
+		}
+	}
+
+	private static final class RetrievalSidecarTool implements Tool {
+		private final ObjectMapper objectMapper;
+		private final String knowledgeBaseId;
+
+		private RetrievalSidecarTool(ObjectMapper objectMapper, String knowledgeBaseId) {
+			this.objectMapper = objectMapper;
+			this.knowledgeBaseId = knowledgeBaseId;
+		}
+
+		@Override
+		public String name() {
+			return "calculator";
+		}
+
+		@Override
+		public String description() {
+			return "returns retrieval sidecar";
+		}
+
+		@Override
+		public JsonNode parametersSchema() {
+			com.fasterxml.jackson.databind.node.ObjectNode root = objectMapper.createObjectNode();
+			root.put("type", "object");
+			com.fasterxml.jackson.databind.node.ObjectNode properties = root.putObject("properties");
+			properties.putObject("op").put("type", "string");
+			properties.putObject("a").put("type", "number");
+			properties.putObject("b").put("type", "number");
+			root.putArray("required").add("op").add("a").add("b");
+			return root;
+		}
+
+		@Override
+		public Mono<ToolResult> execute(JsonNode arguments, ToolExecutionContext context) {
+			com.fasterxml.jackson.databind.node.ObjectNode sidecar = objectMapper.createObjectNode();
+			sidecar.put("type", "retrieval_context_v1");
+			sidecar.put("traceId", "trace-r1");
+			sidecar.put("toolCallId", context.getToolCallId());
+			sidecar.put("toolName", name());
+			sidecar.put("knowledgeBaseId", knowledgeBaseId);
+			sidecar.putArray("items");
+			return Mono.just(ToolResult.ok("retrieved", sidecar));
 		}
 	}
 

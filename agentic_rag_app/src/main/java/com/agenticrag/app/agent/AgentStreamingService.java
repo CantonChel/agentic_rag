@@ -3,6 +3,8 @@ package com.agenticrag.app.agent;
 import com.agenticrag.app.agent.execution.AgentEvalMode;
 import com.agenticrag.app.agent.execution.AgentExecutionControl;
 import com.agenticrag.app.agent.execution.AgentThinkingProfile;
+import com.agenticrag.app.agent.execution.AgentTurnExecutionAccumulator;
+import com.agenticrag.app.benchmark.execution.BenchmarkTurnExecutionSummaryService;
 import com.agenticrag.app.chat.context.ContextManager;
 import com.agenticrag.app.chat.message.AssistantMessage;
 import com.agenticrag.app.chat.message.ChatMessage;
@@ -48,6 +50,7 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionFunctionTool;
 import com.openai.models.chat.completions.ChatCompletionTool;
 import com.openai.models.chat.completions.ChatCompletionToolChoiceOption;
+import java.time.Instant;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -57,6 +60,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -92,6 +96,7 @@ public class AgentStreamingService {
 	private final ToolArgumentValidator toolArgumentValidator;
 	private final SessionManager sessionManager;
 	private final MemoryFlushService memoryFlushService;
+	private final BenchmarkTurnExecutionSummaryService benchmarkTurnExecutionSummaryService;
 	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+\\.?|Step\\s*\\d+\\.?|\\d+\\.)\\s+)");
 	private static final String THINK_OPEN = "<think>";
 	private static final String THINK_CLOSE = "</think>";
@@ -125,7 +130,43 @@ public class AgentStreamingService {
 			agentProperties,
 			toolArgumentValidator,
 			null,
+			null,
 			null
+		);
+	}
+
+	public AgentStreamingService(
+		OpenAIClient openAiClient,
+		OpenAIClient minimaxClient,
+		OpenAiClientProperties openAiProperties,
+		MinimaxClientProperties minimaxProperties,
+		ToolRouter toolRouter,
+		ObjectMapper objectMapper,
+		SystemPromptManager systemPromptManager,
+		ContextManager contextManager,
+		PersistentMessageStore persistentMessageStore,
+		com.agenticrag.app.chat.context.LocalExecutionContextRecorder localExecutionContextRecorder,
+		AgentProperties agentProperties,
+		ToolArgumentValidator toolArgumentValidator,
+		BenchmarkTurnExecutionSummaryService benchmarkTurnExecutionSummaryService
+	) {
+		this(
+			openAiClient,
+			minimaxClient,
+			openAiProperties,
+			minimaxProperties,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistentMessageStore,
+			null,
+			localExecutionContextRecorder,
+			agentProperties,
+			toolArgumentValidator,
+			null,
+			null,
+			benchmarkTurnExecutionSummaryService
 		);
 	}
 
@@ -145,7 +186,8 @@ public class AgentStreamingService {
 		AgentProperties agentProperties,
 		ToolArgumentValidator toolArgumentValidator,
 		SessionManager sessionManager,
-		MemoryFlushService memoryFlushService
+		MemoryFlushService memoryFlushService,
+		BenchmarkTurnExecutionSummaryService benchmarkTurnExecutionSummaryService
 	) {
 		this.openAiClient = openAiClient;
 		this.minimaxClient = minimaxClient;
@@ -163,6 +205,7 @@ public class AgentStreamingService {
 		this.toolArgumentValidator = toolArgumentValidator;
 		this.sessionManager = sessionManager;
 		this.memoryFlushService = memoryFlushService;
+		this.benchmarkTurnExecutionSummaryService = benchmarkTurnExecutionSummaryService;
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -280,14 +323,30 @@ public class AgentStreamingService {
 		);
 
 		return Flux.create(sink -> {
+			AtomicBoolean cancelled = new AtomicBoolean(false);
 			Future<?> future = streamExecutor.submit(() -> {
 				String turnId = UUID.randomUUID().toString();
+				Instant turnCreatedAt = Instant.now();
+				long turnStartNs = System.nanoTime();
+				String initialModel = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
+				AgentTurnExecutionAccumulator executionAccumulator = new AgentTurnExecutionAccumulator(
+					turnId,
+					sid,
+					uid,
+					effectiveTraceId,
+					provider != null ? provider.name() : null,
+					initialModel,
+					control,
+					prompt,
+					turnCreatedAt
+				);
 				AtomicLong sequence = new AtomicLong(0L);
 				LongSupplier nextSequence = () -> sequence.incrementAndGet();
 				java.util.function.Consumer<LlmStreamEvent> emit = event -> emitStreamEvent(sink, scopedSid, event);
 				AtomicBoolean turnEnded = new AtomicBoolean(false);
 				AtomicReference<String> turnFinishReasonRef = new AtomicReference<>("completed");
 				AtomicReference<Integer> turnRoundIdRef = new AtomicReference<>(null);
+				AtomicReference<String> turnErrorMessageRef = new AtomicReference<>(null);
 				java.util.function.BiConsumer<String, Integer> emitTurnEnd = (reason, roundId) -> {
 					if (turnEnded.compareAndSet(false, true)) {
 						emit.accept(LlmStreamEvent.turnEnd(
@@ -302,8 +361,9 @@ public class AgentStreamingService {
 
 				emit.accept(LlmStreamEvent.turnStart(turnId, nextSequence.getAsLong(), System.currentTimeMillis(), sid));
 				try {
+					throwIfCancelled(sink, cancelled);
 					OpenAIClient client = provider == LlmProvider.MINIMAX ? minimaxClient : openAiClient;
-					String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
+					String model = initialModel;
 					String configuredSystemPrompt = systemPromptManager.build(
 						new SystemPromptContext(provider, includeTools, SystemPromptMode.AGENT, control.isMemoryEnabled(), allowedToolNames)
 					);
@@ -331,6 +391,13 @@ public class AgentStreamingService {
 						emit.accept(LlmStreamEvent.done("session_switched", null, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), null));
 						turnFinishReasonRef.set("session_switched");
 						emitTurnEnd.accept("session_switched", null);
+						executionAccumulator.markCompleted(
+							"session_switched",
+							(System.nanoTime() - turnStartNs) / 1_000_000,
+							null,
+							Instant.now()
+						);
+						persistTurnExecutionSummary(executionAccumulator);
 						sink.complete();
 						return;
 					}
@@ -363,6 +430,7 @@ public class AgentStreamingService {
 					int iteration = 0;
 
 					while (!finished && iteration < maxIterations) {
+						throwIfCancelled(sink, cancelled);
 						iteration++;
 						final int iterationFinal = iteration;
 						turnRoundIdRef.set(iterationFinal);
@@ -409,13 +477,16 @@ public class AgentStreamingService {
 						try (StreamResponse<ChatCompletionChunk> streamResponse = client.chat().completions().createStreaming(paramsBuilder.build())) {
 							outer:
 							for (ChatCompletionChunk chunk : (Iterable<ChatCompletionChunk>) streamResponse.stream()::iterator) {
+								throwIfCancelled(sink, cancelled);
 								if (chunk == null || chunk.choices() == null) {
 									continue;
 								}
 								if (chunk.model() != null && !chunk.model().isEmpty()) {
 									originModelRef.set(chunk.model());
+									executionAccumulator.recordOriginModel(chunk.model());
 								}
 								for (ChatCompletionChunk.Choice choice : chunk.choices()) {
+									throwIfCancelled(sink, cancelled);
 									if (choice == null || choice.delta() == null) {
 										continue;
 									}
@@ -487,8 +558,10 @@ public class AgentStreamingService {
 
 						List<LlmToolCall> toolCalls = toolCallAccumulator.buildToolCalls();
 						String assistantFinal = assistantContent.toString().trim();
+						executionAccumulator.recordOriginModel(originModelRef.get());
 
 						if (!assistantFinal.isEmpty()) {
+							executionAccumulator.recordFinalAnswer(assistantFinal);
 							AssistantMessage am = new AssistantMessage(assistantFinal);
 							localContext.add(am);
 							persistentMessageStore.append(scopedSid, am);
@@ -552,6 +625,7 @@ public class AgentStreamingService {
 						}
 
 						for (LlmToolCall call : toolCalls) {
+							throwIfCancelled(sink, cancelled);
 							if (call == null) {
 								continue;
 							}
@@ -633,6 +707,14 @@ public class AgentStreamingService {
 								toolResult.getError()
 							);
 							String toolStatus = resolveToolStatus(toolResult, toolFailure);
+							executionAccumulator.recordToolResult(
+								toolCallId,
+								toolName,
+								toolStatus,
+								toolDurationMs,
+								toolResult.getError()
+							);
+							executionAccumulator.recordRetrievalSidecar(toolResult.getSidecar(), toolCallId, toolName);
 							emit.accept(LlmStreamEvent.toolEnd(
 								turnId,
 								nextSequence.getAsLong(),
@@ -720,6 +802,16 @@ public class AgentStreamingService {
 						finished,
 						maxIterations
 					);
+				} catch (CancellationException e) {
+					log.info(
+						"event=agent_stream_cancelled traceId={} provider={} userId={} sessionId={} message={}",
+						effectiveTraceId,
+						provider,
+						uid,
+						sid,
+						e.getMessage()
+					);
+					turnFinishReasonRef.set("cancelled");
 				} catch (UnauthorizedException e) {
 					log.warn(
 						"event=agent_stream_error traceId={} provider={} userId={} sessionId={} type=UnauthorizedException message={}",
@@ -730,6 +822,7 @@ public class AgentStreamingService {
 						e.getMessage()
 					);
 					String err = "Unauthorized: check API key for provider=" + provider + " (401)";
+					turnErrorMessageRef.set(err);
 					emit.accept(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
 					turnFinishReasonRef.set("error");
 					emitTurnEnd.accept("error", turnRoundIdRef.get());
@@ -744,30 +837,58 @@ public class AgentStreamingService {
 						e.getMessage()
 					);
 					String err = "OpenAI SDK error: " + e.getClass().getSimpleName() + ": " + e.getMessage();
+					turnErrorMessageRef.set(err);
 					emit.accept(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
 					turnFinishReasonRef.set("error");
 					emitTurnEnd.accept("error", turnRoundIdRef.get());
 				} catch (Exception e) {
-					log.warn(
-						"event=agent_stream_error traceId={} provider={} userId={} sessionId={} type={} message={}",
-						effectiveTraceId,
-						provider,
-						uid,
-						sid,
-						e.getClass().getSimpleName(),
-						e.getMessage()
-					);
-					String err = "Agent loop failed: " + e.getClass().getSimpleName() + ": " + e.getMessage();
-					emit.accept(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
-					turnFinishReasonRef.set("error");
-					emitTurnEnd.accept("error", turnRoundIdRef.get());
+					if (isCancellationException(cancelled, e)) {
+						log.info(
+							"event=agent_stream_cancelled traceId={} provider={} userId={} sessionId={} type={} message={}",
+							effectiveTraceId,
+							provider,
+							uid,
+							sid,
+							e.getClass().getSimpleName(),
+							e.getMessage()
+						);
+						turnFinishReasonRef.set("cancelled");
+					} else {
+						log.warn(
+							"event=agent_stream_error traceId={} provider={} userId={} sessionId={} type={} message={}",
+							effectiveTraceId,
+							provider,
+							uid,
+							sid,
+							e.getClass().getSimpleName(),
+							e.getMessage()
+						);
+						String err = "Agent loop failed: " + e.getClass().getSimpleName() + ": " + e.getMessage();
+						turnErrorMessageRef.set(err);
+						emit.accept(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
+						turnFinishReasonRef.set("error");
+						emitTurnEnd.accept("error", turnRoundIdRef.get());
+					}
 				}
 
-				emitTurnEnd.accept(turnFinishReasonRef.get(), turnRoundIdRef.get());
-				sink.complete();
+				String summaryFinishReason = resolveSummaryFinishReason(cancelled, turnEnded, turnFinishReasonRef.get());
+				executionAccumulator.markCompleted(
+					summaryFinishReason,
+					(System.nanoTime() - turnStartNs) / 1_000_000,
+					turnErrorMessageRef.get(),
+					Instant.now()
+				);
+				persistTurnExecutionSummary(executionAccumulator);
+				if (!isCancelled(sink, cancelled)) {
+					emitTurnEnd.accept(turnFinishReasonRef.get(), turnRoundIdRef.get());
+					sink.complete();
+				}
 			});
 
-			sink.onCancel(() -> future.cancel(true));
+			sink.onCancel(() -> {
+				cancelled.set(true);
+				future.cancel(true);
+			});
 		});
 	}
 
@@ -1089,6 +1210,45 @@ public class AgentStreamingService {
 			return value;
 		}
 		return value.substring(0, maxLength) + "...";
+	}
+
+	private void persistTurnExecutionSummary(AgentTurnExecutionAccumulator executionAccumulator) {
+		if (benchmarkTurnExecutionSummaryService == null || executionAccumulator == null) {
+			return;
+		}
+		try {
+			benchmarkTurnExecutionSummaryService.saveSummary(executionAccumulator.toWriteModel());
+		} catch (Exception e) {
+			log.warn(
+				"event=benchmark_turn_summary_save_failed turnId={} message={}",
+				executionAccumulator.toWriteModel().turnId(),
+				e.getMessage()
+			);
+		}
+	}
+
+	private void throwIfCancelled(reactor.core.publisher.FluxSink<LlmStreamEvent> sink, AtomicBoolean cancelled) {
+		if (isCancelled(sink, cancelled)) {
+			throw new CancellationException("client cancelled");
+		}
+	}
+
+	private boolean isCancelled(reactor.core.publisher.FluxSink<LlmStreamEvent> sink, AtomicBoolean cancelled) {
+		return (cancelled != null && cancelled.get()) || (sink != null && sink.isCancelled()) || Thread.currentThread().isInterrupted();
+	}
+
+	private boolean isCancellationException(AtomicBoolean cancelled, Exception exception) {
+		return cancelled != null && cancelled.get()
+			|| exception instanceof java.lang.InterruptedException
+			|| Thread.currentThread().isInterrupted();
+	}
+
+	private String resolveSummaryFinishReason(AtomicBoolean cancelled, AtomicBoolean turnEnded, String finishReason) {
+		if ((cancelled != null && cancelled.get()) && (turnEnded == null || !turnEnded.get())) {
+			return "cancelled";
+		}
+		String normalized = finishReason == null ? null : finishReason.trim();
+		return normalized == null || normalized.isEmpty() ? "completed" : normalized;
 	}
 
 	private static final class ThinkTagParser {
