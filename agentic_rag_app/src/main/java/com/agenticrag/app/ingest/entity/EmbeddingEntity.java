@@ -14,11 +14,12 @@ import javax.persistence.UniqueConstraint;
 @Table(
 	name = "embedding",
 	uniqueConstraints = {
-		@UniqueConstraint(name = "uk_embedding_chunk_model", columnNames = {"chunkId", "modelName"})
+		@UniqueConstraint(name = "uk_embedding_knowledge_chunk_model", columnNames = {"knowledgeId", "chunkId", "modelName"})
 	},
 	indexes = {
 		@Index(name = "idx_embedding_knowledge", columnList = "knowledgeId"),
-		@Index(name = "idx_embedding_chunk", columnList = "chunkId")
+		@Index(name = "idx_embedding_chunk", columnList = "chunkId"),
+		@Index(name = "idx_embedding_knowledge_chunk", columnList = "knowledgeId,chunkId")
 	}
 )
 public class EmbeddingEntity {

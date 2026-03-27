@@ -26,7 +26,7 @@ public class InMemoryVectorStore implements VectorStore, ChunkIndexer {
 			if (chunk == null || chunk.getChunkId() == null || chunk.getChunkId().trim().isEmpty()) {
 				continue;
 			}
-			chunksById.put(chunk.getChunkId(), chunk);
+			chunksById.put(indexKey(chunk.getDocumentId(), chunk.getChunkId()), chunk);
 		}
 	}
 
@@ -39,7 +39,10 @@ public class InMemoryVectorStore implements VectorStore, ChunkIndexer {
 			if (chunkId == null || chunkId.trim().isEmpty()) {
 				continue;
 			}
-			chunksById.remove(chunkId);
+			chunksById.entrySet().removeIf(entry -> {
+				TextChunk chunk = entry.getValue();
+				return chunk != null && chunkId.trim().equals(chunk.getChunkId());
+			});
 		}
 	}
 
@@ -87,6 +90,12 @@ public class InMemoryVectorStore implements VectorStore, ChunkIndexer {
 
 	public void clear() {
 		chunksById.clear();
+	}
+
+	private String indexKey(String documentId, String chunkId) {
+		String normalizedDocumentId = documentId != null ? documentId.trim() : "";
+		String normalizedChunkId = chunkId != null ? chunkId.trim() : "";
+		return normalizedDocumentId + ":" + normalizedChunkId;
 	}
 
 	private static final class ScoredChunk {

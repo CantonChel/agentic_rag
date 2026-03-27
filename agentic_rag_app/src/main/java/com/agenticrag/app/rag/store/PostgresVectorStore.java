@@ -4,7 +4,6 @@ import com.agenticrag.app.ingest.repo.EmbeddingRepository;
 import com.agenticrag.app.rag.model.TextChunk;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -45,7 +44,7 @@ public class PostgresVectorStore implements VectorStore {
 
 		String vecLiteral = toPgvectorLiteral(queryEmbedding);
 		String sql = ""
-			+ "select chunk_id, knowledge_id "
+			+ "select chunk_id, knowledge_id, content "
 			+ "from embedding "
 			+ "order by vector_json::vector <-> ?::vector "
 			+ "limit ?";
@@ -63,8 +62,7 @@ public class PostgresVectorStore implements VectorStore {
 				);
 				return new ArrayList<>();
 			}
-			List<String> chunkIds = new ArrayList<>();
-			Map<String, String> knowledgeByChunk = new HashMap<>();
+			List<TextChunk> out = new ArrayList<>();
 			for (Map<String, Object> row : rows) {
 				if (row == null) {
 					continue;
@@ -73,13 +71,11 @@ public class PostgresVectorStore implements VectorStore {
 				if (chunkId == null || chunkId.trim().isEmpty()) {
 					continue;
 				}
-				chunkIds.add(chunkId);
 				String knowledgeId = row.get("knowledge_id") != null ? String.valueOf(row.get("knowledge_id")) : null;
-				if (knowledgeId != null) {
-					knowledgeByChunk.put(chunkId, knowledgeId);
-				}
+				String content = row.get("content") != null ? String.valueOf(row.get("content")) : "";
+				out.add(new TextChunk(chunkId, knowledgeId, content, null, Collections.emptyMap()));
 			}
-			if (chunkIds.isEmpty()) {
+			if (out.isEmpty()) {
 				long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 				log.info(
 					"event=pg_vector_search traceId={} topK={} queryVectorDim={} candidateRows={} resolvedChunkIds=0 durationMs={}",
@@ -91,27 +87,6 @@ public class PostgresVectorStore implements VectorStore {
 				);
 				return new ArrayList<>();
 			}
-			List<Object[]> embeddings = embeddingRepository.listChunkContentByChunkIds(chunkIds);
-			Map<String, String> contentByChunk = new HashMap<>();
-			Map<String, String> fallbackKnowledgeByChunk = new HashMap<>();
-			for (Object[] row : embeddings) {
-				if (row == null || row.length < 3 || row[0] == null) {
-					continue;
-				}
-				String chunkId = String.valueOf(row[0]);
-				contentByChunk.put(chunkId, row[2] != null ? String.valueOf(row[2]) : "");
-				if (row[1] != null) {
-					fallbackKnowledgeByChunk.put(chunkId, String.valueOf(row[1]));
-				}
-			}
-			List<TextChunk> out = new ArrayList<>();
-			for (String chunkId : chunkIds) {
-				if (!contentByChunk.containsKey(chunkId)) {
-					continue;
-				}
-				String knowledgeId = knowledgeByChunk.getOrDefault(chunkId, fallbackKnowledgeByChunk.get(chunkId));
-				out.add(new TextChunk(chunkId, knowledgeId, contentByChunk.get(chunkId), null, Collections.emptyMap()));
-			}
 			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 			log.info(
 				"event=pg_vector_search traceId={} topK={} queryVectorDim={} candidateRows={} resolvedChunkIds={} contentRows={} resultCount={} durationMs={}",
@@ -119,8 +94,8 @@ public class PostgresVectorStore implements VectorStore {
 				topK,
 				queryEmbedding.size(),
 				rows.size(),
-				chunkIds.size(),
-				embeddings.size(),
+				out.size(),
+				rows.size(),
 				out.size(),
 				durationMs
 			);

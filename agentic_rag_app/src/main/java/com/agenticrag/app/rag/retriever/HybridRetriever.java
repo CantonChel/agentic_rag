@@ -103,17 +103,26 @@ public class HybridRetriever {
 		}
 		for (int i = 0; i < list.size(); i++) {
 			TextChunk c = list.get(i);
-			if (c == null || c.getChunkId() == null) {
+			String scoredKey = scoreKey(c);
+			if (c == null || scoredKey == null) {
 				continue;
 			}
 			double inc = 1.0 / (k + (i + 1));
-			Scored s = scored.get(c.getChunkId());
+			Scored s = scored.get(scoredKey);
 			if (s == null) {
-				scored.put(c.getChunkId(), new Scored(c, inc));
+				scored.put(scoredKey, new Scored(c, inc));
 			} else {
 				s.add(inc);
 			}
 		}
+	}
+
+	private String scoreKey(TextChunk chunk) {
+		if (chunk == null || chunk.getChunkId() == null || chunk.getChunkId().trim().isEmpty()) {
+			return null;
+		}
+		String documentId = chunk.getDocumentId() != null ? chunk.getDocumentId().trim() : "";
+		return documentId + ":" + chunk.getChunkId().trim();
 	}
 
 	private static final class Scored {

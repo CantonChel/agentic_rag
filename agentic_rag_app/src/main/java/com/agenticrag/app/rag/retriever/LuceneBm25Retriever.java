@@ -52,9 +52,10 @@ public class LuceneBm25Retriever implements Retriever, ChunkIndexer {
 				if (c == null || c.getChunkId() == null || c.getChunkId().trim().isEmpty()) {
 					continue;
 				}
-				chunksById.put(c.getChunkId(), c);
+				String indexedChunkId = indexedChunkId(c);
+				chunksById.put(indexedChunkId, c);
 				Document doc = toLuceneDoc(c);
-				writer.updateDocument(new Term("chunkId", c.getChunkId()), doc);
+				writer.updateDocument(new Term("indexedChunkId", indexedChunkId), doc);
 			}
 			writer.commit();
 		} catch (Exception ignored) {
@@ -87,7 +88,7 @@ public class LuceneBm25Retriever implements Retriever, ChunkIndexer {
 			List<TextChunk> out = new ArrayList<>();
 			for (ScoreDoc sd : top.scoreDocs) {
 				Document d = searcher.doc(sd.doc);
-				String chunkId = d.get("chunkId");
+				String chunkId = d.get("indexedChunkId");
 				TextChunk chunk = chunkId != null ? chunksById.get(chunkId) : null;
 				if (chunk != null) {
 					out.add(chunk);
@@ -108,8 +109,43 @@ public class LuceneBm25Retriever implements Retriever, ChunkIndexer {
 		}
 	}
 
+	@Override
+	public synchronized void removeKnowledge(String knowledgeId) {
+		if (knowledgeId == null || knowledgeId.trim().isEmpty()) {
+			return;
+		}
+		String target = knowledgeId.trim();
+		IndexWriter writer = null;
+		try {
+			IndexWriterConfig cfg = new IndexWriterConfig(analyzer);
+			cfg.setSimilarity(new BM25Similarity());
+			writer = new IndexWriter(directory, cfg);
+			List<String> toRemove = new ArrayList<>();
+			for (Map.Entry<String, TextChunk> entry : chunksById.entrySet()) {
+				TextChunk chunk = entry.getValue();
+				if (chunk != null && target.equals(chunk.getDocumentId())) {
+					toRemove.add(entry.getKey());
+				}
+			}
+			for (String indexedChunkId : toRemove) {
+				chunksById.remove(indexedChunkId);
+				writer.deleteDocuments(new Term("indexedChunkId", indexedChunkId));
+			}
+			writer.commit();
+		} catch (Exception ignored) {
+		} finally {
+			if (writer != null) {
+				try {
+					writer.close();
+				} catch (IOException ignored) {
+				}
+			}
+		}
+	}
+
 	private Document toLuceneDoc(TextChunk c) {
 		Document d = new Document();
+		d.add(new StringField("indexedChunkId", indexedChunkId(c), Field.Store.YES));
 		d.add(new StringField("chunkId", c.getChunkId(), Field.Store.YES));
 		if (c.getDocumentId() != null) {
 			d.add(new StringField("documentId", c.getDocumentId(), Field.Store.YES));
@@ -134,5 +170,11 @@ public class LuceneBm25Retriever implements Retriever, ChunkIndexer {
 			md.put("source", source);
 		}
 		return new TextChunk(chunkId, documentId, text, null, md);
+	}
+
+	private String indexedChunkId(TextChunk chunk) {
+		String documentId = chunk != null && chunk.getDocumentId() != null ? chunk.getDocumentId().trim() : "";
+		String chunkId = chunk != null && chunk.getChunkId() != null ? chunk.getChunkId().trim() : "";
+		return documentId + ":" + chunkId;
 	}
 }
