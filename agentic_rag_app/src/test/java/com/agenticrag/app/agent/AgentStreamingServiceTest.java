@@ -110,6 +110,8 @@ class AgentStreamingServiceTest {
 		Assertions.assertEquals("kb-1", capturedContext.get().getKnowledgeBaseId());
 		Assertions.assertEquals("u1", capturedContext.get().getUserId());
 		Assertions.assertEquals("s1", capturedContext.get().getSessionId());
+		Assertions.assertEquals("call_1", capturedContext.get().getToolCallId());
+		Assertions.assertEquals("call_1", capturedContext.get().getRequestId());
 	}
 
 	@Test

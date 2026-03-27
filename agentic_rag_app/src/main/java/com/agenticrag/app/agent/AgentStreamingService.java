@@ -512,7 +512,14 @@ public class AgentStreamingService {
 											String err = "Error: 参数解析失败。请检查并重新调用工具。细节: " + String.join("; ", vr.getErrors());
 											return ToolResult.error(err);
 										}
-										return t.execute(toolArgs, new ToolExecutionContext(toolCallId, uid, sid, effectiveTraceId, scopedKnowledgeBaseId))
+										return t.execute(toolArgs, new ToolExecutionContext(
+											toolCallId,
+											uid,
+											sid,
+											effectiveTraceId,
+											scopedKnowledgeBaseId,
+											toolCallId
+										))
 											.block(Duration.ofSeconds(toolTimeoutSeconds));
 									})
 									.orElse(ToolResult.error("Tool not found: " + toolName));
