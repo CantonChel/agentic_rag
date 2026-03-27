@@ -1,9 +1,17 @@
 package com.agenticrag.app.agent;
 
+import com.agenticrag.app.agent.execution.AgentEvalMode;
+import com.agenticrag.app.agent.execution.AgentExecutionControl;
+import com.agenticrag.app.agent.execution.AgentKbScope;
+import com.agenticrag.app.agent.execution.AgentThinkingProfile;
 import com.agenticrag.app.chat.context.InMemorySessionContextManager;
 import com.agenticrag.app.chat.context.LocalExecutionContextRecorder;
 import com.agenticrag.app.chat.context.SessionContextProperties;
 import com.agenticrag.app.chat.message.ChatMessage;
+import com.agenticrag.app.chat.message.ChatMessageType;
+import com.agenticrag.app.chat.message.UserMessage;
+import com.agenticrag.app.chat.message.AssistantMessage;
+import com.agenticrag.app.chat.message.ThinkingMessage;
 import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.config.MinimaxClientProperties;
 import com.agenticrag.app.config.OpenAiClientProperties;
@@ -38,6 +46,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Answers;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 
 class AgentStreamingServiceTest {
@@ -647,6 +656,258 @@ class AgentStreamingServiceTest {
 		Assertions.assertFalse(promptContext.isIncludeTools());
 	}
 
+	@Test
+	void singleTurnIgnoresExistingSessionContext() {
+		ObjectMapper objectMapper = new ObjectMapper();
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		StreamResponse<ChatCompletionChunk> response = new FakeStreamResponse(Stream.of(textChunk("ok")));
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(response);
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		contextManager.ensureSystemPrompt("anonymous::s1", "old system");
+		contextManager.addMessage("anonymous::s1", new UserMessage("old question"));
+		contextManager.addMessage("anonymous::s1", new AssistantMessage("old answer"));
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(2);
+		agentProps.setToolTimeoutSeconds(5);
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			new ToolRouter(),
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			new ToolArgumentValidator()
+		);
+
+		service.stream(
+			LlmProvider.OPENAI,
+			"anonymous",
+			"s1",
+			"new question",
+			false,
+			LlmToolChoiceMode.NONE,
+			null,
+			new AgentExecutionControl(null, null, AgentKbScope.AUTO, AgentEvalMode.SINGLE_TURN, AgentThinkingProfile.DEFAULT, true)
+		).collectList().block(Duration.ofSeconds(5));
+
+		LocalExecutionContextRecorder.LocalExecutionContextSnapshot snapshot = recorder.getLatest("anonymous::s1");
+		Assertions.assertNotNull(snapshot);
+		Assertions.assertEquals(2, snapshot.getMessages().size());
+		Assertions.assertEquals(ChatMessageType.SYSTEM, snapshot.getMessages().get(0).getType());
+		Assertions.assertEquals(ChatMessageType.USER, snapshot.getMessages().get(1).getType());
+		Assertions.assertEquals("new question", snapshot.getMessages().get(1).getContent());
+	}
+
+	@Test
+	void memoryDisabledDoesNotExposeMemoryTool() {
+		ObjectMapper objectMapper = new ObjectMapper();
+		AtomicReference<Boolean> executed = new AtomicReference<>(false);
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		StreamResponse<ChatCompletionChunk> r1 = new FakeStreamResponse(Stream.of(memoryToolCallsChunk()));
+		StreamResponse<ChatCompletionChunk> r2 = new FakeStreamResponse(Stream.of(textChunk("done")));
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(r1, r2);
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		ToolRouter toolRouter = new ToolRouter();
+		toolRouter.register(new StubExecutionTool("memory_search", objectMapper, executed));
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(2);
+		agentProps.setToolTimeoutSeconds(5);
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			new ToolArgumentValidator()
+		);
+
+		List<LlmStreamEvent> events = service.stream(
+			LlmProvider.OPENAI,
+			"anonymous",
+			"s1",
+			"question",
+			true,
+			LlmToolChoiceMode.AUTO,
+			null,
+			new AgentExecutionControl(null, null, AgentKbScope.AUTO, AgentEvalMode.SINGLE_TURN, AgentThinkingProfile.DEFAULT, false)
+		).collectList().block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		Assertions.assertFalse(executed.get());
+		LlmStreamEvent toolEnd = events.stream().filter(e -> "tool_end".equals(e.getType())).findFirst().orElse(null);
+		Assertions.assertNotNull(toolEnd);
+		Assertions.assertEquals("error", toolEnd.getStatus());
+
+		ArgumentCaptor<SystemPromptContext> contextCaptor = ArgumentCaptor.forClass(SystemPromptContext.class);
+		Mockito.verify(systemPromptManager).build(contextCaptor.capture());
+		SystemPromptContext promptContext = contextCaptor.getValue();
+		Assertions.assertFalse(promptContext.isMemoryEnabled());
+		Assertions.assertFalse(promptContext.getAllowedToolNames().contains("memory_search"));
+	}
+
+	@Test
+	void thinkingProfileHideSuppressesThinkingEventsAndMessages() {
+		ObjectMapper objectMapper = new ObjectMapper();
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		StreamResponse<ChatCompletionChunk> response = new FakeStreamResponse(Stream.of(reasoningChunk("推理内容")));
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(response);
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(2);
+		agentProps.setToolTimeoutSeconds(5);
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			new ToolRouter(),
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			new ToolArgumentValidator()
+		);
+
+		List<LlmStreamEvent> events = service.stream(
+			LlmProvider.OPENAI,
+			"anonymous",
+			"s1",
+			"hello",
+			false,
+			LlmToolChoiceMode.NONE,
+			null,
+			new AgentExecutionControl(null, null, AgentKbScope.AUTO, AgentEvalMode.SINGLE_TURN, AgentThinkingProfile.HIDE, true)
+		).collectList().block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		Assertions.assertTrue(events.stream().noneMatch(e -> "thinking".equals(e.getType())));
+		Mockito.verify(persistent, Mockito.never()).append(
+			Mockito.anyString(),
+			Mockito.argThat(message -> message instanceof ThinkingMessage)
+		);
+	}
+
+	@Test
+	void singleTurnRejectsSessionSwitchCommand() {
+		ObjectMapper objectMapper = new ObjectMapper();
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			new ToolRouter(),
+			objectMapper,
+			systemPromptManager,
+			new InMemorySessionContextManager(ctxProps, tokenCounter),
+			Mockito.mock(PersistentMessageStore.class),
+			new LocalExecutionContextRecorder(),
+			new AgentProperties(),
+			new ToolArgumentValidator()
+		);
+
+		Assertions.assertThrows(
+			ResponseStatusException.class,
+			() -> service.stream(
+				LlmProvider.OPENAI,
+				"anonymous",
+				"s1",
+				"/new",
+				false,
+				LlmToolChoiceMode.NONE,
+				null,
+				new AgentExecutionControl(null, null, AgentKbScope.AUTO, AgentEvalMode.SINGLE_TURN, AgentThinkingProfile.DEFAULT, true)
+			)
+		);
+	}
+
 	private static ChatCompletionChunk toolCallsChunk() {
 		ChatCompletionChunk.Choice.Delta.ToolCall.Function fn = ChatCompletionChunk.Choice.Delta.ToolCall.Function.builder()
 			.name("calculator")
@@ -711,6 +972,37 @@ class AgentStreamingServiceTest {
 
 		return ChatCompletionChunk.builder()
 			.id("c_reason")
+			.created(0)
+			.model("gpt-test")
+			.object_(JsonValue.from("chat.completion.chunk"))
+			.addChoice(choice)
+			.build();
+	}
+
+	private static ChatCompletionChunk memoryToolCallsChunk() {
+		ChatCompletionChunk.Choice.Delta.ToolCall.Function fn = ChatCompletionChunk.Choice.Delta.ToolCall.Function.builder()
+			.name("memory_search")
+			.arguments("{\"query\":\"history\"}")
+			.build();
+
+		ChatCompletionChunk.Choice.Delta.ToolCall tc = ChatCompletionChunk.Choice.Delta.ToolCall.builder()
+			.index(0)
+			.id("call_memory")
+			.function(fn)
+			.build();
+
+		ChatCompletionChunk.Choice.Delta delta = ChatCompletionChunk.Choice.Delta.builder()
+			.toolCalls(java.util.Collections.singletonList(tc))
+			.build();
+
+		ChatCompletionChunk.Choice choice = ChatCompletionChunk.Choice.builder()
+			.index(0)
+			.delta(delta)
+			.finishReason(ChatCompletionChunk.Choice.FinishReason.TOOL_CALLS)
+			.build();
+
+		return ChatCompletionChunk.builder()
+			.id("c_memory")
 			.created(0)
 			.model("gpt-test")
 			.object_(JsonValue.from("chat.completion.chunk"))
@@ -826,6 +1118,43 @@ class AgentStreamingServiceTest {
 
 		@Override
 		public void close() {
+		}
+	}
+
+	private static final class StubExecutionTool implements Tool {
+		private final String name;
+		private final ObjectMapper objectMapper;
+		private final AtomicReference<Boolean> executed;
+
+		private StubExecutionTool(String name, ObjectMapper objectMapper, AtomicReference<Boolean> executed) {
+			this.name = name;
+			this.objectMapper = objectMapper;
+			this.executed = executed;
+		}
+
+		@Override
+		public String name() {
+			return name;
+		}
+
+		@Override
+		public String description() {
+			return name + " tool";
+		}
+
+		@Override
+		public JsonNode parametersSchema() {
+			com.fasterxml.jackson.databind.node.ObjectNode root = objectMapper.createObjectNode();
+			root.put("type", "object");
+			root.putObject("properties").putObject("query").put("type", "string");
+			root.putArray("required").add("query");
+			return root;
+		}
+
+		@Override
+		public Mono<ToolResult> execute(JsonNode arguments, ToolExecutionContext context) {
+			executed.set(true);
+			return Mono.just(ToolResult.ok("memory"));
 		}
 	}
 }

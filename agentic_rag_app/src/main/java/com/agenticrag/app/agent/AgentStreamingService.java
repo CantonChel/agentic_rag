@@ -1,6 +1,8 @@
 package com.agenticrag.app.agent;
 
+import com.agenticrag.app.agent.execution.AgentEvalMode;
 import com.agenticrag.app.agent.execution.AgentExecutionControl;
+import com.agenticrag.app.agent.execution.AgentThinkingProfile;
 import com.agenticrag.app.chat.context.ContextManager;
 import com.agenticrag.app.chat.message.AssistantMessage;
 import com.agenticrag.app.chat.message.ChatMessage;
@@ -26,6 +28,7 @@ import com.agenticrag.app.session.ChatSession;
 import com.agenticrag.app.session.SessionManager;
 import com.agenticrag.app.session.SessionScope;
 import com.agenticrag.app.trace.TraceIdUtil;
+import com.agenticrag.app.tool.Tool;
 import com.agenticrag.app.tool.ToolDefinition;
 import com.agenticrag.app.tool.ToolArgumentValidator;
 import com.agenticrag.app.tool.ToolExecutionContext;
@@ -49,8 +52,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -63,7 +68,9 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 
 @Service
@@ -247,6 +254,12 @@ public class AgentStreamingService {
 		String effectiveTraceId = TraceIdUtil.normalizeOrGenerate(traceId);
 		AgentExecutionControl control = executionControl != null ? executionControl : AgentExecutionControl.defaults(null);
 		String scopedKnowledgeBaseId = normalizeKnowledgeBaseId(control.getKnowledgeBaseId());
+		boolean singleTurn = control.getEvalMode() == AgentEvalMode.SINGLE_TURN;
+		boolean thinkingVisible = control.getThinkingProfile() != AgentThinkingProfile.HIDE;
+		Set<String> allowedToolNames = resolveAllowedToolNames(includeTools, control.isMemoryEnabled());
+		if (singleTurn && isSessionSwitchCommand(prompt)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "session switch command is not allowed in single_turn mode");
+		}
 		int maxIterations = agentProperties.getMaxIterations() > 0 ? agentProperties.getMaxIterations() : 6;
 		long toolTimeoutSeconds = agentProperties.getToolTimeoutSeconds() > 0 ? agentProperties.getToolTimeoutSeconds() : 30;
 		log.info(
@@ -291,7 +304,9 @@ public class AgentStreamingService {
 				try {
 					OpenAIClient client = provider == LlmProvider.MINIMAX ? minimaxClient : openAiClient;
 					String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
-					String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, includeTools, SystemPromptMode.AGENT));
+					String configuredSystemPrompt = systemPromptManager.build(
+						new SystemPromptContext(provider, includeTools, SystemPromptMode.AGENT, control.isMemoryEnabled(), allowedToolNames)
+					);
 					OpenAiMessageAdapter adapter = new OpenAiMessageAdapter(objectMapper);
 
 					if (isSessionSwitchCommand(prompt)) {
@@ -303,7 +318,7 @@ public class AgentStreamingService {
 							sid,
 							normalizeSwitchReason(prompt)
 						);
-						if (memoryFlushService != null) {
+						if (control.isMemoryEnabled() && memoryFlushService != null) {
 							memoryFlushService.flushOnSessionSwitchCommand(
 								scopedSid,
 								normalizeSwitchReason(prompt),
@@ -320,22 +335,29 @@ public class AgentStreamingService {
 						return;
 					}
 
-					contextManager.ensureSystemPrompt(scopedSid, configuredSystemPrompt);
-					String systemPrompt = contextManager.getSystemPrompt(scopedSid);
+					String systemPrompt = configuredSystemPrompt != null ? configuredSystemPrompt : "";
+					if (!singleTurn) {
+						contextManager.ensureSystemPrompt(scopedSid, configuredSystemPrompt);
+						systemPrompt = contextManager.getSystemPrompt(scopedSid);
+					}
 					persistentMessageStore.ensureSystemPrompt(scopedSid, systemPrompt);
 
 					List<ChatMessage> localContext = new ArrayList<>();
-					List<ChatMessage> sessionContext = contextManager.getContext(scopedSid);
-					if (sessionContext != null && !sessionContext.isEmpty()) {
-						for (int i = 1; i < sessionContext.size(); i++) {
-							localContext.add(sessionContext.get(i));
+					if (!singleTurn) {
+						List<ChatMessage> sessionContext = contextManager.getContext(scopedSid);
+						if (sessionContext != null && !sessionContext.isEmpty()) {
+							for (int i = 1; i < sessionContext.size(); i++) {
+								localContext.add(sessionContext.get(i));
+							}
 						}
 					}
 
 					ChatMessage userMsg = new UserMessage(prompt);
 					localContext.add(userMsg);
 					persistentMessageStore.append(scopedSid, userMsg);
-					contextManager.addMessage(scopedSid, userMsg);
+					if (!singleTurn) {
+						contextManager.addMessage(scopedSid, userMsg);
+					}
 
 					boolean finished = false;
 					int iteration = 0;
@@ -351,7 +373,9 @@ public class AgentStreamingService {
 						ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder()
 							.model(model)
 							.addSystemMessage(systemPrompt);
-						MinimaxReasoningSupport.applyReasoningSplit(paramsBuilder, provider, minimaxProperties);
+						if (thinkingVisible) {
+							MinimaxReasoningSupport.applyReasoningSplit(paramsBuilder, provider, minimaxProperties);
+						}
 
 						if (isFinalIteration) {
 							paramsBuilder.addSystemMessage("系统警告：你已达到最大思考步数。请立即停止调用新工具，基于目前已有的观察结果，向用户输出最终总结回复。");
@@ -364,7 +388,7 @@ public class AgentStreamingService {
 
 						boolean allowTools = includeTools && !isFinalIteration;
 						if (allowTools) {
-							paramsBuilder.tools(buildChatCompletionTools(toolRouter.getToolDefinitions()));
+							paramsBuilder.tools(buildChatCompletionTools(toolRouter.getToolDefinitions(allowedToolNames)));
 							paramsBuilder.toolChoice(toToolChoice(toolChoiceMode));
 						} else {
 							paramsBuilder.toolChoice(ChatCompletionToolChoiceOption.Auto.NONE);
@@ -415,6 +439,9 @@ public class AgentStreamingService {
 												thinkPart -> {
 													inlineThinkBuffer.append(thinkPart);
 													inlineThinkingEmitted.set(true);
+													if (!thinkingVisible) {
+														return;
+													}
 														emit.accept(LlmStreamEvent.thinking(
 															thinkPart,
 															"assistant_content",
@@ -436,6 +463,9 @@ public class AgentStreamingService {
 									String reasoningPart = appendReasoningFromDelta(delta, reasoningBuffer, reasoningSourceRef);
 									if (reasoningPart != null && !reasoningPart.isEmpty() && !hasToolCallsInDelta) {
 										structuredReasoningEmitted.set(true);
+										if (!thinkingVisible) {
+											continue;
+										}
 										emit.accept(LlmStreamEvent.thinking(
 											reasoningPart,
 											reasoningSourceRef.get(),
@@ -462,7 +492,9 @@ public class AgentStreamingService {
 							AssistantMessage am = new AssistantMessage(assistantFinal);
 							localContext.add(am);
 							persistentMessageStore.append(scopedSid, am);
-							contextManager.addMessage(scopedSid, am);
+							if (!singleTurn) {
+								contextManager.addMessage(scopedSid, am);
+							}
 						}
 
 						if (isFinalIteration) {
@@ -494,7 +526,8 @@ public class AgentStreamingService {
 								scopedSid,
 								inlineThinkingEmitted.get(),
 								turnId,
-								nextSequence
+								nextSequence,
+								thinkingVisible
 							);
 							String doneReason = finishReason != null ? finishReason : "stop";
 							emit.accept(LlmStreamEvent.done(
@@ -514,7 +547,9 @@ public class AgentStreamingService {
 						ToolCallMessage tcm = new ToolCallMessage(toolCalls);
 						localContext.add(tcm);
 						persistentMessageStore.append(scopedSid, tcm);
-						contextManager.addMessage(scopedSid, tcm);
+						if (!singleTurn) {
+							contextManager.addMessage(scopedSid, tcm);
+						}
 
 						for (LlmToolCall call : toolCalls) {
 							if (call == null) {
@@ -552,24 +587,28 @@ public class AgentStreamingService {
 							ToolResult toolResult = null;
 							Exception toolFailure = null;
 							try {
-								toolResult = toolRouter.getTool(toolName)
-									.map(t -> {
-										ToolArgumentValidator.ValidationResult vr = toolArgumentValidator.validate(t.parametersSchema(), toolArgs);
-										if (!vr.isOk()) {
-											String err = "Error: 参数解析失败。请检查并重新调用工具。细节: " + String.join("; ", vr.getErrors());
-											return ToolResult.error(err);
-										}
-										return t.execute(toolArgs, new ToolExecutionContext(
-											toolCallId,
-											uid,
-											sid,
-											effectiveTraceId,
-											scopedKnowledgeBaseId,
-											toolCallId
-										))
-											.block(Duration.ofSeconds(toolTimeoutSeconds));
-									})
-									.orElse(ToolResult.error("Tool not found: " + toolName));
+								if (!isToolAllowed(allowedToolNames, toolName)) {
+									toolResult = ToolResult.error("Tool disabled: " + toolName);
+								} else {
+									toolResult = toolRouter.getTool(toolName)
+										.map(t -> {
+											ToolArgumentValidator.ValidationResult vr = toolArgumentValidator.validate(t.parametersSchema(), toolArgs);
+											if (!vr.isOk()) {
+												String err = "Error: 参数解析失败。请检查并重新调用工具。细节: " + String.join("; ", vr.getErrors());
+												return ToolResult.error(err);
+											}
+											return t.execute(toolArgs, new ToolExecutionContext(
+												toolCallId,
+												uid,
+												sid,
+												effectiveTraceId,
+												scopedKnowledgeBaseId,
+												toolCallId
+											))
+												.block(Duration.ofSeconds(toolTimeoutSeconds));
+										})
+										.orElse(ToolResult.error("Tool not found: " + toolName));
+								}
 							} catch (Exception e) {
 								toolFailure = e;
 								toolResult = ToolResult.error("Tool execution failed: " + toolName + ": " + e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -610,6 +649,7 @@ public class AgentStreamingService {
 							if ("thinking".equals(toolName) && toolResult.isSuccess()) {
 								String thought = toolResult.getOutput();
 								if (thought != null && !thought.trim().isEmpty()) {
+									if (thinkingVisible) {
 										emit.accept(LlmStreamEvent.thinking(
 											thought,
 											"thinking_tool",
@@ -619,7 +659,8 @@ public class AgentStreamingService {
 										nextSequence.getAsLong(),
 										System.currentTimeMillis()
 									));
-									recordThinkingMessage(scopedSid, thought);
+									}
+									recordThinkingMessage(scopedSid, thought, thinkingVisible);
 									hasToolThinking = true;
 								}
 							}
@@ -633,7 +674,9 @@ public class AgentStreamingService {
 							);
 							localContext.add(trm);
 							persistentMessageStore.append(scopedSid, trm);
-							contextManager.addMessage(scopedSid, trm);
+							if (!singleTurn) {
+								contextManager.addMessage(scopedSid, trm);
+							}
 						}
 
 						if (!hasToolThinking) {
@@ -650,7 +693,8 @@ public class AgentStreamingService {
 								scopedSid,
 								inlineThinkingEmitted.get(),
 								turnId,
-								nextSequence
+								nextSequence,
+								thinkingVisible
 							);
 						}
 					}
@@ -915,9 +959,10 @@ public class AgentStreamingService {
 		String sessionId,
 		boolean inlineThinkingEmitted,
 		String turnId,
-		LongSupplier nextSequence
+		LongSupplier nextSequence,
+		boolean thinkingVisible
 	) {
-		if (hasToolThinking || sink == null) {
+		if (hasToolThinking || sink == null || !thinkingVisible) {
 			return;
 		}
 		String reasoning = reasoningBuffer == null ? "" : reasoningBuffer.toString().trim();
@@ -936,7 +981,7 @@ public class AgentStreamingService {
 					System.currentTimeMillis()
 					));
 				}
-			recordThinkingMessage(sessionId, reasoning);
+			recordThinkingMessage(sessionId, reasoning, thinkingVisible);
 			return;
 		}
 		String inlineThinking = inlineThinkBuffer == null ? "" : inlineThinkBuffer.toString().trim();
@@ -952,7 +997,7 @@ public class AgentStreamingService {
 					System.currentTimeMillis()
 				));
 			}
-			recordThinkingMessage(sessionId, inlineThinking);
+			recordThinkingMessage(sessionId, inlineThinking, thinkingVisible);
 			return;
 		}
 		if (looksLikeStepByStep(assistantFinal)) {
@@ -965,7 +1010,7 @@ public class AgentStreamingService {
 				nextSequence.getAsLong(),
 				System.currentTimeMillis()
 			));
-			recordThinkingMessage(sessionId, assistantFinal);
+			recordThinkingMessage(sessionId, assistantFinal, thinkingVisible);
 		}
 	}
 
@@ -1093,11 +1138,36 @@ public class AgentStreamingService {
 		}
 	}
 
-	private void recordThinkingMessage(String sessionId, String content) {
-		if (content == null || content.trim().isEmpty()) {
+	private void recordThinkingMessage(String sessionId, String content, boolean thinkingVisible) {
+		if (!thinkingVisible || content == null || content.trim().isEmpty()) {
 			return;
 		}
 		persistentMessageStore.append(sessionId, new ThinkingMessage(content));
+	}
+
+	private Set<String> resolveAllowedToolNames(boolean includeTools, boolean memoryEnabled) {
+		Set<String> allowed = new LinkedHashSet<>();
+		if (!includeTools) {
+			return allowed;
+		}
+		for (Tool tool : toolRouter.getTools()) {
+			if (tool == null || tool.name() == null || tool.name().trim().isEmpty()) {
+				continue;
+			}
+			String toolName = tool.name().trim();
+			if (!memoryEnabled && "memory_search".equals(toolName)) {
+				continue;
+			}
+			allowed.add(toolName);
+		}
+		return allowed;
+	}
+
+	private boolean isToolAllowed(Set<String> allowedToolNames, String toolName) {
+		if (toolName == null || toolName.trim().isEmpty()) {
+			return false;
+		}
+		return allowedToolNames != null && allowedToolNames.contains(toolName.trim());
 	}
 
 	private boolean looksLikeStepByStep(String text) {

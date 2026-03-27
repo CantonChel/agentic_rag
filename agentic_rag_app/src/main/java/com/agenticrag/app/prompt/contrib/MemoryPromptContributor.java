@@ -15,6 +15,9 @@ public class MemoryPromptContributor implements SystemPromptContributor {
 
 	@Override
 	public String contribute(SystemPromptContext context) {
+		if (context != null && !context.isMemoryEnabled()) {
+			return "";
+		}
 		return "### Memory Policy\n"
 			+ "- For questions about past decisions, prior tasks, preferences, dates, or reminders, call memory_search first.\n"
 			+ "- memory_search is user-scoped: only current user's memory can be recalled.\n"

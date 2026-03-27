@@ -1,6 +1,7 @@
 package com.agenticrag.app.tool;
 
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -24,7 +25,18 @@ public class ToolRouter {
 	}
 
 	public Collection<ToolDefinition> getToolDefinitions() {
+		return getToolDefinitions(null);
+	}
+
+	public Collection<ToolDefinition> getToolDefinitions(Collection<String> allowedToolNames) {
+		final LinkedHashSet<String> allowed = allowedToolNames == null
+			? null
+			: allowedToolNames.stream()
+				.filter(name -> name != null && !name.trim().isEmpty())
+				.map(String::trim)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
 		return toolsByName.values().stream()
+			.filter(t -> allowed == null || allowed.contains(t.name()))
 			.map(t -> new ToolDefinition(t.name(), t.description(), t.parametersSchema()))
 			.collect(Collectors.toList());
 	}

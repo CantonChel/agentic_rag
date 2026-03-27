@@ -28,11 +28,11 @@ public class RegisteredToolsPromptContributor implements SystemPromptContributor
 
 	@Override
 	public String contribute(SystemPromptContext context) {
-		if (!context.isIncludeTools()) {
+		if (context == null || !context.isIncludeTools()) {
 			return "";
 		}
 
-		Collection<ToolDefinition> tools = toolRouter.getToolDefinitions();
+		Collection<ToolDefinition> tools = toolRouter.getToolDefinitions(context.getAllowedToolNames());
 		if (tools.isEmpty()) {
 			return "";
 		}
@@ -54,4 +54,3 @@ public class RegisteredToolsPromptContributor implements SystemPromptContributor
 		}
 	}
 }
-
