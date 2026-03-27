@@ -87,6 +87,11 @@ public class BenchmarkBuildService {
 	}
 
 	@Transactional(readOnly = true)
+	public Optional<BenchmarkBuildView> findBuildView(String buildId) {
+		return findBuild(buildId).map(this::toView);
+	}
+
+	@Transactional(readOnly = true)
 	public Optional<BenchmarkBuildEntity> findBuildByKnowledgeBaseId(String knowledgeBaseId) {
 		return benchmarkBuildRepository.findByKnowledgeBaseId(normalize(knowledgeBaseId));
 	}
