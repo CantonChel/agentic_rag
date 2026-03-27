@@ -1,5 +1,7 @@
 package com.agenticrag.app.tool.impl;
 
+import com.agenticrag.app.benchmark.retrieval.RetrievalTraceCollector;
+import com.agenticrag.app.rag.context.ContextAssemblyResult;
 import com.agenticrag.app.rag.context.ContextAssembler;
 import com.agenticrag.app.rag.model.TextChunk;
 import com.agenticrag.app.rag.retriever.HybridRetriever;
@@ -75,14 +77,23 @@ public class KnowledgeSearchTool implements Tool {
 				20,
 				5
 			);
+			RetrievalTraceCollector collector = new RetrievalTraceCollector(
+				traceId,
+				context != null ? context.getToolCallId() : null,
+				name(),
+				context != null ? context.getKnowledgeBaseId() : null,
+				q
+			);
 			List<TextChunk> top = hybridRetriever.retrieve(
 				q,
 				20,
 				5,
 				traceId,
-				context != null ? context.getKnowledgeBaseId() : null
+				context != null ? context.getKnowledgeBaseId() : null,
+				collector
 			);
-			String ctx = contextAssembler.assemble(top);
+			ContextAssemblyResult assembled = contextAssembler.assemble(top, collector);
+			String ctx = assembled.getContextText();
 			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 			log.info(
 				"event=kb_tool_end traceId={} knowledgeBaseId={} requestId={} chunks={} contextChars={} durationMs={}",
@@ -93,7 +104,7 @@ public class KnowledgeSearchTool implements Tool {
 				ctx != null ? ctx.length() : 0,
 				durationMs
 			);
-			return ToolResult.ok(ctx);
+			return ToolResult.ok(ctx, assembled.getSidecar());
 		}).subscribeOn(Schedulers.boundedElastic());
 	}
 }

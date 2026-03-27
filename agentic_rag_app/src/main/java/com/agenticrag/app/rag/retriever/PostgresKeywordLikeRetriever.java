@@ -1,6 +1,7 @@
 package com.agenticrag.app.rag.retriever;
 
 import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.model.TextChunkMetadataHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -46,6 +47,9 @@ public class PostgresKeywordLikeRetriever implements Retriever {
 		String sql = scopedKnowledgeBaseId == null
 			? ""
 				+ "select c.chunk_id, c.knowledge_id, c.content, c.metadata_json "
+				+ "     , ((case when c.content ilike ? escape '\\' then 2.0 else 0.0 end) "
+				+ " + ts_rank_cd(to_tsvector('simple', c.content), plainto_tsquery('simple', ?)) "
+				+ " + similarity(c.content, ?)) as retrieval_score "
 				+ "from chunk c "
 				+ "where c.content ilike ? escape '\\' "
 				+ "   or to_tsvector('simple', c.content) @@ plainto_tsquery('simple', ?) "
@@ -57,6 +61,9 @@ public class PostgresKeywordLikeRetriever implements Retriever {
 				+ "limit ?"
 			: ""
 				+ "select c.chunk_id, c.knowledge_id, c.content, c.metadata_json "
+				+ "     , ((case when c.content ilike ? escape '\\' then 2.0 else 0.0 end) "
+				+ " + ts_rank_cd(to_tsvector('simple', c.content), plainto_tsquery('simple', ?)) "
+				+ " + similarity(c.content, ?)) as retrieval_score "
 				+ "from chunk c "
 				+ "join knowledge k on k.id = c.knowledge_id "
 				+ "where k.knowledge_base_id = ? "
@@ -81,11 +88,17 @@ public class PostgresKeywordLikeRetriever implements Retriever {
 					likePattern,
 					normalized,
 					normalized,
+					likePattern,
+					normalized,
+					normalized,
 					topK
 				)
 				: jdbcTemplate.query(
 					sql,
 					extractor,
+					likePattern,
+					normalized,
+					normalized,
 					scopedKnowledgeBaseId,
 					likePattern,
 					normalized,
@@ -144,9 +157,18 @@ public class PostgresKeywordLikeRetriever implements Retriever {
 			String knowledgeId = rs.getString("knowledge_id");
 			String content = rs.getString("content");
 			String metadataJson = rs.getString("metadata_json");
-			out.add(new TextChunk(chunkId, knowledgeId, content, null, parseMetadata(metadataJson)));
+			Map<String, Object> metadata = parseMetadata(metadataJson);
+			out.add(TextChunkMetadataHelper.withRetrievalScore(
+				new TextChunk(chunkId, knowledgeId, content, null, metadata),
+				readNullableDouble(rs, "retrieval_score")
+			));
 		}
 		return out;
+	}
+
+	private Double readNullableDouble(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+		double value = rs.getDouble(column);
+		return rs.wasNull() ? null : value;
 	}
 
 	private Map<String, Object> parseMetadata(String json) {

@@ -56,7 +56,8 @@ class PostgresBm25RetrieverTest {
 
 		Assertions.assertTrue(out.isEmpty());
 		Assertions.assertNotNull(capturedArgs.get());
-		Assertions.assertEquals("kb-1", capturedArgs.get()[0]);
-		Assertions.assertEquals("hello", capturedArgs.get()[1]);
+		Assertions.assertEquals("hello", capturedArgs.get()[0]);
+		Assertions.assertEquals("kb-1", capturedArgs.get()[1]);
+		Assertions.assertEquals("hello", capturedArgs.get()[2]);
 	}
 }

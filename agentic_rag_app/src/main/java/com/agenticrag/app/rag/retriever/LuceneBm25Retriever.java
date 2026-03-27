@@ -1,6 +1,7 @@
 package com.agenticrag.app.rag.retriever;
 
 import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.model.TextChunkMetadataHelper;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -98,10 +99,10 @@ public class LuceneBm25Retriever implements Retriever, ChunkIndexer {
 					if (!matchesKnowledgeBaseId(chunk, knowledgeBaseId)) {
 						continue;
 					}
-					out.add(chunk);
+					out.add(TextChunkMetadataHelper.withRetrievalScore(chunk, (double) sd.score));
 					continue;
 				}
-				TextChunk loaded = fromLuceneDoc(d);
+				TextChunk loaded = TextChunkMetadataHelper.withRetrievalScore(fromLuceneDoc(d), (double) sd.score);
 				if (!matchesKnowledgeBaseId(loaded, knowledgeBaseId)) {
 					continue;
 				}

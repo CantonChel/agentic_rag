@@ -2,8 +2,10 @@ package com.agenticrag.app.rag.store;
 
 import com.agenticrag.app.ingest.repo.EmbeddingRepository;
 import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.model.TextChunkMetadataHelper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -20,10 +22,12 @@ public class PostgresVectorStore implements VectorStore {
 	private static final Logger log = LoggerFactory.getLogger(PostgresVectorStore.class);
 	private final JdbcTemplate jdbcTemplate;
 	private final EmbeddingRepository embeddingRepository;
+	private final ObjectMapper objectMapper;
 
-	public PostgresVectorStore(JdbcTemplate jdbcTemplate, EmbeddingRepository embeddingRepository) {
+	public PostgresVectorStore(JdbcTemplate jdbcTemplate, EmbeddingRepository embeddingRepository, ObjectMapper objectMapper) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.embeddingRepository = embeddingRepository;
+		this.objectMapper = objectMapper;
 	}
 
 	@Override
@@ -48,15 +52,17 @@ public class PostgresVectorStore implements VectorStore {
 
 		String vecLiteral = toPgvectorLiteral(queryEmbedding);
 		String sql = ""
-			+ "select e.chunk_id, e.knowledge_id, e.content, k.knowledge_base_id "
+			+ "select e.chunk_id, e.knowledge_id, e.content, k.knowledge_base_id, c.metadata_json, "
+			+ "       (1.0 / (1.0 + (e.vector_json::vector <-> ?::vector))) as retrieval_score "
 			+ "from embedding e "
+			+ "join chunk c on c.chunk_id = e.chunk_id and c.knowledge_id = e.knowledge_id "
 			+ "join knowledge k on k.id = e.knowledge_id "
 			+ "where (? is null or k.knowledge_base_id = ?) "
 			+ "order by e.vector_json::vector <-> ?::vector "
 			+ "limit ?";
 
 		try {
-			List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, knowledgeBaseId, knowledgeBaseId, vecLiteral, topK);
+			List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, vecLiteral, knowledgeBaseId, knowledgeBaseId, vecLiteral, topK);
 			if (rows == null || rows.isEmpty()) {
 				long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 				log.info(
@@ -81,10 +87,14 @@ public class PostgresVectorStore implements VectorStore {
 				String knowledgeId = row.get("knowledge_id") != null ? String.valueOf(row.get("knowledge_id")) : null;
 				String content = row.get("content") != null ? String.valueOf(row.get("content")) : "";
 				String resolvedKnowledgeBaseId = row.get("knowledge_base_id") != null ? String.valueOf(row.get("knowledge_base_id")) : knowledgeBaseId;
-				Map<String, Object> metadata = resolvedKnowledgeBaseId == null
-					? Collections.emptyMap()
-					: Collections.singletonMap("knowledge_base_id", resolvedKnowledgeBaseId);
-				out.add(new TextChunk(chunkId, knowledgeId, content, null, metadata));
+				Map<String, Object> metadata = parseMetadata(row.get("metadata_json"));
+				if (resolvedKnowledgeBaseId != null && !resolvedKnowledgeBaseId.trim().isEmpty()) {
+					metadata.put("knowledge_base_id", resolvedKnowledgeBaseId);
+				}
+				out.add(TextChunkMetadataHelper.withRetrievalScore(
+					new TextChunk(chunkId, knowledgeId, content, null, metadata),
+					readNullableDouble(row.get("retrieval_score"))
+				));
 			}
 			if (out.isEmpty()) {
 				long durationMs = (System.nanoTime() - startNs) / 1_000_000;
@@ -141,5 +151,36 @@ public class PostgresVectorStore implements VectorStore {
 		}
 		sb.append(']');
 		return sb.toString();
+	}
+
+	private Map<String, Object> parseMetadata(Object value) {
+		if (value == null) {
+			return new LinkedHashMap<>();
+		}
+		String json = String.valueOf(value);
+		if (json.trim().isEmpty()) {
+			return new LinkedHashMap<>();
+		}
+		try {
+			@SuppressWarnings("unchecked")
+			Map<String, Object> parsed = objectMapper.readValue(json, Map.class);
+			return parsed != null ? new LinkedHashMap<>(parsed) : new LinkedHashMap<>();
+		} catch (Exception ignored) {
+			return new LinkedHashMap<>();
+		}
+	}
+
+	private Double readNullableDouble(Object value) {
+		if (value == null) {
+			return null;
+		}
+		if (value instanceof Number) {
+			return ((Number) value).doubleValue();
+		}
+		try {
+			return Double.valueOf(String.valueOf(value));
+		} catch (Exception ignored) {
+			return null;
+		}
 	}
 }

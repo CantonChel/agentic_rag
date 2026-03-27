@@ -56,7 +56,9 @@ class PostgresKeywordLikeRetrieverTest {
 
 		Assertions.assertTrue(out.isEmpty());
 		Assertions.assertNotNull(capturedArgs.get());
-		Assertions.assertEquals("kb-1", capturedArgs.get()[0]);
-		Assertions.assertTrue(String.valueOf(capturedArgs.get()[1]).contains("keyword"));
+		Assertions.assertTrue(String.valueOf(capturedArgs.get()[0]).contains("keyword"));
+		Assertions.assertEquals("keyword", capturedArgs.get()[1]);
+		Assertions.assertEquals("keyword", capturedArgs.get()[2]);
+		Assertions.assertEquals("kb-1", capturedArgs.get()[3]);
 	}
 }

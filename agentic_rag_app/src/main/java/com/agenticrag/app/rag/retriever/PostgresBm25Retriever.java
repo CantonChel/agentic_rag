@@ -1,6 +1,7 @@
 package com.agenticrag.app.rag.retriever;
 
 import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.model.TextChunkMetadataHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -44,12 +45,14 @@ public class PostgresBm25Retriever implements Retriever {
 		String sql = scopedKnowledgeBaseId == null
 			? ""
 				+ "select c.chunk_id, c.knowledge_id, c.content, c.metadata_json "
+				+ "     , ts_rank(to_tsvector('simple', c.content), plainto_tsquery('simple', ?)) as retrieval_score "
 				+ "from chunk c "
 				+ "where to_tsvector('simple', c.content) @@ plainto_tsquery('simple', ?) "
 				+ "order by ts_rank(to_tsvector('simple', c.content), plainto_tsquery('simple', ?)) desc "
 				+ "limit ?"
 			: ""
 				+ "select c.chunk_id, c.knowledge_id, c.content, c.metadata_json "
+				+ "     , ts_rank(to_tsvector('simple', c.content), plainto_tsquery('simple', ?)) as retrieval_score "
 				+ "from chunk c "
 				+ "join knowledge k on k.id = c.knowledge_id "
 				+ "where k.knowledge_base_id = ? "
@@ -59,12 +62,14 @@ public class PostgresBm25Retriever implements Retriever {
 		String fuzzySql = scopedKnowledgeBaseId == null
 			? ""
 				+ "select c.chunk_id, c.knowledge_id, c.content, c.metadata_json "
+				+ "     , word_similarity(?, c.content) as retrieval_score "
 				+ "from chunk c "
 				+ "where word_similarity(?, c.content) > 0.3 "
 				+ "order by word_similarity(?, c.content) desc "
 				+ "limit ?"
 			: ""
 				+ "select c.chunk_id, c.knowledge_id, c.content, c.metadata_json "
+				+ "     , word_similarity(?, c.content) as retrieval_score "
 				+ "from chunk c "
 				+ "join knowledge k on k.id = c.knowledge_id "
 				+ "where k.knowledge_base_id = ? "
@@ -75,8 +80,8 @@ public class PostgresBm25Retriever implements Retriever {
 		try {
 			ResultSetExtractor<List<TextChunk>> extractor = rs -> mapRows(rs);
 			List<TextChunk> primary = scopedKnowledgeBaseId == null
-				? jdbcTemplate.query(sql, extractor, query, query, topK)
-				: jdbcTemplate.query(sql, extractor, scopedKnowledgeBaseId, query, query, topK);
+				? jdbcTemplate.query(sql, extractor, query, query, query, topK)
+				: jdbcTemplate.query(sql, extractor, query, scopedKnowledgeBaseId, query, query, topK);
 			if (!primary.isEmpty()) {
 				long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 				log.info(
@@ -91,8 +96,8 @@ public class PostgresBm25Retriever implements Retriever {
 				return primary;
 			}
 			List<TextChunk> fuzzy = scopedKnowledgeBaseId == null
-				? jdbcTemplate.query(fuzzySql, extractor, query, query, topK)
-				: jdbcTemplate.query(fuzzySql, extractor, scopedKnowledgeBaseId, query, query, topK);
+				? jdbcTemplate.query(fuzzySql, extractor, query, query, query, topK)
+				: jdbcTemplate.query(fuzzySql, extractor, query, scopedKnowledgeBaseId, query, query, topK);
 			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 			log.info(
 				"event=pg_bm25_retrieve traceId={} query={} knowledgeBaseId={} topK={} primaryCount=0 fallbackUsed=true fallbackCount={} durationMs={}",
@@ -135,9 +140,18 @@ public class PostgresBm25Retriever implements Retriever {
 			String knowledgeId = rs.getString("knowledge_id");
 			String content = rs.getString("content");
 			String metadataJson = rs.getString("metadata_json");
-			out.add(new TextChunk(chunkId, knowledgeId, content, null, parseMetadata(metadataJson)));
+			Map<String, Object> metadata = parseMetadata(metadataJson);
+			out.add(TextChunkMetadataHelper.withRetrievalScore(
+				new TextChunk(chunkId, knowledgeId, content, null, metadata),
+				readNullableDouble(rs, "retrieval_score")
+			));
 		}
 		return out;
+	}
+
+	private Double readNullableDouble(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+		double value = rs.getDouble(column);
+		return rs.wasNull() ? null : value;
 	}
 
 	private Map<String, Object> parseMetadata(String json) {

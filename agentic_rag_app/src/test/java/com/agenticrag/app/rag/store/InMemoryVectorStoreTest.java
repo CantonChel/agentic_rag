@@ -19,6 +19,7 @@ class InMemoryVectorStoreTest {
 		List<TextChunk> res = store.similaritySearch(Arrays.asList(0.9, 0.1), 1);
 		Assertions.assertEquals(1, res.size());
 		Assertions.assertEquals("a", res.get(0).getChunkId());
+		Assertions.assertNotNull(res.get(0).getMetadata().get("retrieval_score"));
 	}
 
 	@Test

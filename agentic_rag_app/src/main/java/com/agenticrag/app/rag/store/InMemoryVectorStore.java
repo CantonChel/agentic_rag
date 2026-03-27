@@ -1,6 +1,7 @@
 package com.agenticrag.app.rag.store;
 
 import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.model.TextChunkMetadataHelper;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -87,7 +88,7 @@ public class InMemoryVectorStore implements VectorStore, ChunkIndexer {
 		return scored.stream()
 			.sorted(Comparator.comparingDouble(ScoredChunk::getScore).reversed())
 			.limit(topK)
-			.map(ScoredChunk::getChunk)
+			.map(scoredChunk -> TextChunkMetadataHelper.withRetrievalScore(scoredChunk.getChunk(), scoredChunk.getScore()))
 			.collect(Collectors.toList());
 	}
 
