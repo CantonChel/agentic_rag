@@ -1,6 +1,7 @@
 package com.agenticrag.app.tool.impl;
 
 import com.agenticrag.app.benchmark.retrieval.RetrievalTraceCollector;
+import com.agenticrag.app.benchmark.retrieval.BenchmarkRetrievalTraceService;
 import com.agenticrag.app.rag.context.ContextAssemblyResult;
 import com.agenticrag.app.rag.context.ContextAssembler;
 import com.agenticrag.app.rag.model.TextChunk;
@@ -24,11 +25,18 @@ public class KnowledgeSearchTool implements Tool {
 	private final ObjectMapper objectMapper;
 	private final HybridRetriever hybridRetriever;
 	private final ContextAssembler contextAssembler;
+	private final BenchmarkRetrievalTraceService benchmarkRetrievalTraceService;
 
-	public KnowledgeSearchTool(ObjectMapper objectMapper, HybridRetriever hybridRetriever, ContextAssembler contextAssembler) {
+	public KnowledgeSearchTool(
+		ObjectMapper objectMapper,
+		HybridRetriever hybridRetriever,
+		ContextAssembler contextAssembler,
+		BenchmarkRetrievalTraceService benchmarkRetrievalTraceService
+	) {
 		this.objectMapper = objectMapper;
 		this.hybridRetriever = hybridRetriever;
 		this.contextAssembler = contextAssembler;
+		this.benchmarkRetrievalTraceService = benchmarkRetrievalTraceService;
 	}
 
 	@Override
@@ -104,7 +112,19 @@ public class KnowledgeSearchTool implements Tool {
 				ctx != null ? ctx.length() : 0,
 				durationMs
 			);
+			persistCollectorQuietly(collector, traceId);
 			return ToolResult.ok(ctx, assembled.getSidecar());
 		}).subscribeOn(Schedulers.boundedElastic());
+	}
+
+	private void persistCollectorQuietly(RetrievalTraceCollector collector, String traceId) {
+		if (benchmarkRetrievalTraceService == null || collector == null) {
+			return;
+		}
+		try {
+			benchmarkRetrievalTraceService.persistCollector(collector);
+		} catch (Exception e) {
+			log.warn("event=kb_trace_persist_failed traceId={} type={} message={}", traceId, e.getClass().getSimpleName(), e.getMessage());
+		}
 	}
 }

@@ -1,5 +1,6 @@
 package com.agenticrag.app.tool;
 
+import com.agenticrag.app.benchmark.retrieval.BenchmarkRetrievalTraceService;
 import com.agenticrag.app.benchmark.retrieval.RetrievalTraceCollector;
 import com.agenticrag.app.rag.context.ContextAssembler;
 import com.agenticrag.app.rag.model.TextChunk;
@@ -18,7 +19,8 @@ class KnowledgeSearchToolTest {
 	void returnsContextAndSidecar() {
 		ObjectMapper objectMapper = new ObjectMapper();
 		HybridRetriever hybridRetriever = Mockito.mock(HybridRetriever.class);
-		KnowledgeSearchTool tool = new KnowledgeSearchTool(objectMapper, hybridRetriever, new ContextAssembler());
+		BenchmarkRetrievalTraceService traceService = Mockito.mock(BenchmarkRetrievalTraceService.class);
+		KnowledgeSearchTool tool = new KnowledgeSearchTool(objectMapper, hybridRetriever, new ContextAssembler(), traceService);
 
 		HashMap<String, Object> metadata = new HashMap<>();
 		metadata.put("source", "a.md");
@@ -45,5 +47,6 @@ class KnowledgeSearchToolTest {
 		Assertions.assertNotNull(result.getSidecar());
 		Assertions.assertEquals("retrieval_context_v1", result.getSidecar().get("type").asText());
 		Assertions.assertEquals(1, result.getSidecar().get("items").size());
+		Mockito.verify(traceService).persistCollector(Mockito.any(RetrievalTraceCollector.class));
 	}
 }

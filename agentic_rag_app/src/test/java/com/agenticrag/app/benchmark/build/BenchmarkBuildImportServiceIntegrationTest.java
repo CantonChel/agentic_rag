@@ -1,5 +1,9 @@
 package com.agenticrag.app.benchmark.build;
 
+import com.agenticrag.app.benchmark.retrieval.BenchmarkRetrievalTraceEntity;
+import com.agenticrag.app.benchmark.retrieval.BenchmarkRetrievalTraceRepository;
+import com.agenticrag.app.benchmark.retrieval.RetrievalTraceRecordType;
+import com.agenticrag.app.benchmark.retrieval.RetrievalTraceStage;
 import com.agenticrag.app.ingest.repo.ChunkRepository;
 import com.agenticrag.app.ingest.repo.EmbeddingRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeBaseRepository;
@@ -44,11 +48,15 @@ class BenchmarkBuildImportServiceIntegrationTest {
 	@Autowired
 	private KnowledgeSearchTool knowledgeSearchTool;
 
+	@Autowired
+	private BenchmarkRetrievalTraceRepository benchmarkRetrievalTraceRepository;
+
 	@MockBean
 	private EmbeddingModel embeddingModel;
 
 	@BeforeEach
 	void setUp() {
+		benchmarkRetrievalTraceRepository.deleteAll();
 		benchmarkBuildRepository.deleteAll();
 		embeddingRepository.deleteAll();
 		chunkRepository.deleteAll();
@@ -139,6 +147,26 @@ class BenchmarkBuildImportServiceIntegrationTest {
 		Assertions.assertFalse(firstResult.getOutput().contains("build two"));
 		Assertions.assertTrue(secondResult.getOutput().contains("build two"));
 		Assertions.assertFalse(secondResult.getOutput().contains("build one"));
+		Assertions.assertTrue(benchmarkRetrievalTraceRepository.countByTraceId("trace-1") > 0);
+		Assertions.assertTrue(benchmarkRetrievalTraceRepository.countByTraceId("trace-2") > 0);
+		List<BenchmarkRetrievalTraceEntity> firstTrace = benchmarkRetrievalTraceRepository
+			.findByTraceIdOrderByCreatedAtAscToolCallIdAscStageAscRankAscIdAsc("trace-1");
+		List<BenchmarkRetrievalTraceEntity> secondTrace = benchmarkRetrievalTraceRepository
+			.findByTraceIdOrderByCreatedAtAscToolCallIdAscStageAscRankAscIdAsc("trace-2");
+		Assertions.assertTrue(firstTrace.stream().anyMatch(entity ->
+			entity.getRecordType() == RetrievalTraceRecordType.STAGE_SUMMARY
+				&& entity.getStage() == RetrievalTraceStage.DENSE
+		));
+		Assertions.assertTrue(firstTrace.stream().anyMatch(entity ->
+			entity.getRecordType() == RetrievalTraceRecordType.CHUNK
+				&& entity.getStage() == RetrievalTraceStage.CONTEXT_OUTPUT
+				&& first.getBuildId().equals(entity.getBuildId())
+		));
+		Assertions.assertTrue(secondTrace.stream().anyMatch(entity ->
+			entity.getRecordType() == RetrievalTraceRecordType.CHUNK
+				&& entity.getStage() == RetrievalTraceStage.CONTEXT_OUTPUT
+				&& second.getBuildId().equals(entity.getBuildId())
+		));
 	}
 
 	private Path createPackageDir() throws Exception {

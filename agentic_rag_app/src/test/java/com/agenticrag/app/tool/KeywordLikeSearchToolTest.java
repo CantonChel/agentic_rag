@@ -1,5 +1,6 @@
 package com.agenticrag.app.tool;
 
+import com.agenticrag.app.benchmark.retrieval.BenchmarkRetrievalTraceService;
 import com.agenticrag.app.rag.context.ContextAssembler;
 import com.agenticrag.app.rag.model.TextChunk;
 import com.agenticrag.app.rag.retriever.PostgresBm25Retriever;
@@ -19,11 +20,13 @@ class KeywordLikeSearchToolTest {
 	void returnsContextAndSidecar() {
 		ObjectMapper objectMapper = new ObjectMapper();
 		PostgresKeywordLikeRetriever keywordRetriever = Mockito.mock(PostgresKeywordLikeRetriever.class);
+		BenchmarkRetrievalTraceService traceService = Mockito.mock(BenchmarkRetrievalTraceService.class);
 		KeywordLikeSearchTool tool = new KeywordLikeSearchTool(
 			objectMapper,
 			new ContextAssembler(),
 			providerOf(keywordRetriever),
-			providerOf(null)
+			providerOf(null),
+			traceService
 		);
 
 		HashMap<String, Object> metadata = new HashMap<>();
@@ -44,6 +47,7 @@ class KeywordLikeSearchToolTest {
 		Assertions.assertNotNull(result.getSidecar());
 		Assertions.assertEquals("retrieval_context_v1", result.getSidecar().get("type").asText());
 		Assertions.assertEquals(1, result.getSidecar().get("items").size());
+		Mockito.verify(traceService).persistCollector(Mockito.any());
 	}
 
 	private <T> ObjectProvider<T> providerOf(T value) {

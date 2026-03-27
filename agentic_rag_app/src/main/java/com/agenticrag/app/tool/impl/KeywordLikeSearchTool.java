@@ -1,5 +1,6 @@
 package com.agenticrag.app.tool.impl;
 
+import com.agenticrag.app.benchmark.retrieval.BenchmarkRetrievalTraceService;
 import com.agenticrag.app.benchmark.retrieval.RetrievalTraceCollector;
 import com.agenticrag.app.benchmark.retrieval.RetrievalTraceStage;
 import com.agenticrag.app.rag.context.ContextAssemblyResult;
@@ -29,17 +30,20 @@ public class KeywordLikeSearchTool implements Tool {
 	private final ContextAssembler contextAssembler;
 	private final ObjectProvider<PostgresKeywordLikeRetriever> postgresKeywordLikeRetriever;
 	private final ObjectProvider<PostgresBm25Retriever> postgresBm25Retriever;
+	private final BenchmarkRetrievalTraceService benchmarkRetrievalTraceService;
 
 	public KeywordLikeSearchTool(
 		ObjectMapper objectMapper,
 		ContextAssembler contextAssembler,
 		ObjectProvider<PostgresKeywordLikeRetriever> postgresKeywordLikeRetriever,
-		ObjectProvider<PostgresBm25Retriever> postgresBm25Retriever
+		ObjectProvider<PostgresBm25Retriever> postgresBm25Retriever,
+		BenchmarkRetrievalTraceService benchmarkRetrievalTraceService
 	) {
 		this.objectMapper = objectMapper;
 		this.contextAssembler = contextAssembler;
 		this.postgresKeywordLikeRetriever = postgresKeywordLikeRetriever;
 		this.postgresBm25Retriever = postgresBm25Retriever;
+		this.benchmarkRetrievalTraceService = benchmarkRetrievalTraceService;
 	}
 
 	@Override
@@ -114,7 +118,19 @@ public class KeywordLikeSearchTool implements Tool {
 				chunks != null ? chunks.size() : 0,
 				durationMs
 			);
+			persistCollectorQuietly(collector, traceId);
 			return ToolResult.ok(output, assembled.getSidecar());
 		}).subscribeOn(Schedulers.boundedElastic());
+	}
+
+	private void persistCollectorQuietly(RetrievalTraceCollector collector, String traceId) {
+		if (benchmarkRetrievalTraceService == null || collector == null) {
+			return;
+		}
+		try {
+			benchmarkRetrievalTraceService.persistCollector(collector);
+		} catch (Exception e) {
+			log.warn("event=keyword_trace_persist_failed traceId={} type={} message={}", traceId, e.getClass().getSimpleName(), e.getMessage());
+		}
 	}
 }
