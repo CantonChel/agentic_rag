@@ -10,6 +10,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -90,6 +91,28 @@ public class BenchmarkTurnExecutionSummaryService {
 		return findByTurnId(turnId).map(this::toView);
 	}
 
+	@Transactional(readOnly = true)
+	public List<BenchmarkTurnExecutionSummaryView> listViews(
+		String sessionId,
+		String buildId,
+		String knowledgeBaseId,
+		String traceId,
+		String provider,
+		String evalMode,
+		String finishReason
+	) {
+		return benchmarkTurnExecutionSummaryRepository.findAllByOrderByCreatedAtDesc().stream()
+			.filter(entity -> matchesNullable(entity.getSessionId(), sessionId))
+			.filter(entity -> matchesNullable(entity.getBuildId(), buildId))
+			.filter(entity -> matchesNullable(entity.getKnowledgeBaseId(), knowledgeBaseId))
+			.filter(entity -> matchesNullable(entity.getTraceId(), traceId))
+			.filter(entity -> matchesNullable(entity.getProvider(), provider))
+			.filter(entity -> matchesNullable(entity.getEvalMode(), evalMode))
+			.filter(entity -> matchesNullable(entity.getFinishReason(), finishReason))
+			.map(this::toView)
+			.collect(Collectors.toList());
+	}
+
 	private BenchmarkTurnExecutionSummaryView toView(BenchmarkTurnExecutionSummaryEntity entity) {
 		return new BenchmarkTurnExecutionSummaryView(
 			entity.getTurnId(),
@@ -166,5 +189,17 @@ public class BenchmarkTurnExecutionSummaryService {
 		}
 		String normalized = value.trim();
 		return normalized.isEmpty() ? null : normalized;
+	}
+
+	private boolean matchesNullable(String actual, String expected) {
+		String normalizedExpected = normalizeNullable(expected);
+		if (normalizedExpected == null) {
+			return true;
+		}
+		String normalizedActual = normalizeNullable(actual);
+		if (normalizedActual == null) {
+			return false;
+		}
+		return normalizedActual.equalsIgnoreCase(normalizedExpected);
 	}
 }
