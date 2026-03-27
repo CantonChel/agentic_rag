@@ -71,6 +71,10 @@ public class LuceneBm25Retriever implements Retriever, ChunkIndexer {
 
 	@Override
 	public synchronized List<TextChunk> retrieve(String query, int topK) {
+		return retrieve(query, topK, null);
+	}
+
+	public synchronized List<TextChunk> retrieve(String query, int topK, String knowledgeBaseId) {
 		if (query == null || query.trim().isEmpty() || topK <= 0) {
 			return new ArrayList<>();
 		}
@@ -91,10 +95,17 @@ public class LuceneBm25Retriever implements Retriever, ChunkIndexer {
 				String chunkId = d.get("indexedChunkId");
 				TextChunk chunk = chunkId != null ? chunksById.get(chunkId) : null;
 				if (chunk != null) {
+					if (!matchesKnowledgeBaseId(chunk, knowledgeBaseId)) {
+						continue;
+					}
 					out.add(chunk);
 					continue;
 				}
-				out.add(fromLuceneDoc(d));
+				TextChunk loaded = fromLuceneDoc(d);
+				if (!matchesKnowledgeBaseId(loaded, knowledgeBaseId)) {
+					continue;
+				}
+				out.add(loaded);
 			}
 			return out;
 		} catch (Exception ignored) {
@@ -155,6 +166,10 @@ public class LuceneBm25Retriever implements Retriever, ChunkIndexer {
 		if (source != null) {
 			d.add(new StringField("source", String.valueOf(source), Field.Store.YES));
 		}
+		Object knowledgeBaseId = c.getMetadata() != null ? c.getMetadata().get("knowledge_base_id") : null;
+		if (knowledgeBaseId != null) {
+			d.add(new StringField("knowledgeBaseId", String.valueOf(knowledgeBaseId), Field.Store.YES));
+		}
 
 		d.add(new TextField("text", c.getText() != null ? c.getText() : "", Field.Store.YES));
 		return d;
@@ -169,7 +184,22 @@ public class LuceneBm25Retriever implements Retriever, ChunkIndexer {
 		if (source != null) {
 			md.put("source", source);
 		}
+		String knowledgeBaseId = d.get("knowledgeBaseId");
+		if (knowledgeBaseId != null) {
+			md.put("knowledge_base_id", knowledgeBaseId);
+		}
 		return new TextChunk(chunkId, documentId, text, null, md);
+	}
+
+	private boolean matchesKnowledgeBaseId(TextChunk chunk, String knowledgeBaseId) {
+		if (knowledgeBaseId == null || knowledgeBaseId.trim().isEmpty()) {
+			return true;
+		}
+		if (chunk == null || chunk.getMetadata() == null) {
+			return false;
+		}
+		Object scopedValue = chunk.getMetadata().get("knowledge_base_id");
+		return scopedValue != null && knowledgeBaseId.trim().equals(String.valueOf(scopedValue).trim());
 	}
 
 	private String indexedChunkId(TextChunk chunk) {

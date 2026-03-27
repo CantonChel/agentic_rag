@@ -60,6 +60,10 @@ public class InMemoryVectorStore implements VectorStore, ChunkIndexer {
 
 	@Override
 	public List<TextChunk> similaritySearch(List<Double> queryEmbedding, int topK) {
+		return similaritySearch(queryEmbedding, topK, null);
+	}
+
+	public List<TextChunk> similaritySearch(List<Double> queryEmbedding, int topK, String knowledgeBaseId) {
 		if (queryEmbedding == null || queryEmbedding.isEmpty() || topK <= 0) {
 			return new ArrayList<>();
 		}
@@ -67,6 +71,9 @@ public class InMemoryVectorStore implements VectorStore, ChunkIndexer {
 		List<ScoredChunk> scored = new ArrayList<>();
 		for (TextChunk chunk : chunksById.values()) {
 			if (chunk == null || chunk.getEmbedding() == null || chunk.getEmbedding().isEmpty()) {
+				continue;
+			}
+			if (!matchesKnowledgeBaseId(chunk, knowledgeBaseId)) {
 				continue;
 			}
 			double score = CosineSimilarity.cosine(queryEmbedding, chunk.getEmbedding());
@@ -90,6 +97,17 @@ public class InMemoryVectorStore implements VectorStore, ChunkIndexer {
 
 	public void clear() {
 		chunksById.clear();
+	}
+
+	private boolean matchesKnowledgeBaseId(TextChunk chunk, String knowledgeBaseId) {
+		if (knowledgeBaseId == null || knowledgeBaseId.trim().isEmpty()) {
+			return true;
+		}
+		if (chunk == null || chunk.getMetadata() == null) {
+			return false;
+		}
+		Object scopedValue = chunk.getMetadata().get("knowledge_base_id");
+		return scopedValue != null && knowledgeBaseId.trim().equals(String.valueOf(scopedValue).trim());
 	}
 
 	private String indexKey(String documentId, String chunkId) {

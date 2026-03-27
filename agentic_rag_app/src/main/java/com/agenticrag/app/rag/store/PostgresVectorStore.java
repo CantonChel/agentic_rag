@@ -33,10 +33,14 @@ public class PostgresVectorStore implements VectorStore {
 
 	@Override
 	public List<TextChunk> similaritySearch(List<Double> queryEmbedding, int topK) {
-		return similaritySearch(queryEmbedding, topK, "n/a");
+		return similaritySearch(queryEmbedding, topK, "n/a", null);
 	}
 
 	public List<TextChunk> similaritySearch(List<Double> queryEmbedding, int topK, String traceId) {
+		return similaritySearch(queryEmbedding, topK, traceId, null);
+	}
+
+	public List<TextChunk> similaritySearch(List<Double> queryEmbedding, int topK, String traceId, String knowledgeBaseId) {
 		if (queryEmbedding == null || queryEmbedding.isEmpty() || topK <= 0) {
 			return new ArrayList<>();
 		}
@@ -44,18 +48,21 @@ public class PostgresVectorStore implements VectorStore {
 
 		String vecLiteral = toPgvectorLiteral(queryEmbedding);
 		String sql = ""
-			+ "select chunk_id, knowledge_id, content "
-			+ "from embedding "
-			+ "order by vector_json::vector <-> ?::vector "
+			+ "select e.chunk_id, e.knowledge_id, e.content, k.knowledge_base_id "
+			+ "from embedding e "
+			+ "join knowledge k on k.id = e.knowledge_id "
+			+ "where (? is null or k.knowledge_base_id = ?) "
+			+ "order by e.vector_json::vector <-> ?::vector "
 			+ "limit ?";
 
 		try {
-			List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, vecLiteral, topK);
+			List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, knowledgeBaseId, knowledgeBaseId, vecLiteral, topK);
 			if (rows == null || rows.isEmpty()) {
 				long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 				log.info(
-					"event=pg_vector_search traceId={} topK={} queryVectorDim={} candidateRows=0 durationMs={}",
+					"event=pg_vector_search traceId={} knowledgeBaseId={} topK={} queryVectorDim={} candidateRows=0 durationMs={}",
 					traceId,
+					knowledgeBaseId,
 					topK,
 					queryEmbedding.size(),
 					durationMs
@@ -73,13 +80,18 @@ public class PostgresVectorStore implements VectorStore {
 				}
 				String knowledgeId = row.get("knowledge_id") != null ? String.valueOf(row.get("knowledge_id")) : null;
 				String content = row.get("content") != null ? String.valueOf(row.get("content")) : "";
-				out.add(new TextChunk(chunkId, knowledgeId, content, null, Collections.emptyMap()));
+				String resolvedKnowledgeBaseId = row.get("knowledge_base_id") != null ? String.valueOf(row.get("knowledge_base_id")) : knowledgeBaseId;
+				Map<String, Object> metadata = resolvedKnowledgeBaseId == null
+					? Collections.emptyMap()
+					: Collections.singletonMap("knowledge_base_id", resolvedKnowledgeBaseId);
+				out.add(new TextChunk(chunkId, knowledgeId, content, null, metadata));
 			}
 			if (out.isEmpty()) {
 				long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 				log.info(
-					"event=pg_vector_search traceId={} topK={} queryVectorDim={} candidateRows={} resolvedChunkIds=0 durationMs={}",
+					"event=pg_vector_search traceId={} knowledgeBaseId={} topK={} queryVectorDim={} candidateRows={} resolvedChunkIds=0 durationMs={}",
 					traceId,
+					knowledgeBaseId,
 					topK,
 					queryEmbedding.size(),
 					rows.size(),
@@ -89,8 +101,9 @@ public class PostgresVectorStore implements VectorStore {
 			}
 			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 			log.info(
-				"event=pg_vector_search traceId={} topK={} queryVectorDim={} candidateRows={} resolvedChunkIds={} contentRows={} resultCount={} durationMs={}",
+				"event=pg_vector_search traceId={} knowledgeBaseId={} topK={} queryVectorDim={} candidateRows={} resolvedChunkIds={} contentRows={} resultCount={} durationMs={}",
 				traceId,
+				knowledgeBaseId,
 				topK,
 				queryEmbedding.size(),
 				rows.size(),
@@ -103,8 +116,9 @@ public class PostgresVectorStore implements VectorStore {
 		} catch (Exception e) {
 			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 			log.warn(
-				"event=pg_vector_search_error traceId={} topK={} queryVectorDim={} durationMs={} type={} message={}",
+				"event=pg_vector_search_error traceId={} knowledgeBaseId={} topK={} queryVectorDim={} durationMs={} type={} message={}",
 				traceId,
+				knowledgeBaseId,
 				topK,
 				queryEmbedding != null ? queryEmbedding.size() : 0,
 				durationMs,

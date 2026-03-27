@@ -50,6 +50,28 @@ class PostgresVectorStoreTest {
 	}
 
 	@Test
+	void passesKnowledgeBaseScopeToJdbcQuery() {
+		JdbcTemplate jdbcTemplate = Mockito.mock(JdbcTemplate.class);
+		com.agenticrag.app.ingest.repo.EmbeddingRepository embeddingRepository = Mockito.mock(com.agenticrag.app.ingest.repo.EmbeddingRepository.class);
+
+		Map<String, Object> row = new HashMap<>();
+		row.put("chunk_id", "c1");
+		row.put("knowledge_id", "k1");
+		row.put("knowledge_base_id", "kb-1");
+		row.put("content", "hello");
+
+		Mockito.when(jdbcTemplate.queryForList(Mockito.anyString(), Mockito.<Object[]>any()))
+			.thenReturn(Collections.singletonList(row));
+
+		PostgresVectorStore store = new PostgresVectorStore(jdbcTemplate, embeddingRepository);
+		List<TextChunk> out = store.similaritySearch(Arrays.asList(0.1, 0.2), 2, "trace-1", "kb-1");
+
+		Assertions.assertEquals(1, out.size());
+		Assertions.assertEquals("kb-1", out.get(0).getMetadata().get("knowledge_base_id"));
+		Mockito.verify(jdbcTemplate).queryForList(Mockito.anyString(), Mockito.eq("kb-1"), Mockito.eq("kb-1"), Mockito.anyString(), Mockito.eq(2));
+	}
+
+	@Test
 	void returnsEmptyOnJdbcFailure() {
 		JdbcTemplate jdbcTemplate = Mockito.mock(JdbcTemplate.class);
 		com.agenticrag.app.ingest.repo.EmbeddingRepository embeddingRepository = Mockito.mock(com.agenticrag.app.ingest.repo.EmbeddingRepository.class);

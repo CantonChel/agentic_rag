@@ -164,7 +164,7 @@ public class AgentStreamingService {
 		boolean includeTools,
 		LlmToolChoiceMode toolChoiceMode
 	) {
-		return stream(provider, "anonymous", sessionId, prompt, includeTools, toolChoiceMode, null);
+		return stream(provider, "anonymous", sessionId, prompt, includeTools, toolChoiceMode, null, null);
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -175,7 +175,7 @@ public class AgentStreamingService {
 		boolean includeTools,
 		LlmToolChoiceMode toolChoiceMode
 	) {
-		return stream(provider, userId, sessionId, prompt, includeTools, toolChoiceMode, null);
+		return stream(provider, userId, sessionId, prompt, includeTools, toolChoiceMode, null, null);
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -187,18 +187,33 @@ public class AgentStreamingService {
 		LlmToolChoiceMode toolChoiceMode,
 		String traceId
 	) {
+		return stream(provider, userId, sessionId, prompt, includeTools, toolChoiceMode, traceId, null);
+	}
+
+	public Flux<LlmStreamEvent> stream(
+		LlmProvider provider,
+		String userId,
+		String sessionId,
+		String prompt,
+		boolean includeTools,
+		LlmToolChoiceMode toolChoiceMode,
+		String traceId,
+		String knowledgeBaseId
+	) {
 		String uid = SessionScope.normalizeUserId(userId);
 		String sid = SessionScope.normalizeSessionId(sessionId);
 		String scopedSid = SessionScope.scopedSessionId(uid, sid);
 		String effectiveTraceId = TraceIdUtil.normalizeOrGenerate(traceId);
+		String scopedKnowledgeBaseId = normalizeKnowledgeBaseId(knowledgeBaseId);
 		int maxIterations = agentProperties.getMaxIterations() > 0 ? agentProperties.getMaxIterations() : 6;
 		long toolTimeoutSeconds = agentProperties.getToolTimeoutSeconds() > 0 ? agentProperties.getToolTimeoutSeconds() : 30;
 		log.info(
-			"event=agent_stream_start traceId={} provider={} userId={} sessionId={} includeTools={} toolChoice={} promptChars={}",
+			"event=agent_stream_start traceId={} provider={} userId={} sessionId={} knowledgeBaseId={} includeTools={} toolChoice={} promptChars={}",
 			effectiveTraceId,
 			provider,
 			uid,
 			sid,
+			scopedKnowledgeBaseId,
 			includeTools,
 			toolChoiceMode,
 			prompt != null ? prompt.length() : 0
@@ -497,7 +512,7 @@ public class AgentStreamingService {
 											String err = "Error: 参数解析失败。请检查并重新调用工具。细节: " + String.join("; ", vr.getErrors());
 											return ToolResult.error(err);
 										}
-										return t.execute(toolArgs, new ToolExecutionContext(toolCallId, uid, sid, effectiveTraceId))
+										return t.execute(toolArgs, new ToolExecutionContext(toolCallId, uid, sid, effectiveTraceId, scopedKnowledgeBaseId))
 											.block(Duration.ofSeconds(toolTimeoutSeconds));
 									})
 									.orElse(ToolResult.error("Tool not found: " + toolName));
@@ -688,6 +703,14 @@ public class AgentStreamingService {
 			return "command:/reset";
 		}
 		return "command:/new";
+	}
+
+	private String normalizeKnowledgeBaseId(String knowledgeBaseId) {
+		if (knowledgeBaseId == null) {
+			return null;
+		}
+		String normalized = knowledgeBaseId.trim();
+		return normalized.isEmpty() ? null : normalized;
 	}
 
 	private String createNextSessionId(String userId) {

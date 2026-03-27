@@ -25,11 +25,12 @@ public class LlmController {
 	public Flux<ServerSentEvent<LlmStreamEvent>> streamOpenAi(
 		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "sessionId", defaultValue = "default") String sessionId,
+		@RequestParam(value = "knowledgeBaseId", required = false) String knowledgeBaseId,
 		@RequestParam("prompt") String prompt,
 		@RequestParam(value = "tools", defaultValue = "false") boolean tools,
 		@RequestParam(value = "toolChoice", defaultValue = "AUTO") LlmToolChoiceMode toolChoice
 	) {
-		return streamingChatService.stream(LlmProvider.OPENAI, userId, sessionId, prompt, tools, toolChoice)
+		return streamingChatService.stream(LlmProvider.OPENAI, userId, sessionId, prompt, tools, toolChoice, knowledgeBaseId)
 			.map(e -> ServerSentEvent.builder(e).event(e.getType()).build());
 	}
 
@@ -37,11 +38,12 @@ public class LlmController {
 	public Flux<ServerSentEvent<LlmStreamEvent>> streamMinimax(
 		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "sessionId", defaultValue = "default") String sessionId,
+		@RequestParam(value = "knowledgeBaseId", required = false) String knowledgeBaseId,
 		@RequestParam("prompt") String prompt,
 		@RequestParam(value = "tools", defaultValue = "false") boolean tools,
 		@RequestParam(value = "toolChoice", defaultValue = "AUTO") LlmToolChoiceMode toolChoice
 	) {
-		return streamingChatService.stream(LlmProvider.MINIMAX, userId, sessionId, prompt, tools, toolChoice)
+		return streamingChatService.stream(LlmProvider.MINIMAX, userId, sessionId, prompt, tools, toolChoice, knowledgeBaseId)
 			.map(e -> ServerSentEvent.builder(e).event(e.getType()).build());
 	}
 }

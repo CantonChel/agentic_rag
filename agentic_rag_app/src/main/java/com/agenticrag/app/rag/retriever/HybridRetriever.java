@@ -34,10 +34,14 @@ public class HybridRetriever {
 	}
 
 	public List<TextChunk> retrieve(String query, int recallTopK, int rerankTopK) {
-		return retrieve(query, recallTopK, rerankTopK, "n/a");
+		return retrieve(query, recallTopK, rerankTopK, "n/a", null);
 	}
 
 	public List<TextChunk> retrieve(String query, int recallTopK, int rerankTopK, String traceId) {
+		return retrieve(query, recallTopK, rerankTopK, traceId, null);
+	}
+
+	public List<TextChunk> retrieve(String query, int recallTopK, int rerankTopK, String traceId, String knowledgeBaseId) {
 		if (query == null || query.trim().isEmpty()) {
 			return new ArrayList<>();
 		}
@@ -57,13 +61,12 @@ public class HybridRetriever {
 
 		final Retriever bm25RetrieverResolved = bm25Candidate;
 
-		CompletableFuture<List<TextChunk>> denseF = CompletableFuture.supplyAsync(() -> denseRetriever.retrieve(query, recall, traceId));
-		CompletableFuture<List<TextChunk>> bm25F = CompletableFuture.supplyAsync(() -> {
-			if (bm25RetrieverResolved instanceof PostgresBm25Retriever) {
-				return ((PostgresBm25Retriever) bm25RetrieverResolved).retrieve(query, recall, traceId);
-			}
-			return bm25RetrieverResolved.retrieve(query, recall);
-		});
+		CompletableFuture<List<TextChunk>> denseF = CompletableFuture.supplyAsync(
+			() -> denseRetriever.retrieve(query, recall, traceId, knowledgeBaseId)
+		);
+		CompletableFuture<List<TextChunk>> bm25F = CompletableFuture.supplyAsync(
+			() -> retrieveBm25(bm25RetrieverResolved, query, recall, traceId, knowledgeBaseId)
+		);
 
 		List<TextChunk> dense = denseF.join();
 		List<TextChunk> bm25Chunks = bm25F.join();
@@ -72,9 +75,10 @@ public class HybridRetriever {
 		List<TextChunk> reranked = reranker.rerank(query, fused, rerank);
 		long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 		log.info(
-			"event=hybrid_retrieve traceId={} query={} recallTopK={} rerankTopK={} denseCount={} bm25Count={} fusedCount={} rerankedCount={} durationMs={}",
+			"event=hybrid_retrieve traceId={} query={} knowledgeBaseId={} recallTopK={} rerankTopK={} denseCount={} bm25Count={} fusedCount={} rerankedCount={} durationMs={}",
 			traceId,
 			query,
+			knowledgeBaseId,
 			recall,
 			rerank,
 			dense != null ? dense.size() : 0,
@@ -84,6 +88,22 @@ public class HybridRetriever {
 			durationMs
 		);
 		return reranked;
+	}
+
+	private List<TextChunk> retrieveBm25(
+		Retriever retriever,
+		String query,
+		int topK,
+		String traceId,
+		String knowledgeBaseId
+	) {
+		if (retriever instanceof PostgresBm25Retriever) {
+			return ((PostgresBm25Retriever) retriever).retrieve(query, topK, traceId, knowledgeBaseId);
+		}
+		if (retriever instanceof LuceneBm25Retriever) {
+			return ((LuceneBm25Retriever) retriever).retrieve(query, topK, knowledgeBaseId);
+		}
+		return retriever.retrieve(query, topK);
 	}
 
 	private List<TextChunk> fuseRrf(List<TextChunk> a, List<TextChunk> b, int topK, int k) {

@@ -30,10 +30,14 @@ public class DenseVectorRetriever implements Retriever {
 
 	@Override
 	public List<TextChunk> retrieve(String query, int topK) {
-		return retrieve(query, topK, "n/a");
+		return retrieve(query, topK, "n/a", null);
 	}
 
 	public List<TextChunk> retrieve(String query, int topK, String traceId) {
+		return retrieve(query, topK, traceId, null);
+	}
+
+	public List<TextChunk> retrieve(String query, int topK, String traceId, String knowledgeBaseId) {
 		if (query == null || query.trim().isEmpty() || topK <= 0) {
 			return new ArrayList<>();
 		}
@@ -46,15 +50,18 @@ public class DenseVectorRetriever implements Retriever {
 		}
 		List<TextChunk> out;
 		if (store instanceof PostgresVectorStore) {
-			out = ((PostgresVectorStore) store).similaritySearch(qe, topK, traceId);
+			out = ((PostgresVectorStore) store).similaritySearch(qe, topK, traceId, knowledgeBaseId);
+		} else if (store instanceof com.agenticrag.app.rag.store.InMemoryVectorStore) {
+			out = ((com.agenticrag.app.rag.store.InMemoryVectorStore) store).similaritySearch(qe, topK, knowledgeBaseId);
 		} else {
 			out = store.similaritySearch(qe, topK);
 		}
 		long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 		log.info(
-			"event=dense_retrieve traceId={} query={} topK={} queryVectorDim={} storeType={} resultCount={} durationMs={}",
+			"event=dense_retrieve traceId={} query={} knowledgeBaseId={} topK={} queryVectorDim={} storeType={} resultCount={} durationMs={}",
 			traceId,
 			query,
+			knowledgeBaseId,
 			topK,
 			qe != null ? qe.size() : 0,
 			store != null ? store.getClass().getSimpleName() : "unknown",

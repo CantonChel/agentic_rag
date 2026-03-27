@@ -78,21 +78,23 @@ public class KeywordLikeSearchTool implements Tool {
 			}
 
 			List<TextChunk> chunks = new ArrayList<>();
+			String knowledgeBaseId = context != null ? context.getKnowledgeBaseId() : null;
 			PostgresKeywordLikeRetriever keywordRetriever = postgresKeywordLikeRetriever.getIfAvailable();
 			if (keywordRetriever != null) {
-				chunks = keywordRetriever.retrieve(query, topK, traceId);
+				chunks = keywordRetriever.retrieve(query, topK, traceId, knowledgeBaseId);
 			} else {
 				PostgresBm25Retriever bm25Retriever = postgresBm25Retriever.getIfAvailable();
 				if (bm25Retriever != null) {
-					chunks = bm25Retriever.retrieve(query, topK, traceId);
+					chunks = bm25Retriever.retrieve(query, topK, traceId, knowledgeBaseId);
 				}
 			}
 
 			String output = contextAssembler.assemble(chunks);
 			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 			log.info(
-				"event=keyword_tool_end traceId={} requestId={} query={} topK={} chunks={} durationMs={}",
+				"event=keyword_tool_end traceId={} knowledgeBaseId={} requestId={} query={} topK={} chunks={} durationMs={}",
 				traceId,
+				knowledgeBaseId,
 				context != null ? context.getRequestId() : "n/a",
 				query,
 				topK,

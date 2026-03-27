@@ -54,6 +54,7 @@ public class ToolController {
 	public Mono<ToolResult> execute(
 		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "sessionId", defaultValue = "default") String sessionId,
+		@RequestParam(value = "knowledgeBaseId", required = false) String knowledgeBaseId,
 		@RequestBody ExecuteToolRequest request,
 		@RequestHeader(value = TraceIdUtil.HEADER_NAME, required = false) String traceIdHeader,
 		ServerHttpResponse response
@@ -63,7 +64,7 @@ public class ToolController {
 		String traceId = TraceIdUtil.normalizeOrGenerate(traceIdHeader);
 		response.getHeaders().set(TraceIdUtil.HEADER_NAME, traceId);
 		String scopedSid = SessionScope.scopedSessionId(uid, sid);
-		ToolExecutionContext context = new ToolExecutionContext(UUID.randomUUID().toString(), uid, sid, traceId);
+		ToolExecutionContext context = new ToolExecutionContext(UUID.randomUUID().toString(), uid, sid, traceId, knowledgeBaseId);
 		return toolRouter.getTool(request.getName())
 			.map(t -> {
 				ToolArgumentValidator.ValidationResult vr = toolArgumentValidator.validate(t.parametersSchema(), request.getArguments());

@@ -14,10 +14,14 @@ import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
 import com.agenticrag.app.prompt.SystemPromptMode;
 import com.agenticrag.app.rag.splitter.TokenCounter;
+import com.agenticrag.app.tool.Tool;
 import com.agenticrag.app.tool.ToolArgumentValidator;
+import com.agenticrag.app.tool.ToolExecutionContext;
+import com.agenticrag.app.tool.ToolResult;
 import com.agenticrag.app.tool.ToolRouter;
 import com.agenticrag.app.tool.impl.CalculatorTool;
 import com.agenticrag.app.tool.impl.ThinkingTool;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openai.client.OpenAIClient;
 import com.openai.core.JsonValue;
@@ -27,14 +31,87 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.mockito.Answers;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import reactor.core.publisher.Mono;
 
 class AgentStreamingServiceTest {
+	@Test
+	void passesKnowledgeBaseIdIntoToolExecutionContext() {
+		ObjectMapper objectMapper = new ObjectMapper();
+		AtomicReference<ToolExecutionContext> capturedContext = new AtomicReference<>();
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+
+		StreamResponse<ChatCompletionChunk> r1 = new FakeStreamResponse(Stream.of(toolCallsChunk()));
+		StreamResponse<ChatCompletionChunk> r2 = new FakeStreamResponse(Stream.of(textChunk("done")));
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(r1, r2);
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		ToolRouter toolRouter = new ToolRouter();
+		toolRouter.register(new CapturingTool(objectMapper, capturedContext));
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(4);
+		agentProps.setToolTimeoutSeconds(5);
+
+		ToolArgumentValidator validator = new ToolArgumentValidator();
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			validator
+		);
+
+		List<LlmStreamEvent> events = service.stream(
+			LlmProvider.OPENAI,
+			"u1",
+			"s1",
+			"scope it",
+			true,
+			LlmToolChoiceMode.AUTO,
+			null,
+			"kb-1"
+		).collectList().block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		Assertions.assertNotNull(capturedContext.get());
+		Assertions.assertEquals("kb-1", capturedContext.get().getKnowledgeBaseId());
+		Assertions.assertEquals("u1", capturedContext.get().getUserId());
+		Assertions.assertEquals("s1", capturedContext.get().getSessionId());
+	}
+
 	@Test
 	void executesToolCallsAndWritesFinalAnswerToMemory() {
 		ObjectMapper objectMapper = new ObjectMapper();
@@ -693,6 +770,44 @@ class AgentStreamingServiceTest {
 			.object_(JsonValue.from("chat.completion.chunk"))
 			.addChoice(choice.build())
 			.build();
+	}
+
+	private static final class CapturingTool implements Tool {
+		private final ObjectMapper objectMapper;
+		private final AtomicReference<ToolExecutionContext> capturedContext;
+
+		private CapturingTool(ObjectMapper objectMapper, AtomicReference<ToolExecutionContext> capturedContext) {
+			this.objectMapper = objectMapper;
+			this.capturedContext = capturedContext;
+		}
+
+		@Override
+		public String name() {
+			return "calculator";
+		}
+
+		@Override
+		public String description() {
+			return "captures scope";
+		}
+
+		@Override
+		public JsonNode parametersSchema() {
+			com.fasterxml.jackson.databind.node.ObjectNode root = objectMapper.createObjectNode();
+			root.put("type", "object");
+			com.fasterxml.jackson.databind.node.ObjectNode properties = root.putObject("properties");
+			properties.putObject("op").put("type", "string");
+			properties.putObject("a").put("type", "number");
+			properties.putObject("b").put("type", "number");
+			root.putArray("required").add("op").add("a").add("b");
+			return root;
+		}
+
+		@Override
+		public Mono<ToolResult> execute(JsonNode arguments, ToolExecutionContext context) {
+			capturedContext.set(context);
+			return Mono.just(ToolResult.ok("42"));
+		}
 	}
 
 	private static final class FakeStreamResponse implements StreamResponse<ChatCompletionChunk> {

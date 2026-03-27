@@ -65,21 +65,29 @@ public class KnowledgeSearchTool implements Tool {
 				return ToolResult.error("Empty query");
 			}
 			log.info(
-				"event=kb_tool_start traceId={} userId={} sessionId={} requestId={} query={} recallTopK={} rerankTopK={}",
+				"event=kb_tool_start traceId={} userId={} sessionId={} knowledgeBaseId={} requestId={} query={} recallTopK={} rerankTopK={}",
 				traceId,
 				context != null ? context.getUserId() : "anonymous",
 				context != null ? context.getSessionId() : "default",
+				context != null ? context.getKnowledgeBaseId() : null,
 				context != null ? context.getRequestId() : "n/a",
 				q,
 				20,
 				5
 			);
-			List<TextChunk> top = hybridRetriever.retrieve(q, 20, 5, traceId);
+			List<TextChunk> top = hybridRetriever.retrieve(
+				q,
+				20,
+				5,
+				traceId,
+				context != null ? context.getKnowledgeBaseId() : null
+			);
 			String ctx = contextAssembler.assemble(top);
 			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 			log.info(
-				"event=kb_tool_end traceId={} requestId={} chunks={} contextChars={} durationMs={}",
+				"event=kb_tool_end traceId={} knowledgeBaseId={} requestId={} chunks={} contextChars={} durationMs={}",
 				traceId,
+				context != null ? context.getKnowledgeBaseId() : null,
 				context != null ? context.getRequestId() : "n/a",
 				top != null ? top.size() : 0,
 				ctx != null ? ctx.length() : 0,

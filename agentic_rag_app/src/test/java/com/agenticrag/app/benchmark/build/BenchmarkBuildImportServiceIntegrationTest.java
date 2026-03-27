@@ -5,6 +5,9 @@ import com.agenticrag.app.ingest.repo.EmbeddingRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeBaseRepository;
 import com.agenticrag.app.ingest.repo.KnowledgeRepository;
 import com.agenticrag.app.rag.embedding.EmbeddingModel;
+import com.agenticrag.app.tool.ToolExecutionContext;
+import com.agenticrag.app.tool.ToolResult;
+import com.agenticrag.app.tool.impl.KnowledgeSearchTool;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -37,6 +40,9 @@ class BenchmarkBuildImportServiceIntegrationTest {
 
 	@Autowired
 	private EmbeddingRepository embeddingRepository;
+
+	@Autowired
+	private KnowledgeSearchTool knowledgeSearchTool;
 
 	@MockBean
 	private EmbeddingModel embeddingModel;
@@ -102,14 +108,51 @@ class BenchmarkBuildImportServiceIntegrationTest {
 		Assertions.assertEquals(0, embeddingRepository.count());
 	}
 
+	@Test
+	void knowledgeSearchToolRespectsKnowledgeBaseIsolationAfterImport() throws Exception {
+		Path firstPackage = createPackageDir("base_v1", "shared benchmark evidence from build one");
+		Path secondPackage = createPackageDir("base_v2", "shared benchmark evidence from build two");
+		Mockito.when(embeddingModel.embedTexts(Mockito.anyList()))
+			.thenAnswer(invocation -> {
+				@SuppressWarnings("unchecked")
+				List<String> texts = invocation.getArgument(0, List.class);
+				return Collections.nCopies(texts.size(), Arrays.asList(0.1d, 0.2d));
+			});
+
+		BenchmarkBuildEntity first = benchmarkBuildImportService.importPackage(firstPackage);
+		BenchmarkBuildEntity second = benchmarkBuildImportService.importPackage(secondPackage);
+
+		ToolResult firstResult = knowledgeSearchTool.execute(
+			new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode().put("query", "shared benchmark evidence"),
+			new ToolExecutionContext("req-1", "u1", "s1", "trace-1", first.getKnowledgeBaseId())
+		).block();
+		ToolResult secondResult = knowledgeSearchTool.execute(
+			new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode().put("query", "shared benchmark evidence"),
+			new ToolExecutionContext("req-2", "u1", "s1", "trace-2", second.getKnowledgeBaseId())
+		).block();
+
+		Assertions.assertNotNull(firstResult);
+		Assertions.assertNotNull(secondResult);
+		Assertions.assertTrue(firstResult.isSuccess());
+		Assertions.assertTrue(secondResult.isSuccess());
+		Assertions.assertTrue(firstResult.getOutput().contains("build one"));
+		Assertions.assertFalse(firstResult.getOutput().contains("build two"));
+		Assertions.assertTrue(secondResult.getOutput().contains("build two"));
+		Assertions.assertFalse(secondResult.getOutput().contains("build one"));
+	}
+
 	private Path createPackageDir() throws Exception {
+		return createPackageDir("base_v1", "First evidence");
+	}
+
+	private Path createPackageDir(String suiteVersion, String firstEvidenceText) throws Exception {
 		Path dir = Files.createTempDirectory("benchmark-import");
 		Files.writeString(
 			dir.resolve("suite_manifest.json"),
 			"{\n"
 				+ "  \"package_version\": \"v1\",\n"
 				+ "  \"project_key\": \"api_docs\",\n"
-				+ "  \"suite_version\": \"base_v1\",\n"
+				+ "  \"suite_version\": \"" + suiteVersion + "\",\n"
 				+ "  \"created_at\": \"2026-03-27T00:00:00Z\",\n"
 				+ "  \"generator_version\": \"stage2_v1\",\n"
 				+ "  \"files\": {\n"
@@ -122,13 +165,13 @@ class BenchmarkBuildImportServiceIntegrationTest {
 		);
 		Files.writeString(
 			dir.resolve("evidence_units.jsonl"),
-			"{\"evidence_id\":\"evi-1\",\"doc_path\":\"docs/guide/a.md\",\"section_key\":\"intro\",\"section_title\":\"Intro\",\"canonical_text\":\"First evidence\",\"anchor\":\"docs/guide/a.md#intro\",\"source_hash\":\"hash-1\",\"extractor_version\":\"stage2_v1\"}\n"
+			"{\"evidence_id\":\"evi-1\",\"doc_path\":\"docs/guide/a.md\",\"section_key\":\"intro\",\"section_title\":\"Intro\",\"canonical_text\":\"" + firstEvidenceText + "\",\"anchor\":\"docs/guide/a.md#intro\",\"source_hash\":\"hash-1\",\"extractor_version\":\"stage2_v1\"}\n"
 				+ "{\"evidence_id\":\"evi-2\",\"doc_path\":\"docs/guide/a.md\",\"section_key\":\"limits\",\"section_title\":\"Limits\",\"canonical_text\":\"Second evidence\",\"anchor\":\"docs/guide/a.md#limits\",\"source_hash\":\"hash-2\",\"extractor_version\":\"stage2_v1\"}\n"
 				+ "{\"evidence_id\":\"evi-3\",\"doc_path\":\"docs/api/b.pdf\",\"section_key\":\"api\",\"section_title\":\"API\",\"canonical_text\":\"Third evidence\",\"anchor\":\"docs/api/b.pdf#api\",\"source_hash\":\"hash-3\",\"extractor_version\":\"stage2_v1\"}\n"
 		);
 		Files.writeString(
 			dir.resolve("benchmark_suite.jsonl"),
-			"{\"sample_id\":\"sample-1\",\"question\":\"What is first evidence?\",\"ground_truth\":\"First evidence\",\"ground_truth_contexts\":[\"First evidence\"],\"gold_evidence_refs\":[{\"evidence_id\":\"evi-1\",\"doc_path\":\"docs/guide/a.md\",\"section_key\":\"intro\"}],\"tags\":[\"smoke\"],\"difficulty\":\"easy\",\"suite_version\":\"base_v1\"}\n"
+			"{\"sample_id\":\"sample-1\",\"question\":\"What is first evidence?\",\"ground_truth\":\"" + firstEvidenceText + "\",\"ground_truth_contexts\":[\"" + firstEvidenceText + "\"],\"gold_evidence_refs\":[{\"evidence_id\":\"evi-1\",\"doc_path\":\"docs/guide/a.md\",\"section_key\":\"intro\"}],\"tags\":[\"smoke\"],\"difficulty\":\"easy\",\"suite_version\":\"" + suiteVersion + "\"}\n"
 		);
 		Files.writeString(dir.resolve("benchmark_suite.md"), "# review\n");
 		return dir;

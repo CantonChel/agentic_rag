@@ -28,6 +28,7 @@ public class AgentController {
 	public Flux<ServerSentEvent<LlmStreamEvent>> streamOpenAi(
 		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "sessionId", defaultValue = "default") String sessionId,
+		@RequestParam(value = "knowledgeBaseId", required = false) String knowledgeBaseId,
 		@RequestParam("prompt") String prompt,
 		@RequestParam(value = "tools", defaultValue = "true") boolean tools,
 		@RequestParam(value = "toolChoice", defaultValue = "AUTO") LlmToolChoiceMode toolChoice,
@@ -36,7 +37,7 @@ public class AgentController {
 	) {
 		String traceId = TraceIdUtil.normalizeOrGenerate(traceIdHeader);
 		response.getHeaders().set(TraceIdUtil.HEADER_NAME, traceId);
-		return agentStreamingService.stream(LlmProvider.OPENAI, userId, sessionId, prompt, tools, toolChoice, traceId)
+		return agentStreamingService.stream(LlmProvider.OPENAI, userId, sessionId, prompt, tools, toolChoice, traceId, knowledgeBaseId)
 			.map(e -> ServerSentEvent.builder(e).event(e.getType()).build());
 	}
 
@@ -44,6 +45,7 @@ public class AgentController {
 	public Flux<ServerSentEvent<LlmStreamEvent>> streamMinimax(
 		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "sessionId", defaultValue = "default") String sessionId,
+		@RequestParam(value = "knowledgeBaseId", required = false) String knowledgeBaseId,
 		@RequestParam("prompt") String prompt,
 		@RequestParam(value = "tools", defaultValue = "true") boolean tools,
 		@RequestParam(value = "toolChoice", defaultValue = "AUTO") LlmToolChoiceMode toolChoice,
@@ -52,7 +54,7 @@ public class AgentController {
 	) {
 		String traceId = TraceIdUtil.normalizeOrGenerate(traceIdHeader);
 		response.getHeaders().set(TraceIdUtil.HEADER_NAME, traceId);
-		return agentStreamingService.stream(LlmProvider.MINIMAX, userId, sessionId, prompt, tools, toolChoice, traceId)
+		return agentStreamingService.stream(LlmProvider.MINIMAX, userId, sessionId, prompt, tools, toolChoice, traceId, knowledgeBaseId)
 			.map(e -> ServerSentEvent.builder(e).event(e.getType()).build());
 	}
 }
