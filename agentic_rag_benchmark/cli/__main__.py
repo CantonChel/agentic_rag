@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 
 from agentic_rag_benchmark.pipeline import build_benchmark_package
+from agentic_rag_benchmark.runner import RunBenchmarkRequest
+from agentic_rag_benchmark.runner import run_benchmark
 from agentic_rag_benchmark.validator import describe_schema
 from agentic_rag_benchmark.validator import validate_legacy_dataset
 from agentic_rag_benchmark.validator import validate_package_dir
@@ -46,6 +48,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional root path used to compute relative doc_path values",
     )
 
+    run_benchmark_parser = subparsers.add_parser("run-benchmark", help="Run benchmark against one imported build")
+    run_benchmark_parser.add_argument("--package-dir", required=True, help="Path to packages/<project_key>/<suite_version>")
+    run_benchmark_parser.add_argument(
+        "--base-url",
+        default=os.getenv("APP_BASE_URL", "http://127.0.0.1:8081"),
+        help="Base URL for agentic_rag_app",
+    )
+    run_benchmark_parser.add_argument("--provider", required=True, help="Agent provider name")
+    run_benchmark_parser.add_argument("--build-id", required=True, help="Benchmark build id to evaluate")
+    run_benchmark_parser.add_argument("--user-id", required=True, help="User id used for benchmark requests")
+    run_benchmark_parser.add_argument("--session-prefix", default="benchmark", help="Session id prefix")
+    run_benchmark_parser.add_argument("--timeout-seconds", type=int, default=180, help="Request timeout in seconds")
+    run_benchmark_parser.add_argument(
+        "--output-root",
+        default=str(Path(__file__).resolve().parents[1] / "outputs"),
+        help="Directory used for benchmark outputs",
+    )
+    run_benchmark_parser.add_argument(
+        "--verify-ssl",
+        action="store_true",
+        help="Verify HTTPS certificates for app requests",
+    )
+
     return parser
 
 
@@ -74,6 +99,29 @@ def main(argv: list[str] | None = None) -> int:
             f"[info] Normalized document count: {report.normalized_document_count}",
             f"[info] Evidence count: {report.evidence_count}",
             f"[info] Sample count: {report.sample_count}",
+        ):
+            print(line)
+        return 0
+    elif args.command == "run-benchmark":
+        request = RunBenchmarkRequest(
+            package_dir=Path(args.package_dir),
+            base_url=args.base_url,
+            provider=args.provider,
+            build_id=args.build_id,
+            user_id=args.user_id,
+            session_prefix=args.session_prefix,
+            timeout_seconds=args.timeout_seconds,
+            output_root=Path(args.output_root),
+            verify_ssl=bool(args.verify_ssl),
+        )
+        report = run_benchmark(request)
+        for line in (
+            f"[info] Benchmark package ready: {request.package_dir}",
+            f"[info] Project key: {report.project_key}",
+            f"[info] Suite version: {report.suite_version}",
+            f"[info] Evidence count: {report.evidence_count}",
+            f"[info] Sample count: {report.sample_count}",
+            f"[info] Execution mode: evalMode={request.eval_mode}, kbScope={request.kb_scope}, memoryEnabled={str(request.memory_enabled).lower()}, thinkingProfile={request.thinking_profile}",
         ):
             print(line)
         return 0
