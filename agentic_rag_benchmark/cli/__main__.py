@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from agentic_rag_benchmark.pipeline import build_benchmark_package
+from agentic_rag_benchmark.report_writer import write_benchmark_outputs
 from agentic_rag_benchmark.runner import RunBenchmarkRequest
 from agentic_rag_benchmark.runner import run_benchmark
 from agentic_rag_benchmark.validator import describe_schema
@@ -115,12 +116,14 @@ def main(argv: list[str] | None = None) -> int:
             verify_ssl=bool(args.verify_ssl),
         )
         report = run_benchmark(request)
+        artifacts = write_benchmark_outputs(report)
         for line in (
             f"[info] Benchmark package ready: {request.package_dir}",
             f"[info] Project key: {report.project_key}",
             f"[info] Suite version: {report.suite_version}",
             f"[info] Evidence count: {report.evidence_count}",
             f"[info] Sample count: {report.sample_count}",
+            f"[info] Output directory: {artifacts.output_dir}",
             f"[info] Execution mode: evalMode={request.eval_mode}, kbScope={request.kb_scope}, memoryEnabled={str(request.memory_enabled).lower()}, thinkingProfile={request.thinking_profile}",
         ):
             print(line)
