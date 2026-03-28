@@ -1,5 +1,10 @@
 package com.agenticrag.app.agent;
 
+import com.agenticrag.app.agent.execution.AgentEvalMode;
+import com.agenticrag.app.agent.execution.AgentExecutionControl;
+import com.agenticrag.app.agent.execution.AgentThinkingProfile;
+import com.agenticrag.app.agent.execution.AgentTurnExecutionAccumulator;
+import com.agenticrag.app.benchmark.execution.BenchmarkTurnExecutionSummaryService;
 import com.agenticrag.app.chat.context.ContextManager;
 import com.agenticrag.app.chat.message.AssistantMessage;
 import com.agenticrag.app.chat.message.ChatMessage;
@@ -25,6 +30,7 @@ import com.agenticrag.app.session.ChatSession;
 import com.agenticrag.app.session.SessionManager;
 import com.agenticrag.app.session.SessionScope;
 import com.agenticrag.app.trace.TraceIdUtil;
+import com.agenticrag.app.tool.Tool;
 import com.agenticrag.app.tool.ToolDefinition;
 import com.agenticrag.app.tool.ToolArgumentValidator;
 import com.agenticrag.app.tool.ToolExecutionContext;
@@ -44,13 +50,17 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionFunctionTool;
 import com.openai.models.chat.completions.ChatCompletionTool;
 import com.openai.models.chat.completions.ChatCompletionToolChoiceOption;
+import java.time.Instant;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -62,7 +72,9 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 
 @Service
@@ -84,9 +96,19 @@ public class AgentStreamingService {
 	private final ToolArgumentValidator toolArgumentValidator;
 	private final SessionManager sessionManager;
 	private final MemoryFlushService memoryFlushService;
+	private final BenchmarkTurnExecutionSummaryService benchmarkTurnExecutionSummaryService;
 	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+\\.?|Step\\s*\\d+\\.?|\\d+\\.)\\s+)");
 	private static final String THINK_OPEN = "<think>";
 	private static final String THINK_CLOSE = "</think>";
+	private static final Pattern MINIMAX_TOOL_CALL_BLOCK_PATTERN = Pattern.compile(
+		"(?is)<minimax:tool_call>.*?</minimax:tool_call>"
+	);
+	private static final String FINAL_ITERATION_WARNING =
+		"系统警告：你已达到最大思考步数。请立即停止调用新工具，基于目前已有的观察结果，向用户输出最终总结回复。"
+			+ "严禁输出任何工具调用、函数调用、XML 标签、<minimax:tool_call>、<invoke> 或参数片段。"
+			+ "如果证据仍然不足，请直接明确说明当前已检索到的信息不足以支持确定答案。";
+	private static final String FINAL_ITERATION_DEFAULT_ANSWER =
+		"根据当前已检索到的内容，我暂时无法给出确定答案。";
 
 	public AgentStreamingService(
 		OpenAIClient openAiClient,
@@ -117,7 +139,43 @@ public class AgentStreamingService {
 			agentProperties,
 			toolArgumentValidator,
 			null,
+			null,
 			null
+		);
+	}
+
+	public AgentStreamingService(
+		OpenAIClient openAiClient,
+		OpenAIClient minimaxClient,
+		OpenAiClientProperties openAiProperties,
+		MinimaxClientProperties minimaxProperties,
+		ToolRouter toolRouter,
+		ObjectMapper objectMapper,
+		SystemPromptManager systemPromptManager,
+		ContextManager contextManager,
+		PersistentMessageStore persistentMessageStore,
+		com.agenticrag.app.chat.context.LocalExecutionContextRecorder localExecutionContextRecorder,
+		AgentProperties agentProperties,
+		ToolArgumentValidator toolArgumentValidator,
+		BenchmarkTurnExecutionSummaryService benchmarkTurnExecutionSummaryService
+	) {
+		this(
+			openAiClient,
+			minimaxClient,
+			openAiProperties,
+			minimaxProperties,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistentMessageStore,
+			null,
+			localExecutionContextRecorder,
+			agentProperties,
+			toolArgumentValidator,
+			null,
+			null,
+			benchmarkTurnExecutionSummaryService
 		);
 	}
 
@@ -137,7 +195,8 @@ public class AgentStreamingService {
 		AgentProperties agentProperties,
 		ToolArgumentValidator toolArgumentValidator,
 		SessionManager sessionManager,
-		MemoryFlushService memoryFlushService
+		MemoryFlushService memoryFlushService,
+		BenchmarkTurnExecutionSummaryService benchmarkTurnExecutionSummaryService
 	) {
 		this.openAiClient = openAiClient;
 		this.minimaxClient = minimaxClient;
@@ -155,6 +214,7 @@ public class AgentStreamingService {
 		this.toolArgumentValidator = toolArgumentValidator;
 		this.sessionManager = sessionManager;
 		this.memoryFlushService = memoryFlushService;
+		this.benchmarkTurnExecutionSummaryService = benchmarkTurnExecutionSummaryService;
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -164,7 +224,16 @@ public class AgentStreamingService {
 		boolean includeTools,
 		LlmToolChoiceMode toolChoiceMode
 	) {
-		return stream(provider, "anonymous", sessionId, prompt, includeTools, toolChoiceMode, null);
+		return stream(
+			provider,
+			"anonymous",
+			sessionId,
+			prompt,
+			includeTools,
+			toolChoiceMode,
+			null,
+			AgentExecutionControl.defaults(null)
+		);
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -175,7 +244,16 @@ public class AgentStreamingService {
 		boolean includeTools,
 		LlmToolChoiceMode toolChoiceMode
 	) {
-		return stream(provider, userId, sessionId, prompt, includeTools, toolChoiceMode, null);
+		return stream(
+			provider,
+			userId,
+			sessionId,
+			prompt,
+			includeTools,
+			toolChoiceMode,
+			null,
+			AgentExecutionControl.defaults(null)
+		);
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -187,32 +265,97 @@ public class AgentStreamingService {
 		LlmToolChoiceMode toolChoiceMode,
 		String traceId
 	) {
+		return stream(
+			provider,
+			userId,
+			sessionId,
+			prompt,
+			includeTools,
+			toolChoiceMode,
+			traceId,
+			AgentExecutionControl.defaults(null)
+		);
+	}
+
+	public Flux<LlmStreamEvent> stream(
+		LlmProvider provider,
+		String userId,
+		String sessionId,
+		String prompt,
+		boolean includeTools,
+		LlmToolChoiceMode toolChoiceMode,
+		String traceId,
+		String knowledgeBaseId
+	) {
+		return stream(provider, userId, sessionId, prompt, includeTools, toolChoiceMode, traceId, AgentExecutionControl.defaults(knowledgeBaseId));
+	}
+
+	public Flux<LlmStreamEvent> stream(
+		LlmProvider provider,
+		String userId,
+		String sessionId,
+		String prompt,
+		boolean includeTools,
+		LlmToolChoiceMode toolChoiceMode,
+		String traceId,
+		AgentExecutionControl executionControl
+	) {
 		String uid = SessionScope.normalizeUserId(userId);
 		String sid = SessionScope.normalizeSessionId(sessionId);
 		String scopedSid = SessionScope.scopedSessionId(uid, sid);
 		String effectiveTraceId = TraceIdUtil.normalizeOrGenerate(traceId);
+		AgentExecutionControl control = executionControl != null ? executionControl : AgentExecutionControl.defaults(null);
+		String scopedKnowledgeBaseId = normalizeKnowledgeBaseId(control.getKnowledgeBaseId());
+		boolean singleTurn = control.getEvalMode() == AgentEvalMode.SINGLE_TURN;
+		boolean thinkingVisible = control.getThinkingProfile() != AgentThinkingProfile.HIDE;
+		Set<String> allowedToolNames = resolveAllowedToolNames(includeTools, control.isMemoryEnabled());
+		if (singleTurn && isSessionSwitchCommand(prompt)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "session switch command is not allowed in single_turn mode");
+		}
 		int maxIterations = agentProperties.getMaxIterations() > 0 ? agentProperties.getMaxIterations() : 6;
 		long toolTimeoutSeconds = agentProperties.getToolTimeoutSeconds() > 0 ? agentProperties.getToolTimeoutSeconds() : 30;
 		log.info(
-			"event=agent_stream_start traceId={} provider={} userId={} sessionId={} includeTools={} toolChoice={} promptChars={}",
+			"event=agent_stream_start traceId={} provider={} userId={} sessionId={} knowledgeBaseId={} buildId={} kbScope={} evalMode={} thinkingProfile={} memoryEnabled={} includeTools={} toolChoice={} promptChars={}",
 			effectiveTraceId,
 			provider,
 			uid,
 			sid,
+			scopedKnowledgeBaseId,
+			control.getBuildId(),
+			control.getKbScope(),
+			control.getEvalMode(),
+			control.getThinkingProfile(),
+			control.isMemoryEnabled(),
 			includeTools,
 			toolChoiceMode,
 			prompt != null ? prompt.length() : 0
 		);
 
 		return Flux.create(sink -> {
+			AtomicBoolean cancelled = new AtomicBoolean(false);
 			Future<?> future = streamExecutor.submit(() -> {
 				String turnId = UUID.randomUUID().toString();
+				Instant turnCreatedAt = Instant.now();
+				long turnStartNs = System.nanoTime();
+				String initialModel = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
+				AgentTurnExecutionAccumulator executionAccumulator = new AgentTurnExecutionAccumulator(
+					turnId,
+					sid,
+					uid,
+					effectiveTraceId,
+					provider != null ? provider.name() : null,
+					initialModel,
+					control,
+					prompt,
+					turnCreatedAt
+				);
 				AtomicLong sequence = new AtomicLong(0L);
 				LongSupplier nextSequence = () -> sequence.incrementAndGet();
 				java.util.function.Consumer<LlmStreamEvent> emit = event -> emitStreamEvent(sink, scopedSid, event);
 				AtomicBoolean turnEnded = new AtomicBoolean(false);
 				AtomicReference<String> turnFinishReasonRef = new AtomicReference<>("completed");
 				AtomicReference<Integer> turnRoundIdRef = new AtomicReference<>(null);
+				AtomicReference<String> turnErrorMessageRef = new AtomicReference<>(null);
 				java.util.function.BiConsumer<String, Integer> emitTurnEnd = (reason, roundId) -> {
 					if (turnEnded.compareAndSet(false, true)) {
 						emit.accept(LlmStreamEvent.turnEnd(
@@ -227,9 +370,12 @@ public class AgentStreamingService {
 
 				emit.accept(LlmStreamEvent.turnStart(turnId, nextSequence.getAsLong(), System.currentTimeMillis(), sid));
 				try {
+					throwIfCancelled(sink, cancelled);
 					OpenAIClient client = provider == LlmProvider.MINIMAX ? minimaxClient : openAiClient;
-					String model = provider == LlmProvider.MINIMAX ? minimaxProperties.getModel() : openAiProperties.getModel();
-					String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, includeTools, SystemPromptMode.AGENT));
+					String model = initialModel;
+					String configuredSystemPrompt = systemPromptManager.build(
+						new SystemPromptContext(provider, includeTools, SystemPromptMode.AGENT, control.isMemoryEnabled(), allowedToolNames)
+					);
 					OpenAiMessageAdapter adapter = new OpenAiMessageAdapter(objectMapper);
 
 					if (isSessionSwitchCommand(prompt)) {
@@ -241,7 +387,7 @@ public class AgentStreamingService {
 							sid,
 							normalizeSwitchReason(prompt)
 						);
-						if (memoryFlushService != null) {
+						if (control.isMemoryEnabled() && memoryFlushService != null) {
 							memoryFlushService.flushOnSessionSwitchCommand(
 								scopedSid,
 								normalizeSwitchReason(prompt),
@@ -254,45 +400,61 @@ public class AgentStreamingService {
 						emit.accept(LlmStreamEvent.done("session_switched", null, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), null));
 						turnFinishReasonRef.set("session_switched");
 						emitTurnEnd.accept("session_switched", null);
+						executionAccumulator.markCompleted(
+							"session_switched",
+							(System.nanoTime() - turnStartNs) / 1_000_000,
+							null,
+							Instant.now()
+						);
+						persistTurnExecutionSummary(executionAccumulator);
 						sink.complete();
 						return;
 					}
 
-					contextManager.ensureSystemPrompt(scopedSid, configuredSystemPrompt);
-					String systemPrompt = contextManager.getSystemPrompt(scopedSid);
+					String systemPrompt = configuredSystemPrompt != null ? configuredSystemPrompt : "";
+					if (!singleTurn) {
+						contextManager.ensureSystemPrompt(scopedSid, configuredSystemPrompt);
+						systemPrompt = contextManager.getSystemPrompt(scopedSid);
+					}
 					persistentMessageStore.ensureSystemPrompt(scopedSid, systemPrompt);
 
 					List<ChatMessage> localContext = new ArrayList<>();
-					List<ChatMessage> sessionContext = contextManager.getContext(scopedSid);
-					if (sessionContext != null && !sessionContext.isEmpty()) {
-						for (int i = 1; i < sessionContext.size(); i++) {
-							localContext.add(sessionContext.get(i));
+					if (!singleTurn) {
+						List<ChatMessage> sessionContext = contextManager.getContext(scopedSid);
+						if (sessionContext != null && !sessionContext.isEmpty()) {
+							for (int i = 1; i < sessionContext.size(); i++) {
+								localContext.add(sessionContext.get(i));
+							}
 						}
 					}
 
 					ChatMessage userMsg = new UserMessage(prompt);
 					localContext.add(userMsg);
 					persistentMessageStore.append(scopedSid, userMsg);
-					contextManager.addMessage(scopedSid, userMsg);
+					if (!singleTurn) {
+						contextManager.addMessage(scopedSid, userMsg);
+					}
 
 					boolean finished = false;
 					int iteration = 0;
 
 					while (!finished && iteration < maxIterations) {
+						throwIfCancelled(sink, cancelled);
 						iteration++;
 						final int iterationFinal = iteration;
 						turnRoundIdRef.set(iterationFinal);
 						boolean isFinalIteration = iteration >= maxIterations;
+						String iterationSystemPrompt = isFinalIteration
+							? appendFinalIterationWarning(systemPrompt)
+							: systemPrompt;
 
-						localExecutionContextRecorder.record(scopedSid, systemPrompt, localContext, iteration);
+						localExecutionContextRecorder.record(scopedSid, iterationSystemPrompt, localContext, iteration);
 
 						ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder()
 							.model(model)
-							.addSystemMessage(systemPrompt);
-						MinimaxReasoningSupport.applyReasoningSplit(paramsBuilder, provider, minimaxProperties);
-
-						if (isFinalIteration) {
-							paramsBuilder.addSystemMessage("系统警告：你已达到最大思考步数。请立即停止调用新工具，基于目前已有的观察结果，向用户输出最终总结回复。");
+							.addSystemMessage(iterationSystemPrompt);
+						if (thinkingVisible) {
+							MinimaxReasoningSupport.applyReasoningSplit(paramsBuilder, provider, minimaxProperties);
 						}
 
 						List<com.openai.models.chat.completions.ChatCompletionMessageParam> messageParams = adapter.toMessageParams(localContext);
@@ -302,7 +464,7 @@ public class AgentStreamingService {
 
 						boolean allowTools = includeTools && !isFinalIteration;
 						if (allowTools) {
-							paramsBuilder.tools(buildChatCompletionTools(toolRouter.getToolDefinitions()));
+							paramsBuilder.tools(buildChatCompletionTools(toolRouter.getToolDefinitions(allowedToolNames)));
 							paramsBuilder.toolChoice(toToolChoice(toolChoiceMode));
 						} else {
 							paramsBuilder.toolChoice(ChatCompletionToolChoiceOption.Auto.NONE);
@@ -323,13 +485,16 @@ public class AgentStreamingService {
 						try (StreamResponse<ChatCompletionChunk> streamResponse = client.chat().completions().createStreaming(paramsBuilder.build())) {
 							outer:
 							for (ChatCompletionChunk chunk : (Iterable<ChatCompletionChunk>) streamResponse.stream()::iterator) {
+								throwIfCancelled(sink, cancelled);
 								if (chunk == null || chunk.choices() == null) {
 									continue;
 								}
 								if (chunk.model() != null && !chunk.model().isEmpty()) {
 									originModelRef.set(chunk.model());
+									executionAccumulator.recordOriginModel(chunk.model());
 								}
 								for (ChatCompletionChunk.Choice choice : chunk.choices()) {
+									throwIfCancelled(sink, cancelled);
 									if (choice == null || choice.delta() == null) {
 										continue;
 									}
@@ -342,6 +507,9 @@ public class AgentStreamingService {
 												content,
 												answerPart -> {
 													assistantContent.append(answerPart);
+													if (isFinalIteration) {
+														return;
+													}
 														emit.accept(LlmStreamEvent.delta(
 															answerPart,
 															turnId,
@@ -353,6 +521,9 @@ public class AgentStreamingService {
 												thinkPart -> {
 													inlineThinkBuffer.append(thinkPart);
 													inlineThinkingEmitted.set(true);
+													if (!thinkingVisible) {
+														return;
+													}
 														emit.accept(LlmStreamEvent.thinking(
 															thinkPart,
 															"assistant_content",
@@ -374,6 +545,9 @@ public class AgentStreamingService {
 									String reasoningPart = appendReasoningFromDelta(delta, reasoningBuffer, reasoningSourceRef);
 									if (reasoningPart != null && !reasoningPart.isEmpty() && !hasToolCallsInDelta) {
 										structuredReasoningEmitted.set(true);
+										if (!thinkingVisible) {
+											continue;
+										}
 										emit.accept(LlmStreamEvent.thinking(
 											reasoningPart,
 											reasoningSourceRef.get(),
@@ -395,12 +569,28 @@ public class AgentStreamingService {
 
 						List<LlmToolCall> toolCalls = toolCallAccumulator.buildToolCalls();
 						String assistantFinal = assistantContent.toString().trim();
+						if (isFinalIteration) {
+							assistantFinal = normalizeFinalIterationAnswer(assistantFinal);
+							if (!assistantFinal.isEmpty()) {
+								emit.accept(LlmStreamEvent.delta(
+									assistantFinal,
+									turnId,
+									nextSequence.getAsLong(),
+									System.currentTimeMillis(),
+									iterationFinal
+								));
+							}
+						}
+						executionAccumulator.recordOriginModel(originModelRef.get());
 
 						if (!assistantFinal.isEmpty()) {
+							executionAccumulator.recordFinalAnswer(assistantFinal);
 							AssistantMessage am = new AssistantMessage(assistantFinal);
 							localContext.add(am);
 							persistentMessageStore.append(scopedSid, am);
-							contextManager.addMessage(scopedSid, am);
+							if (!singleTurn) {
+								contextManager.addMessage(scopedSid, am);
+							}
 						}
 
 						if (isFinalIteration) {
@@ -432,7 +622,8 @@ public class AgentStreamingService {
 								scopedSid,
 								inlineThinkingEmitted.get(),
 								turnId,
-								nextSequence
+								nextSequence,
+								thinkingVisible
 							);
 							String doneReason = finishReason != null ? finishReason : "stop";
 							emit.accept(LlmStreamEvent.done(
@@ -452,9 +643,12 @@ public class AgentStreamingService {
 						ToolCallMessage tcm = new ToolCallMessage(toolCalls);
 						localContext.add(tcm);
 						persistentMessageStore.append(scopedSid, tcm);
-						contextManager.addMessage(scopedSid, tcm);
+						if (!singleTurn) {
+							contextManager.addMessage(scopedSid, tcm);
+						}
 
 						for (LlmToolCall call : toolCalls) {
+							throwIfCancelled(sink, cancelled);
 							if (call == null) {
 								continue;
 							}
@@ -490,17 +684,28 @@ public class AgentStreamingService {
 							ToolResult toolResult = null;
 							Exception toolFailure = null;
 							try {
-								toolResult = toolRouter.getTool(toolName)
-									.map(t -> {
-										ToolArgumentValidator.ValidationResult vr = toolArgumentValidator.validate(t.parametersSchema(), toolArgs);
-										if (!vr.isOk()) {
-											String err = "Error: 参数解析失败。请检查并重新调用工具。细节: " + String.join("; ", vr.getErrors());
-											return ToolResult.error(err);
-										}
-										return t.execute(toolArgs, new ToolExecutionContext(toolCallId, uid, sid, effectiveTraceId))
-											.block(Duration.ofSeconds(toolTimeoutSeconds));
-									})
-									.orElse(ToolResult.error("Tool not found: " + toolName));
+								if (!isToolAllowed(allowedToolNames, toolName)) {
+									toolResult = ToolResult.error("Tool disabled: " + toolName);
+								} else {
+									toolResult = toolRouter.getTool(toolName)
+										.map(t -> {
+											ToolArgumentValidator.ValidationResult vr = toolArgumentValidator.validate(t.parametersSchema(), toolArgs);
+											if (!vr.isOk()) {
+												String err = "Error: 参数解析失败。请检查并重新调用工具。细节: " + String.join("; ", vr.getErrors());
+												return ToolResult.error(err);
+											}
+											return t.execute(toolArgs, new ToolExecutionContext(
+												toolCallId,
+												uid,
+												sid,
+												effectiveTraceId,
+												scopedKnowledgeBaseId,
+												toolCallId
+											))
+												.block(Duration.ofSeconds(toolTimeoutSeconds));
+										})
+										.orElse(ToolResult.error("Tool not found: " + toolName));
+								}
 							} catch (Exception e) {
 								toolFailure = e;
 								toolResult = ToolResult.error("Tool execution failed: " + toolName + ": " + e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -525,6 +730,14 @@ public class AgentStreamingService {
 								toolResult.getError()
 							);
 							String toolStatus = resolveToolStatus(toolResult, toolFailure);
+							executionAccumulator.recordToolResult(
+								toolCallId,
+								toolName,
+								toolStatus,
+								toolDurationMs,
+								toolResult.getError()
+							);
+							executionAccumulator.recordRetrievalSidecar(toolResult.getSidecar(), toolCallId, toolName);
 							emit.accept(LlmStreamEvent.toolEnd(
 								turnId,
 								nextSequence.getAsLong(),
@@ -541,6 +754,7 @@ public class AgentStreamingService {
 							if ("thinking".equals(toolName) && toolResult.isSuccess()) {
 								String thought = toolResult.getOutput();
 								if (thought != null && !thought.trim().isEmpty()) {
+									if (thinkingVisible) {
 										emit.accept(LlmStreamEvent.thinking(
 											thought,
 											"thinking_tool",
@@ -550,7 +764,8 @@ public class AgentStreamingService {
 										nextSequence.getAsLong(),
 										System.currentTimeMillis()
 									));
-									recordThinkingMessage(scopedSid, thought);
+									}
+									recordThinkingMessage(scopedSid, thought, thinkingVisible);
 									hasToolThinking = true;
 								}
 							}
@@ -564,7 +779,9 @@ public class AgentStreamingService {
 							);
 							localContext.add(trm);
 							persistentMessageStore.append(scopedSid, trm);
-							contextManager.addMessage(scopedSid, trm);
+							if (!singleTurn) {
+								contextManager.addMessage(scopedSid, trm);
+							}
 						}
 
 						if (!hasToolThinking) {
@@ -581,7 +798,8 @@ public class AgentStreamingService {
 								scopedSid,
 								inlineThinkingEmitted.get(),
 								turnId,
-								nextSequence
+								nextSequence,
+								thinkingVisible
 							);
 						}
 					}
@@ -607,6 +825,16 @@ public class AgentStreamingService {
 						finished,
 						maxIterations
 					);
+				} catch (CancellationException e) {
+					log.info(
+						"event=agent_stream_cancelled traceId={} provider={} userId={} sessionId={} message={}",
+						effectiveTraceId,
+						provider,
+						uid,
+						sid,
+						e.getMessage()
+					);
+					turnFinishReasonRef.set("cancelled");
 				} catch (UnauthorizedException e) {
 					log.warn(
 						"event=agent_stream_error traceId={} provider={} userId={} sessionId={} type=UnauthorizedException message={}",
@@ -617,6 +845,7 @@ public class AgentStreamingService {
 						e.getMessage()
 					);
 					String err = "Unauthorized: check API key for provider=" + provider + " (401)";
+					turnErrorMessageRef.set(err);
 					emit.accept(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
 					turnFinishReasonRef.set("error");
 					emitTurnEnd.accept("error", turnRoundIdRef.get());
@@ -631,30 +860,58 @@ public class AgentStreamingService {
 						e.getMessage()
 					);
 					String err = "OpenAI SDK error: " + e.getClass().getSimpleName() + ": " + e.getMessage();
+					turnErrorMessageRef.set(err);
 					emit.accept(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
 					turnFinishReasonRef.set("error");
 					emitTurnEnd.accept("error", turnRoundIdRef.get());
 				} catch (Exception e) {
-					log.warn(
-						"event=agent_stream_error traceId={} provider={} userId={} sessionId={} type={} message={}",
-						effectiveTraceId,
-						provider,
-						uid,
-						sid,
-						e.getClass().getSimpleName(),
-						e.getMessage()
-					);
-					String err = "Agent loop failed: " + e.getClass().getSimpleName() + ": " + e.getMessage();
-					emit.accept(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
-					turnFinishReasonRef.set("error");
-					emitTurnEnd.accept("error", turnRoundIdRef.get());
+					if (isCancellationException(cancelled, e)) {
+						log.info(
+							"event=agent_stream_cancelled traceId={} provider={} userId={} sessionId={} type={} message={}",
+							effectiveTraceId,
+							provider,
+							uid,
+							sid,
+							e.getClass().getSimpleName(),
+							e.getMessage()
+						);
+						turnFinishReasonRef.set("cancelled");
+					} else {
+						log.warn(
+							"event=agent_stream_error traceId={} provider={} userId={} sessionId={} type={} message={}",
+							effectiveTraceId,
+							provider,
+							uid,
+							sid,
+							e.getClass().getSimpleName(),
+							e.getMessage()
+						);
+						String err = "Agent loop failed: " + e.getClass().getSimpleName() + ": " + e.getMessage();
+						turnErrorMessageRef.set(err);
+						emit.accept(LlmStreamEvent.error(err, turnId, nextSequence.getAsLong(), System.currentTimeMillis(), turnRoundIdRef.get()));
+						turnFinishReasonRef.set("error");
+						emitTurnEnd.accept("error", turnRoundIdRef.get());
+					}
 				}
 
-				emitTurnEnd.accept(turnFinishReasonRef.get(), turnRoundIdRef.get());
-				sink.complete();
+				String summaryFinishReason = resolveSummaryFinishReason(cancelled, turnEnded, turnFinishReasonRef.get());
+				executionAccumulator.markCompleted(
+					summaryFinishReason,
+					(System.nanoTime() - turnStartNs) / 1_000_000,
+					turnErrorMessageRef.get(),
+					Instant.now()
+				);
+				persistTurnExecutionSummary(executionAccumulator);
+				if (!isCancelled(sink, cancelled)) {
+					emitTurnEnd.accept(turnFinishReasonRef.get(), turnRoundIdRef.get());
+					sink.complete();
+				}
 			});
 
-			sink.onCancel(() -> future.cancel(true));
+			sink.onCancel(() -> {
+				cancelled.set(true);
+				future.cancel(true);
+			});
 		});
 	}
 
@@ -669,6 +926,39 @@ public class AgentStreamingService {
 			return ChatCompletionToolChoiceOption.Auto.NONE;
 		}
 		return ChatCompletionToolChoiceOption.Auto.AUTO;
+	}
+
+	private String appendFinalIterationWarning(String systemPrompt) {
+		String base = systemPrompt == null ? "" : systemPrompt.trim();
+		if (base.isEmpty()) {
+			return FINAL_ITERATION_WARNING;
+		}
+		return base + "\n\n" + FINAL_ITERATION_WARNING;
+	}
+
+	private String normalizeFinalIterationAnswer(String assistantFinal) {
+		String normalized = assistantFinal == null ? "" : assistantFinal.trim();
+		if (normalized.isEmpty()) {
+			return FINAL_ITERATION_DEFAULT_ANSWER;
+		}
+
+		String stripped = MINIMAX_TOOL_CALL_BLOCK_PATTERN.matcher(normalized).replaceAll("").trim();
+		if (containsToolInvocationMarkup(normalized)) {
+			return stripped.isEmpty() ? FINAL_ITERATION_DEFAULT_ANSWER : stripped;
+		}
+		return normalized;
+	}
+
+	private boolean containsToolInvocationMarkup(String content) {
+		if (content == null || content.isEmpty()) {
+			return false;
+		}
+		String normalized = content.toLowerCase();
+		return normalized.contains("<minimax:tool_call>")
+			|| normalized.contains("</minimax:tool_call>")
+			|| normalized.contains("<invoke ")
+			|| normalized.contains("</invoke>")
+			|| normalized.contains("<parameter ");
 	}
 
 	private boolean isSessionSwitchCommand(String prompt) {
@@ -688,6 +978,14 @@ public class AgentStreamingService {
 			return "command:/reset";
 		}
 		return "command:/new";
+	}
+
+	private String normalizeKnowledgeBaseId(String knowledgeBaseId) {
+		if (knowledgeBaseId == null) {
+			return null;
+		}
+		String normalized = knowledgeBaseId.trim();
+		return normalized.isEmpty() ? null : normalized;
 	}
 
 	private String createNextSessionId(String userId) {
@@ -838,9 +1136,10 @@ public class AgentStreamingService {
 		String sessionId,
 		boolean inlineThinkingEmitted,
 		String turnId,
-		LongSupplier nextSequence
+		LongSupplier nextSequence,
+		boolean thinkingVisible
 	) {
-		if (hasToolThinking || sink == null) {
+		if (hasToolThinking || sink == null || !thinkingVisible) {
 			return;
 		}
 		String reasoning = reasoningBuffer == null ? "" : reasoningBuffer.toString().trim();
@@ -859,7 +1158,7 @@ public class AgentStreamingService {
 					System.currentTimeMillis()
 					));
 				}
-			recordThinkingMessage(sessionId, reasoning);
+			recordThinkingMessage(sessionId, reasoning, thinkingVisible);
 			return;
 		}
 		String inlineThinking = inlineThinkBuffer == null ? "" : inlineThinkBuffer.toString().trim();
@@ -875,7 +1174,7 @@ public class AgentStreamingService {
 					System.currentTimeMillis()
 				));
 			}
-			recordThinkingMessage(sessionId, inlineThinking);
+			recordThinkingMessage(sessionId, inlineThinking, thinkingVisible);
 			return;
 		}
 		if (looksLikeStepByStep(assistantFinal)) {
@@ -888,7 +1187,7 @@ public class AgentStreamingService {
 				nextSequence.getAsLong(),
 				System.currentTimeMillis()
 			));
-			recordThinkingMessage(sessionId, assistantFinal);
+			recordThinkingMessage(sessionId, assistantFinal, thinkingVisible);
 		}
 	}
 
@@ -969,6 +1268,45 @@ public class AgentStreamingService {
 		return value.substring(0, maxLength) + "...";
 	}
 
+	private void persistTurnExecutionSummary(AgentTurnExecutionAccumulator executionAccumulator) {
+		if (benchmarkTurnExecutionSummaryService == null || executionAccumulator == null) {
+			return;
+		}
+		try {
+			benchmarkTurnExecutionSummaryService.saveSummary(executionAccumulator.toWriteModel());
+		} catch (Exception e) {
+			log.warn(
+				"event=benchmark_turn_summary_save_failed turnId={} message={}",
+				executionAccumulator.toWriteModel().turnId(),
+				e.getMessage()
+			);
+		}
+	}
+
+	private void throwIfCancelled(reactor.core.publisher.FluxSink<LlmStreamEvent> sink, AtomicBoolean cancelled) {
+		if (isCancelled(sink, cancelled)) {
+			throw new CancellationException("client cancelled");
+		}
+	}
+
+	private boolean isCancelled(reactor.core.publisher.FluxSink<LlmStreamEvent> sink, AtomicBoolean cancelled) {
+		return (cancelled != null && cancelled.get()) || (sink != null && sink.isCancelled()) || Thread.currentThread().isInterrupted();
+	}
+
+	private boolean isCancellationException(AtomicBoolean cancelled, Exception exception) {
+		return cancelled != null && cancelled.get()
+			|| exception instanceof java.lang.InterruptedException
+			|| Thread.currentThread().isInterrupted();
+	}
+
+	private String resolveSummaryFinishReason(AtomicBoolean cancelled, AtomicBoolean turnEnded, String finishReason) {
+		if ((cancelled != null && cancelled.get()) && (turnEnded == null || !turnEnded.get())) {
+			return "cancelled";
+		}
+		String normalized = finishReason == null ? null : finishReason.trim();
+		return normalized == null || normalized.isEmpty() ? "completed" : normalized;
+	}
+
 	private static final class ThinkTagParser {
 		private final StringBuilder buffer = new StringBuilder();
 		private boolean inThink = false;
@@ -1016,11 +1354,36 @@ public class AgentStreamingService {
 		}
 	}
 
-	private void recordThinkingMessage(String sessionId, String content) {
-		if (content == null || content.trim().isEmpty()) {
+	private void recordThinkingMessage(String sessionId, String content, boolean thinkingVisible) {
+		if (!thinkingVisible || content == null || content.trim().isEmpty()) {
 			return;
 		}
 		persistentMessageStore.append(sessionId, new ThinkingMessage(content));
+	}
+
+	private Set<String> resolveAllowedToolNames(boolean includeTools, boolean memoryEnabled) {
+		Set<String> allowed = new LinkedHashSet<>();
+		if (!includeTools) {
+			return allowed;
+		}
+		for (Tool tool : toolRouter.getTools()) {
+			if (tool == null || tool.name() == null || tool.name().trim().isEmpty()) {
+				continue;
+			}
+			String toolName = tool.name().trim();
+			if (!memoryEnabled && "memory_search".equals(toolName)) {
+				continue;
+			}
+			allowed.add(toolName);
+		}
+		return allowed;
+	}
+
+	private boolean isToolAllowed(Set<String> allowedToolNames, String toolName) {
+		if (toolName == null || toolName.trim().isEmpty()) {
+			return false;
+		}
+		return allowedToolNames != null && allowedToolNames.contains(toolName.trim());
 	}
 
 	private boolean looksLikeStepByStep(String text) {

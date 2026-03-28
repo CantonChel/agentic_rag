@@ -1,5 +1,8 @@
 package com.agenticrag.app.tool.impl;
 
+import com.agenticrag.app.benchmark.retrieval.RetrievalTraceCollector;
+import com.agenticrag.app.benchmark.retrieval.BenchmarkRetrievalTraceService;
+import com.agenticrag.app.rag.context.ContextAssemblyResult;
 import com.agenticrag.app.rag.context.ContextAssembler;
 import com.agenticrag.app.rag.model.TextChunk;
 import com.agenticrag.app.rag.retriever.HybridRetriever;
@@ -22,11 +25,18 @@ public class KnowledgeSearchTool implements Tool {
 	private final ObjectMapper objectMapper;
 	private final HybridRetriever hybridRetriever;
 	private final ContextAssembler contextAssembler;
+	private final BenchmarkRetrievalTraceService benchmarkRetrievalTraceService;
 
-	public KnowledgeSearchTool(ObjectMapper objectMapper, HybridRetriever hybridRetriever, ContextAssembler contextAssembler) {
+	public KnowledgeSearchTool(
+		ObjectMapper objectMapper,
+		HybridRetriever hybridRetriever,
+		ContextAssembler contextAssembler,
+		BenchmarkRetrievalTraceService benchmarkRetrievalTraceService
+	) {
 		this.objectMapper = objectMapper;
 		this.hybridRetriever = hybridRetriever;
 		this.contextAssembler = contextAssembler;
+		this.benchmarkRetrievalTraceService = benchmarkRetrievalTraceService;
 	}
 
 	@Override
@@ -65,27 +75,56 @@ public class KnowledgeSearchTool implements Tool {
 				return ToolResult.error("Empty query");
 			}
 			log.info(
-				"event=kb_tool_start traceId={} userId={} sessionId={} requestId={} query={} recallTopK={} rerankTopK={}",
+				"event=kb_tool_start traceId={} userId={} sessionId={} knowledgeBaseId={} requestId={} query={} recallTopK={} rerankTopK={}",
 				traceId,
 				context != null ? context.getUserId() : "anonymous",
 				context != null ? context.getSessionId() : "default",
+				context != null ? context.getKnowledgeBaseId() : null,
 				context != null ? context.getRequestId() : "n/a",
 				q,
 				20,
 				5
 			);
-			List<TextChunk> top = hybridRetriever.retrieve(q, 20, 5, traceId);
-			String ctx = contextAssembler.assemble(top);
+			RetrievalTraceCollector collector = new RetrievalTraceCollector(
+				traceId,
+				context != null ? context.getToolCallId() : null,
+				name(),
+				context != null ? context.getKnowledgeBaseId() : null,
+				q
+			);
+			List<TextChunk> top = hybridRetriever.retrieve(
+				q,
+				20,
+				5,
+				traceId,
+				context != null ? context.getKnowledgeBaseId() : null,
+				collector
+			);
+			ContextAssemblyResult assembled = contextAssembler.assemble(top, collector);
+			String ctx = assembled.getContextText();
 			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 			log.info(
-				"event=kb_tool_end traceId={} requestId={} chunks={} contextChars={} durationMs={}",
+				"event=kb_tool_end traceId={} knowledgeBaseId={} requestId={} chunks={} contextChars={} durationMs={}",
 				traceId,
+				context != null ? context.getKnowledgeBaseId() : null,
 				context != null ? context.getRequestId() : "n/a",
 				top != null ? top.size() : 0,
 				ctx != null ? ctx.length() : 0,
 				durationMs
 			);
-			return ToolResult.ok(ctx);
+			persistCollectorQuietly(collector, traceId);
+			return ToolResult.ok(ctx, assembled.getSidecar());
 		}).subscribeOn(Schedulers.boundedElastic());
+	}
+
+	private void persistCollectorQuietly(RetrievalTraceCollector collector, String traceId) {
+		if (benchmarkRetrievalTraceService == null || collector == null) {
+			return;
+		}
+		try {
+			benchmarkRetrievalTraceService.persistCollector(collector);
+		} catch (Exception e) {
+			log.warn("event=kb_trace_persist_failed traceId={} type={} message={}", traceId, e.getClass().getSimpleName(), e.getMessage());
+		}
 	}
 }

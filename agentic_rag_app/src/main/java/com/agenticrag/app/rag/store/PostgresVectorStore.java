@@ -2,9 +2,10 @@ package com.agenticrag.app.rag.store;
 
 import com.agenticrag.app.ingest.repo.EmbeddingRepository;
 import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.model.TextChunkMetadataHelper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -21,10 +22,12 @@ public class PostgresVectorStore implements VectorStore {
 	private static final Logger log = LoggerFactory.getLogger(PostgresVectorStore.class);
 	private final JdbcTemplate jdbcTemplate;
 	private final EmbeddingRepository embeddingRepository;
+	private final ObjectMapper objectMapper;
 
-	public PostgresVectorStore(JdbcTemplate jdbcTemplate, EmbeddingRepository embeddingRepository) {
+	public PostgresVectorStore(JdbcTemplate jdbcTemplate, EmbeddingRepository embeddingRepository, ObjectMapper objectMapper) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.embeddingRepository = embeddingRepository;
+		this.objectMapper = objectMapper;
 	}
 
 	@Override
@@ -34,10 +37,14 @@ public class PostgresVectorStore implements VectorStore {
 
 	@Override
 	public List<TextChunk> similaritySearch(List<Double> queryEmbedding, int topK) {
-		return similaritySearch(queryEmbedding, topK, "n/a");
+		return similaritySearch(queryEmbedding, topK, "n/a", null);
 	}
 
 	public List<TextChunk> similaritySearch(List<Double> queryEmbedding, int topK, String traceId) {
+		return similaritySearch(queryEmbedding, topK, traceId, null);
+	}
+
+	public List<TextChunk> similaritySearch(List<Double> queryEmbedding, int topK, String traceId, String knowledgeBaseId) {
 		if (queryEmbedding == null || queryEmbedding.isEmpty() || topK <= 0) {
 			return new ArrayList<>();
 		}
@@ -45,26 +52,30 @@ public class PostgresVectorStore implements VectorStore {
 
 		String vecLiteral = toPgvectorLiteral(queryEmbedding);
 		String sql = ""
-			+ "select chunk_id, knowledge_id "
-			+ "from embedding "
-			+ "order by vector_json::vector <-> ?::vector "
+			+ "select e.chunk_id, e.knowledge_id, e.content, k.knowledge_base_id, c.metadata_json, "
+			+ "       (1.0 / (1.0 + (e.vector_json::vector <-> ?::vector))) as retrieval_score "
+			+ "from embedding e "
+			+ "join chunk c on c.chunk_id = e.chunk_id and c.knowledge_id = e.knowledge_id "
+			+ "join knowledge k on k.id = e.knowledge_id "
+			+ "where (? is null or k.knowledge_base_id = ?) "
+			+ "order by e.vector_json::vector <-> ?::vector "
 			+ "limit ?";
 
 		try {
-			List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, vecLiteral, topK);
+			List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, vecLiteral, knowledgeBaseId, knowledgeBaseId, vecLiteral, topK);
 			if (rows == null || rows.isEmpty()) {
 				long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 				log.info(
-					"event=pg_vector_search traceId={} topK={} queryVectorDim={} candidateRows=0 durationMs={}",
+					"event=pg_vector_search traceId={} knowledgeBaseId={} topK={} queryVectorDim={} candidateRows=0 durationMs={}",
 					traceId,
+					knowledgeBaseId,
 					topK,
 					queryEmbedding.size(),
 					durationMs
 				);
 				return new ArrayList<>();
 			}
-			List<String> chunkIds = new ArrayList<>();
-			Map<String, String> knowledgeByChunk = new HashMap<>();
+			List<TextChunk> out = new ArrayList<>();
 			for (Map<String, Object> row : rows) {
 				if (row == null) {
 					continue;
@@ -73,17 +84,24 @@ public class PostgresVectorStore implements VectorStore {
 				if (chunkId == null || chunkId.trim().isEmpty()) {
 					continue;
 				}
-				chunkIds.add(chunkId);
 				String knowledgeId = row.get("knowledge_id") != null ? String.valueOf(row.get("knowledge_id")) : null;
-				if (knowledgeId != null) {
-					knowledgeByChunk.put(chunkId, knowledgeId);
+				String content = row.get("content") != null ? String.valueOf(row.get("content")) : "";
+				String resolvedKnowledgeBaseId = row.get("knowledge_base_id") != null ? String.valueOf(row.get("knowledge_base_id")) : knowledgeBaseId;
+				Map<String, Object> metadata = parseMetadata(row.get("metadata_json"));
+				if (resolvedKnowledgeBaseId != null && !resolvedKnowledgeBaseId.trim().isEmpty()) {
+					metadata.put("knowledge_base_id", resolvedKnowledgeBaseId);
 				}
+				out.add(TextChunkMetadataHelper.withRetrievalScore(
+					new TextChunk(chunkId, knowledgeId, content, null, metadata),
+					readNullableDouble(row.get("retrieval_score"))
+				));
 			}
-			if (chunkIds.isEmpty()) {
+			if (out.isEmpty()) {
 				long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 				log.info(
-					"event=pg_vector_search traceId={} topK={} queryVectorDim={} candidateRows={} resolvedChunkIds=0 durationMs={}",
+					"event=pg_vector_search traceId={} knowledgeBaseId={} topK={} queryVectorDim={} candidateRows={} resolvedChunkIds=0 durationMs={}",
 					traceId,
+					knowledgeBaseId,
 					topK,
 					queryEmbedding.size(),
 					rows.size(),
@@ -91,36 +109,16 @@ public class PostgresVectorStore implements VectorStore {
 				);
 				return new ArrayList<>();
 			}
-			List<Object[]> embeddings = embeddingRepository.listChunkContentByChunkIds(chunkIds);
-			Map<String, String> contentByChunk = new HashMap<>();
-			Map<String, String> fallbackKnowledgeByChunk = new HashMap<>();
-			for (Object[] row : embeddings) {
-				if (row == null || row.length < 3 || row[0] == null) {
-					continue;
-				}
-				String chunkId = String.valueOf(row[0]);
-				contentByChunk.put(chunkId, row[2] != null ? String.valueOf(row[2]) : "");
-				if (row[1] != null) {
-					fallbackKnowledgeByChunk.put(chunkId, String.valueOf(row[1]));
-				}
-			}
-			List<TextChunk> out = new ArrayList<>();
-			for (String chunkId : chunkIds) {
-				if (!contentByChunk.containsKey(chunkId)) {
-					continue;
-				}
-				String knowledgeId = knowledgeByChunk.getOrDefault(chunkId, fallbackKnowledgeByChunk.get(chunkId));
-				out.add(new TextChunk(chunkId, knowledgeId, contentByChunk.get(chunkId), null, Collections.emptyMap()));
-			}
 			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 			log.info(
-				"event=pg_vector_search traceId={} topK={} queryVectorDim={} candidateRows={} resolvedChunkIds={} contentRows={} resultCount={} durationMs={}",
+				"event=pg_vector_search traceId={} knowledgeBaseId={} topK={} queryVectorDim={} candidateRows={} resolvedChunkIds={} contentRows={} resultCount={} durationMs={}",
 				traceId,
+				knowledgeBaseId,
 				topK,
 				queryEmbedding.size(),
 				rows.size(),
-				chunkIds.size(),
-				embeddings.size(),
+				out.size(),
+				rows.size(),
 				out.size(),
 				durationMs
 			);
@@ -128,8 +126,9 @@ public class PostgresVectorStore implements VectorStore {
 		} catch (Exception e) {
 			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 			log.warn(
-				"event=pg_vector_search_error traceId={} topK={} queryVectorDim={} durationMs={} type={} message={}",
+				"event=pg_vector_search_error traceId={} knowledgeBaseId={} topK={} queryVectorDim={} durationMs={} type={} message={}",
 				traceId,
+				knowledgeBaseId,
 				topK,
 				queryEmbedding != null ? queryEmbedding.size() : 0,
 				durationMs,
@@ -152,5 +151,36 @@ public class PostgresVectorStore implements VectorStore {
 		}
 		sb.append(']');
 		return sb.toString();
+	}
+
+	private Map<String, Object> parseMetadata(Object value) {
+		if (value == null) {
+			return new LinkedHashMap<>();
+		}
+		String json = String.valueOf(value);
+		if (json.trim().isEmpty()) {
+			return new LinkedHashMap<>();
+		}
+		try {
+			@SuppressWarnings("unchecked")
+			Map<String, Object> parsed = objectMapper.readValue(json, Map.class);
+			return parsed != null ? new LinkedHashMap<>(parsed) : new LinkedHashMap<>();
+		} catch (Exception ignored) {
+			return new LinkedHashMap<>();
+		}
+	}
+
+	private Double readNullableDouble(Object value) {
+		if (value == null) {
+			return null;
+		}
+		if (value instanceof Number) {
+			return ((Number) value).doubleValue();
+		}
+		try {
+			return Double.valueOf(String.valueOf(value));
+		} catch (Exception ignored) {
+			return null;
+		}
 	}
 }

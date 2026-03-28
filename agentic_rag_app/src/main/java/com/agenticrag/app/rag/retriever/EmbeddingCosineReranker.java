@@ -2,6 +2,7 @@ package com.agenticrag.app.rag.retriever;
 
 import com.agenticrag.app.rag.embedding.EmbeddingModel;
 import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.model.TextChunkMetadataHelper;
 import com.agenticrag.app.rag.store.CosineSimilarity;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -33,7 +34,7 @@ public class EmbeddingCosineReranker implements Reranker {
 			.map(c -> new ScoredChunk(c, CosineSimilarity.cosine(qe, c.getEmbedding())))
 			.sorted(Comparator.comparingDouble(ScoredChunk::getScore).reversed())
 			.limit(topK)
-			.map(ScoredChunk::getChunk)
+			.map(scoredChunk -> TextChunkMetadataHelper.withRetrievalScore(scoredChunk.getChunk(), scoredChunk.getScore()))
 			.collect(Collectors.toList());
 		if (ranked.isEmpty()) {
 			return fallback(candidates, topK);

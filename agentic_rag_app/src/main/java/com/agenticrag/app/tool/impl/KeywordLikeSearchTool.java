@@ -1,5 +1,9 @@
 package com.agenticrag.app.tool.impl;
 
+import com.agenticrag.app.benchmark.retrieval.BenchmarkRetrievalTraceService;
+import com.agenticrag.app.benchmark.retrieval.RetrievalTraceCollector;
+import com.agenticrag.app.benchmark.retrieval.RetrievalTraceStage;
+import com.agenticrag.app.rag.context.ContextAssemblyResult;
 import com.agenticrag.app.rag.context.ContextAssembler;
 import com.agenticrag.app.rag.model.TextChunk;
 import com.agenticrag.app.rag.retriever.PostgresBm25Retriever;
@@ -26,17 +30,20 @@ public class KeywordLikeSearchTool implements Tool {
 	private final ContextAssembler contextAssembler;
 	private final ObjectProvider<PostgresKeywordLikeRetriever> postgresKeywordLikeRetriever;
 	private final ObjectProvider<PostgresBm25Retriever> postgresBm25Retriever;
+	private final BenchmarkRetrievalTraceService benchmarkRetrievalTraceService;
 
 	public KeywordLikeSearchTool(
 		ObjectMapper objectMapper,
 		ContextAssembler contextAssembler,
 		ObjectProvider<PostgresKeywordLikeRetriever> postgresKeywordLikeRetriever,
-		ObjectProvider<PostgresBm25Retriever> postgresBm25Retriever
+		ObjectProvider<PostgresBm25Retriever> postgresBm25Retriever,
+		BenchmarkRetrievalTraceService benchmarkRetrievalTraceService
 	) {
 		this.objectMapper = objectMapper;
 		this.contextAssembler = contextAssembler;
 		this.postgresKeywordLikeRetriever = postgresKeywordLikeRetriever;
 		this.postgresBm25Retriever = postgresBm25Retriever;
+		this.benchmarkRetrievalTraceService = benchmarkRetrievalTraceService;
 	}
 
 	@Override
@@ -78,28 +85,52 @@ public class KeywordLikeSearchTool implements Tool {
 			}
 
 			List<TextChunk> chunks = new ArrayList<>();
+			String knowledgeBaseId = context != null ? context.getKnowledgeBaseId() : null;
+			RetrievalTraceCollector collector = new RetrievalTraceCollector(
+				traceId,
+				context != null ? context.getToolCallId() : null,
+				name(),
+				knowledgeBaseId,
+				query
+			);
 			PostgresKeywordLikeRetriever keywordRetriever = postgresKeywordLikeRetriever.getIfAvailable();
 			if (keywordRetriever != null) {
-				chunks = keywordRetriever.retrieve(query, topK, traceId);
+				chunks = keywordRetriever.retrieve(query, topK, traceId, knowledgeBaseId);
+				collector.recordStage(RetrievalTraceStage.KEYWORD_LIKE, chunks);
 			} else {
 				PostgresBm25Retriever bm25Retriever = postgresBm25Retriever.getIfAvailable();
 				if (bm25Retriever != null) {
-					chunks = bm25Retriever.retrieve(query, topK, traceId);
+					chunks = bm25Retriever.retrieve(query, topK, traceId, knowledgeBaseId);
+					collector.recordStage(RetrievalTraceStage.BM25, chunks);
 				}
 			}
 
-			String output = contextAssembler.assemble(chunks);
+			ContextAssemblyResult assembled = contextAssembler.assemble(chunks, collector);
+			String output = assembled.getContextText();
 			long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 			log.info(
-				"event=keyword_tool_end traceId={} requestId={} query={} topK={} chunks={} durationMs={}",
+				"event=keyword_tool_end traceId={} knowledgeBaseId={} requestId={} query={} topK={} chunks={} durationMs={}",
 				traceId,
+				knowledgeBaseId,
 				context != null ? context.getRequestId() : "n/a",
 				query,
 				topK,
 				chunks != null ? chunks.size() : 0,
 				durationMs
 			);
-			return ToolResult.ok(output);
+			persistCollectorQuietly(collector, traceId);
+			return ToolResult.ok(output, assembled.getSidecar());
 		}).subscribeOn(Schedulers.boundedElastic());
+	}
+
+	private void persistCollectorQuietly(RetrievalTraceCollector collector, String traceId) {
+		if (benchmarkRetrievalTraceService == null || collector == null) {
+			return;
+		}
+		try {
+			benchmarkRetrievalTraceService.persistCollector(collector);
+		} catch (Exception e) {
+			log.warn("event=keyword_trace_persist_failed traceId={} type={} message={}", traceId, e.getClass().getSimpleName(), e.getMessage());
+		}
 	}
 }

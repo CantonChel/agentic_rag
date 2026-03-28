@@ -1,5 +1,9 @@
 package com.agenticrag.app.api;
 
+import com.agenticrag.app.agent.execution.AgentEvalMode;
+import com.agenticrag.app.agent.execution.AgentExecutionControlResolver;
+import com.agenticrag.app.agent.execution.AgentKbScope;
+import com.agenticrag.app.agent.execution.AgentThinkingProfile;
 import com.agenticrag.app.agent.AgentStreamingService;
 import com.agenticrag.app.llm.LlmProvider;
 import com.agenticrag.app.llm.LlmStreamEvent;
@@ -19,15 +23,26 @@ import reactor.core.publisher.Flux;
 @RequestMapping("/api/agent")
 public class AgentController {
 	private final AgentStreamingService agentStreamingService;
+	private final AgentExecutionControlResolver agentExecutionControlResolver;
 
-	public AgentController(AgentStreamingService agentStreamingService) {
+	public AgentController(
+		AgentStreamingService agentStreamingService,
+		AgentExecutionControlResolver agentExecutionControlResolver
+	) {
 		this.agentStreamingService = agentStreamingService;
+		this.agentExecutionControlResolver = agentExecutionControlResolver;
 	}
 
 	@GetMapping(value = "/openai/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
 	public Flux<ServerSentEvent<LlmStreamEvent>> streamOpenAi(
 		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "sessionId", defaultValue = "default") String sessionId,
+		@RequestParam(value = "knowledgeBaseId", required = false) String knowledgeBaseId,
+		@RequestParam(value = "buildId", required = false) String buildId,
+		@RequestParam(value = "kbScope", defaultValue = "AUTO") AgentKbScope kbScope,
+		@RequestParam(value = "evalMode", defaultValue = "DEFAULT") AgentEvalMode evalMode,
+		@RequestParam(value = "thinkingProfile", defaultValue = "DEFAULT") AgentThinkingProfile thinkingProfile,
+		@RequestParam(value = "memoryEnabled", defaultValue = "true") boolean memoryEnabled,
 		@RequestParam("prompt") String prompt,
 		@RequestParam(value = "tools", defaultValue = "true") boolean tools,
 		@RequestParam(value = "toolChoice", defaultValue = "AUTO") LlmToolChoiceMode toolChoice,
@@ -36,7 +51,16 @@ public class AgentController {
 	) {
 		String traceId = TraceIdUtil.normalizeOrGenerate(traceIdHeader);
 		response.getHeaders().set(TraceIdUtil.HEADER_NAME, traceId);
-		return agentStreamingService.stream(LlmProvider.OPENAI, userId, sessionId, prompt, tools, toolChoice, traceId)
+		return agentStreamingService.stream(
+			LlmProvider.OPENAI,
+			userId,
+			sessionId,
+			prompt,
+			tools,
+			toolChoice,
+			traceId,
+			agentExecutionControlResolver.resolve(buildId, knowledgeBaseId, kbScope, evalMode, thinkingProfile, memoryEnabled)
+		)
 			.map(e -> ServerSentEvent.builder(e).event(e.getType()).build());
 	}
 
@@ -44,6 +68,12 @@ public class AgentController {
 	public Flux<ServerSentEvent<LlmStreamEvent>> streamMinimax(
 		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "sessionId", defaultValue = "default") String sessionId,
+		@RequestParam(value = "knowledgeBaseId", required = false) String knowledgeBaseId,
+		@RequestParam(value = "buildId", required = false) String buildId,
+		@RequestParam(value = "kbScope", defaultValue = "AUTO") AgentKbScope kbScope,
+		@RequestParam(value = "evalMode", defaultValue = "DEFAULT") AgentEvalMode evalMode,
+		@RequestParam(value = "thinkingProfile", defaultValue = "DEFAULT") AgentThinkingProfile thinkingProfile,
+		@RequestParam(value = "memoryEnabled", defaultValue = "true") boolean memoryEnabled,
 		@RequestParam("prompt") String prompt,
 		@RequestParam(value = "tools", defaultValue = "true") boolean tools,
 		@RequestParam(value = "toolChoice", defaultValue = "AUTO") LlmToolChoiceMode toolChoice,
@@ -52,7 +82,16 @@ public class AgentController {
 	) {
 		String traceId = TraceIdUtil.normalizeOrGenerate(traceIdHeader);
 		response.getHeaders().set(TraceIdUtil.HEADER_NAME, traceId);
-		return agentStreamingService.stream(LlmProvider.MINIMAX, userId, sessionId, prompt, tools, toolChoice, traceId)
+		return agentStreamingService.stream(
+			LlmProvider.MINIMAX,
+			userId,
+			sessionId,
+			prompt,
+			tools,
+			toolChoice,
+			traceId,
+			agentExecutionControlResolver.resolve(buildId, knowledgeBaseId, kbScope, evalMode, thinkingProfile, memoryEnabled)
+		)
 			.map(e -> ServerSentEvent.builder(e).event(e.getType()).build());
 	}
 }

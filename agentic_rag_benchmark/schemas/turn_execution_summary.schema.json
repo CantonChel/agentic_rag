@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-rag.local/benchmark/schemas/turn_execution_summary.schema.json",
+  "title": "TurnExecutionSummary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "session_id",
+    "turn_id",
+    "user_question",
+    "final_answer",
+    "finish_reason",
+    "tool_calls",
+    "retrieval_trace_ids",
+    "latency_ms",
+    "provider",
+    "build_id",
+    "thinking_profile",
+    "memory_enabled"
+  ],
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "turn_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "user_question": {
+      "type": "string",
+      "minLength": 1
+    },
+    "final_answer": {
+      "type": "string"
+    },
+    "finish_reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tool_calls": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "retrieval_trace_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "latency_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "build_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "thinking_profile": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "memory_enabled": {
+      "type": "boolean"
+    }
+  }
+}

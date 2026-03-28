@@ -54,6 +54,7 @@ public class ToolController {
 	public Mono<ToolResult> execute(
 		@RequestParam(value = "userId", defaultValue = "anonymous") String userId,
 		@RequestParam(value = "sessionId", defaultValue = "default") String sessionId,
+		@RequestParam(value = "knowledgeBaseId", required = false) String knowledgeBaseId,
 		@RequestBody ExecuteToolRequest request,
 		@RequestHeader(value = TraceIdUtil.HEADER_NAME, required = false) String traceIdHeader,
 		ServerHttpResponse response
@@ -63,14 +64,22 @@ public class ToolController {
 		String traceId = TraceIdUtil.normalizeOrGenerate(traceIdHeader);
 		response.getHeaders().set(TraceIdUtil.HEADER_NAME, traceId);
 		String scopedSid = SessionScope.scopedSessionId(uid, sid);
-		ToolExecutionContext context = new ToolExecutionContext(UUID.randomUUID().toString(), uid, sid, traceId);
+		String effectiveToolCallId = normalizeToolCallId(request != null ? request.getToolCallId() : null);
+		ToolExecutionContext context = new ToolExecutionContext(
+			effectiveToolCallId,
+			uid,
+			sid,
+			traceId,
+			knowledgeBaseId,
+			effectiveToolCallId
+		);
 		return toolRouter.getTool(request.getName())
 			.map(t -> {
 				ToolArgumentValidator.ValidationResult vr = toolArgumentValidator.validate(t.parametersSchema(), request.getArguments());
 				if (!vr.isOk()) {
 					String err = "Error: 参数解析失败。请检查并重新调用工具。细节: " + String.join("; ", vr.getErrors());
 					ToolResult tr = ToolResult.error(err);
-					ToolResultMessage msg = new ToolResultMessage(request.getName(), request.getToolCallId(), false, null, tr.getError());
+					ToolResultMessage msg = new ToolResultMessage(request.getName(), effectiveToolCallId, false, null, tr.getError());
 					persistentMessageStore.append(scopedSid, msg);
 					contextManager.addMessage(scopedSid, msg);
 					return Mono.just(tr);
@@ -79,7 +88,7 @@ public class ToolController {
 				return t.execute(request.getArguments(), context).doOnNext(result -> {
 					ToolResultMessage msg = new ToolResultMessage(
 						request.getName(),
-						request.getToolCallId(),
+						effectiveToolCallId,
 						result.isSuccess(),
 						result.getOutput(),
 						result.getError()
@@ -90,6 +99,13 @@ public class ToolController {
 			})
 			.orElseGet(() -> Mono.just(ToolResult.error("Tool not found: " + request.getName())))
 			;
+	}
+
+	private String normalizeToolCallId(String toolCallId) {
+		if (toolCallId == null || toolCallId.trim().isEmpty()) {
+			return UUID.randomUUID().toString();
+		}
+		return toolCallId.trim();
 	}
 
 	public static class ExecuteToolRequest {

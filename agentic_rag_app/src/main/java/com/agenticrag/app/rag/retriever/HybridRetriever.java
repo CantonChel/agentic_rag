@@ -1,9 +1,13 @@
 package com.agenticrag.app.rag.retriever;
 
+import com.agenticrag.app.benchmark.retrieval.RetrievalTraceCollector;
+import com.agenticrag.app.benchmark.retrieval.RetrievalTraceStage;
 import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.model.TextChunkMetadataHelper;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -34,10 +38,25 @@ public class HybridRetriever {
 	}
 
 	public List<TextChunk> retrieve(String query, int recallTopK, int rerankTopK) {
-		return retrieve(query, recallTopK, rerankTopK, "n/a");
+		return retrieve(query, recallTopK, rerankTopK, "n/a", null);
 	}
 
 	public List<TextChunk> retrieve(String query, int recallTopK, int rerankTopK, String traceId) {
+		return retrieve(query, recallTopK, rerankTopK, traceId, null);
+	}
+
+	public List<TextChunk> retrieve(String query, int recallTopK, int rerankTopK, String traceId, String knowledgeBaseId) {
+		return retrieve(query, recallTopK, rerankTopK, traceId, knowledgeBaseId, null);
+	}
+
+	public List<TextChunk> retrieve(
+		String query,
+		int recallTopK,
+		int rerankTopK,
+		String traceId,
+		String knowledgeBaseId,
+		RetrievalTraceCollector collector
+	) {
 		if (query == null || query.trim().isEmpty()) {
 			return new ArrayList<>();
 		}
@@ -57,24 +76,28 @@ public class HybridRetriever {
 
 		final Retriever bm25RetrieverResolved = bm25Candidate;
 
-		CompletableFuture<List<TextChunk>> denseF = CompletableFuture.supplyAsync(() -> denseRetriever.retrieve(query, recall, traceId));
-		CompletableFuture<List<TextChunk>> bm25F = CompletableFuture.supplyAsync(() -> {
-			if (bm25RetrieverResolved instanceof PostgresBm25Retriever) {
-				return ((PostgresBm25Retriever) bm25RetrieverResolved).retrieve(query, recall, traceId);
-			}
-			return bm25RetrieverResolved.retrieve(query, recall);
-		});
+		CompletableFuture<List<TextChunk>> denseF = CompletableFuture.supplyAsync(
+			() -> denseRetriever.retrieve(query, recall, traceId, knowledgeBaseId)
+		);
+		CompletableFuture<List<TextChunk>> bm25F = CompletableFuture.supplyAsync(
+			() -> retrieveBm25(bm25RetrieverResolved, query, recall, traceId, knowledgeBaseId)
+		);
 
 		List<TextChunk> dense = denseF.join();
 		List<TextChunk> bm25Chunks = bm25F.join();
+		recordStage(collector, RetrievalTraceStage.DENSE, dense);
+		recordStage(collector, RetrievalTraceStage.BM25, bm25Chunks);
 
 		List<TextChunk> fused = fuseRrf(dense, bm25Chunks, recall, 60);
+		recordStage(collector, RetrievalTraceStage.HYBRID_FUSED, fused);
 		List<TextChunk> reranked = reranker.rerank(query, fused, rerank);
+		recordStage(collector, RetrievalTraceStage.RERANKED, reranked);
 		long durationMs = (System.nanoTime() - startNs) / 1_000_000;
 		log.info(
-			"event=hybrid_retrieve traceId={} query={} recallTopK={} rerankTopK={} denseCount={} bm25Count={} fusedCount={} rerankedCount={} durationMs={}",
+			"event=hybrid_retrieve traceId={} query={} knowledgeBaseId={} recallTopK={} rerankTopK={} denseCount={} bm25Count={} fusedCount={} rerankedCount={} durationMs={}",
 			traceId,
 			query,
+			knowledgeBaseId,
 			recall,
 			rerank,
 			dense != null ? dense.size() : 0,
@@ -86,6 +109,22 @@ public class HybridRetriever {
 		return reranked;
 	}
 
+	private List<TextChunk> retrieveBm25(
+		Retriever retriever,
+		String query,
+		int topK,
+		String traceId,
+		String knowledgeBaseId
+	) {
+		if (retriever instanceof PostgresBm25Retriever) {
+			return ((PostgresBm25Retriever) retriever).retrieve(query, topK, traceId, knowledgeBaseId);
+		}
+		if (retriever instanceof LuceneBm25Retriever) {
+			return ((LuceneBm25Retriever) retriever).retrieve(query, topK, knowledgeBaseId);
+		}
+		return retriever.retrieve(query, topK);
+	}
+
 	private List<TextChunk> fuseRrf(List<TextChunk> a, List<TextChunk> b, int topK, int k) {
 		Map<String, Scored> scored = new HashMap<>();
 		add(scored, a, k);
@@ -93,7 +132,7 @@ public class HybridRetriever {
 		return scored.values().stream()
 			.sorted(Comparator.comparingDouble(Scored::getScore).reversed())
 			.limit(topK)
-			.map(Scored::getChunk)
+			.map(Scored::toChunkWithScore)
 			.collect(Collectors.toList());
 	}
 
@@ -103,17 +142,33 @@ public class HybridRetriever {
 		}
 		for (int i = 0; i < list.size(); i++) {
 			TextChunk c = list.get(i);
-			if (c == null || c.getChunkId() == null) {
+			String scoredKey = scoreKey(c);
+			if (c == null || scoredKey == null) {
 				continue;
 			}
 			double inc = 1.0 / (k + (i + 1));
-			Scored s = scored.get(c.getChunkId());
+			Scored s = scored.get(scoredKey);
 			if (s == null) {
-				scored.put(c.getChunkId(), new Scored(c, inc));
+				scored.put(scoredKey, new Scored(c, inc));
 			} else {
 				s.add(inc);
 			}
 		}
+	}
+
+	private void recordStage(RetrievalTraceCollector collector, RetrievalTraceStage stage, List<TextChunk> chunks) {
+		if (collector == null || stage == null) {
+			return;
+		}
+		collector.recordStage(stage, chunks);
+	}
+
+	private String scoreKey(TextChunk chunk) {
+		if (chunk == null || chunk.getChunkId() == null || chunk.getChunkId().trim().isEmpty()) {
+			return null;
+		}
+		String documentId = chunk.getDocumentId() != null ? chunk.getDocumentId().trim() : "";
+		return documentId + ":" + chunk.getChunkId().trim();
 	}
 
 	private static final class Scored {
@@ -135,6 +190,12 @@ public class HybridRetriever {
 
 		private void add(double inc) {
 			this.score += inc;
+		}
+
+		private TextChunk toChunkWithScore() {
+			Map<String, Object> additions = new LinkedHashMap<>();
+			additions.put("retrieval_score", score);
+			return TextChunkMetadataHelper.withAdditionalMetadata(chunk, additions);
 		}
 	}
 }

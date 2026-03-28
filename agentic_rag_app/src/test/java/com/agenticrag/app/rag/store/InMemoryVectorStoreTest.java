@@ -19,6 +19,25 @@ class InMemoryVectorStoreTest {
 		List<TextChunk> res = store.similaritySearch(Arrays.asList(0.9, 0.1), 1);
 		Assertions.assertEquals(1, res.size());
 		Assertions.assertEquals("a", res.get(0).getChunkId());
+		Assertions.assertNotNull(res.get(0).getMetadata().get("retrieval_score"));
+	}
+
+	@Test
+	void filtersByKnowledgeBaseIdWhenProvided() {
+		InMemoryVectorStore store = new InMemoryVectorStore();
+
+		HashMap<String, Object> leftMetadata = new HashMap<>();
+		leftMetadata.put("knowledge_base_id", "kb-left");
+		HashMap<String, Object> rightMetadata = new HashMap<>();
+		rightMetadata.put("knowledge_base_id", "kb-right");
+
+		TextChunk left = new TextChunk("a", "d1", "left", Arrays.asList(1.0, 0.0), leftMetadata);
+		TextChunk right = new TextChunk("b", "d2", "right", Arrays.asList(1.0, 0.0), rightMetadata);
+		store.addChunks(Arrays.asList(left, right));
+
+		List<TextChunk> res = store.similaritySearch(Arrays.asList(0.9, 0.1), 5, "kb-right");
+
+		Assertions.assertEquals(1, res.size());
+		Assertions.assertEquals("b", res.get(0).getChunkId());
 	}
 }
-

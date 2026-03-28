@@ -128,11 +128,11 @@ public class StreamingChatService {
 	}
 
 	public Flux<LlmStreamEvent> stream(LlmProvider provider, String prompt, boolean includeTools) {
-		return stream(provider, "anonymous", "default", prompt, includeTools, LlmToolChoiceMode.AUTO);
+		return stream(provider, "anonymous", "default", prompt, includeTools, LlmToolChoiceMode.AUTO, null);
 	}
 
 	public Flux<LlmStreamEvent> stream(LlmProvider provider, String prompt, boolean includeTools, LlmToolChoiceMode toolChoiceMode) {
-		return stream(provider, "anonymous", "default", prompt, includeTools, toolChoiceMode);
+		return stream(provider, "anonymous", "default", prompt, includeTools, toolChoiceMode, null);
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -142,7 +142,7 @@ public class StreamingChatService {
 		boolean includeTools,
 		LlmToolChoiceMode toolChoiceMode
 	) {
-		return stream(provider, "anonymous", sessionId, prompt, includeTools, toolChoiceMode);
+		return stream(provider, "anonymous", sessionId, prompt, includeTools, toolChoiceMode, null);
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -152,6 +152,18 @@ public class StreamingChatService {
 		String prompt,
 		boolean includeTools,
 		LlmToolChoiceMode toolChoiceMode
+	) {
+		return stream(provider, userId, sessionId, prompt, includeTools, toolChoiceMode, null);
+	}
+
+	public Flux<LlmStreamEvent> stream(
+		LlmProvider provider,
+		String userId,
+		String sessionId,
+		String prompt,
+		boolean includeTools,
+		LlmToolChoiceMode toolChoiceMode,
+		String knowledgeBaseId
 	) {
 		return Flux.create(sink -> {
 			Future<?> future = streamExecutor.submit(() -> {
@@ -171,6 +183,7 @@ public class StreamingChatService {
 				String uid = SessionScope.normalizeUserId(userId);
 				String sid = SessionScope.normalizeSessionId(sessionId);
 				String scopedSid = SessionScope.scopedSessionId(uid, sid);
+				String scopedKnowledgeBaseId = normalizeKnowledgeBaseId(knowledgeBaseId);
 				String turnId = java.util.UUID.randomUUID().toString();
 				java.util.concurrent.atomic.AtomicLong sequence = new java.util.concurrent.atomic.AtomicLong(0L);
 				java.util.function.LongSupplier nextSequence = () -> sequence.incrementAndGet();
@@ -193,6 +206,16 @@ public class StreamingChatService {
 				}
 
 				String configuredSystemPrompt = systemPromptManager.build(new SystemPromptContext(provider, includeTools, SystemPromptMode.LLM));
+				log.info(
+					"event=llm_stream_start provider={} userId={} sessionId={} knowledgeBaseId={} includeTools={} toolChoice={} promptChars={}",
+					provider,
+					uid,
+					sid,
+					scopedKnowledgeBaseId,
+					includeTools,
+					toolChoiceMode,
+					prompt != null ? prompt.length() : 0
+				);
 				contextManager.ensureSystemPrompt(scopedSid, configuredSystemPrompt);
 				String systemPrompt = contextManager.getSystemPrompt(scopedSid);
 				persistentMessageStore.ensureSystemPrompt(scopedSid, systemPrompt);
@@ -405,6 +428,14 @@ public class StreamingChatService {
 			return "command:/reset";
 		}
 		return "command:/new";
+	}
+
+	private String normalizeKnowledgeBaseId(String knowledgeBaseId) {
+		if (knowledgeBaseId == null) {
+			return null;
+		}
+		String normalized = knowledgeBaseId.trim();
+		return normalized.isEmpty() ? null : normalized;
 	}
 
 	private String createNextSessionId(String userId) {

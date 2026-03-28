@@ -2,8 +2,10 @@ package com.agenticrag.app.config;
 
 import com.agenticrag.app.ingest.entity.ChunkEntity;
 import com.agenticrag.app.ingest.entity.EmbeddingEntity;
+import com.agenticrag.app.ingest.entity.KnowledgeEntity;
 import com.agenticrag.app.ingest.repo.ChunkRepository;
 import com.agenticrag.app.ingest.repo.EmbeddingRepository;
+import com.agenticrag.app.ingest.repo.KnowledgeRepository;
 import com.agenticrag.app.rag.model.TextChunk;
 import com.agenticrag.app.rag.retriever.ChunkIndexer;
 import com.agenticrag.app.rag.retriever.PostgresBm25Retriever;
@@ -32,6 +34,7 @@ public class RetrieverStartupLogger implements ApplicationRunner {
 	private final Environment environment;
 	private final ChunkRepository chunkRepository;
 	private final EmbeddingRepository embeddingRepository;
+	private final KnowledgeRepository knowledgeRepository;
 	private final List<ChunkIndexer> chunkIndexers;
 	private final ObjectMapper objectMapper;
 
@@ -41,6 +44,7 @@ public class RetrieverStartupLogger implements ApplicationRunner {
 		Environment environment,
 		ChunkRepository chunkRepository,
 		EmbeddingRepository embeddingRepository,
+		KnowledgeRepository knowledgeRepository,
 		List<ChunkIndexer> chunkIndexers,
 		ObjectMapper objectMapper
 	) {
@@ -49,6 +53,7 @@ public class RetrieverStartupLogger implements ApplicationRunner {
 		this.environment = environment;
 		this.chunkRepository = chunkRepository;
 		this.embeddingRepository = embeddingRepository;
+		this.knowledgeRepository = knowledgeRepository;
 		this.chunkIndexers = chunkIndexers;
 		this.objectMapper = objectMapper;
 	}
@@ -90,18 +95,20 @@ public class RetrieverStartupLogger implements ApplicationRunner {
 			log.info("In-memory index rebuild skipped: no chunks in database.");
 			return;
 		}
+		Map<String, String> knowledgeBaseByKnowledgeId = loadKnowledgeBaseMap();
 		Map<String, List<Double>> embeddingByChunk = loadEmbeddingMap();
 		List<TextChunk> indexable = new ArrayList<>();
 		for (ChunkEntity chunk : chunks) {
 			if (chunk == null || chunk.getChunkId() == null || chunk.getChunkId().trim().isEmpty()) {
 				continue;
 			}
+			Map<String, Object> metadata = enrichMetadata(chunk, knowledgeBaseByKnowledgeId);
 			indexable.add(new TextChunk(
 				chunk.getChunkId(),
 				chunk.getKnowledgeId(),
 				chunk.getContent(),
-				embeddingByChunk.get(chunk.getChunkId()),
-				parseMetadata(chunk.getMetadataJson())
+				embeddingByChunk.get(chunkKey(chunk.getKnowledgeId(), chunk.getChunkId())),
+				metadata
 			));
 		}
 		if (indexable.isEmpty()) {
@@ -131,9 +138,44 @@ public class RetrieverStartupLogger implements ApplicationRunner {
 			if (vector == null || vector.isEmpty()) {
 				continue;
 			}
-			out.put(embedding.getChunkId(), vector);
+			out.put(chunkKey(embedding.getKnowledgeId(), embedding.getChunkId()), vector);
 		}
 		return out;
+	}
+
+	private Map<String, String> loadKnowledgeBaseMap() {
+		List<KnowledgeEntity> knowledgeEntities = knowledgeRepository.findAll();
+		if (knowledgeEntities == null || knowledgeEntities.isEmpty()) {
+			return Collections.emptyMap();
+		}
+		Map<String, String> out = new HashMap<>();
+		for (KnowledgeEntity knowledge : knowledgeEntities) {
+			if (knowledge == null || knowledge.getId() == null || knowledge.getId().trim().isEmpty()) {
+				continue;
+			}
+			out.put(knowledge.getId(), knowledge.getKnowledgeBaseId());
+		}
+		return out;
+	}
+
+	private Map<String, Object> enrichMetadata(ChunkEntity chunk, Map<String, String> knowledgeBaseByKnowledgeId) {
+		Map<String, Object> metadata = new HashMap<>(parseMetadata(chunk != null ? chunk.getMetadataJson() : null));
+		if (chunk == null) {
+			return metadata;
+		}
+		if (!metadata.containsKey("knowledge_base_id")) {
+			String knowledgeBaseId = knowledgeBaseByKnowledgeId.get(chunk.getKnowledgeId());
+			if (knowledgeBaseId != null && !knowledgeBaseId.trim().isEmpty()) {
+				metadata.put("knowledge_base_id", knowledgeBaseId.trim());
+			}
+		}
+		return metadata;
+	}
+
+	private String chunkKey(String knowledgeId, String chunkId) {
+		String normalizedKnowledgeId = knowledgeId != null ? knowledgeId.trim() : "";
+		String normalizedChunkId = chunkId != null ? chunkId.trim() : "";
+		return normalizedKnowledgeId + ":" + normalizedChunkId;
 	}
 
 	private Map<String, Object> parseMetadata(String metadataJson) {
