@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Dict
 from typing import Iterable
@@ -28,6 +29,8 @@ class BenchmarkAppClient:
         self.base_url = normalize_base_url(base_url)
         self.timeout_seconds = timeout_seconds
         self.verify_ssl = verify_ssl
+        self.turn_summary_retry_seconds = min(max(timeout_seconds, 1), 10)
+        self.turn_summary_retry_interval_seconds = 0.5
 
     def stream_agent_turn(
         self,
@@ -63,18 +66,23 @@ class BenchmarkAppClient:
             return collect_agent_stream_capture(response.iter_lines(decode_unicode=True))
 
     def get_turn_summary(self, turn_id: str) -> dict:
-        response = requests.get(
-            f"{self.base_url}/api/benchmark/turn-summaries/{turn_id}",
-            timeout=self.timeout_seconds,
-            verify=self.verify_ssl,
-        )
-        if response.status_code == 404:
-            raise RuntimeError(f"turn summary not found for turnId={turn_id}")
-        response.raise_for_status()
-        payload = response.json()
-        if not isinstance(payload, dict):
-            raise RuntimeError("turn summary API returned non-object payload")
-        return payload
+        deadline = time.monotonic() + self.turn_summary_retry_seconds
+        while True:
+            response = requests.get(
+                f"{self.base_url}/api/benchmark/turn-summaries/{turn_id}",
+                timeout=self.timeout_seconds,
+                verify=self.verify_ssl,
+            )
+            if response.status_code == 404 and time.monotonic() < deadline:
+                time.sleep(self.turn_summary_retry_interval_seconds)
+                continue
+            if response.status_code == 404:
+                raise RuntimeError(f"turn summary not found for turnId={turn_id}")
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise RuntimeError("turn summary API returned non-object payload")
+            return payload
 
     def get_retrieval_traces(self, trace_id: str) -> List[dict]:
         response = requests.get(
