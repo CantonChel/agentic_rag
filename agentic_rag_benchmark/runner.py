@@ -11,11 +11,13 @@ from pathlib import Path
 from typing import Any
 from typing import Dict
 from typing import List
+from uuid import uuid4
 
 from .contracts import BenchmarkSample
 from .contracts import EvidenceReference
 from .runner_io import LoadedBenchmarkPackage
 from .runner_io import load_benchmark_package
+from .runner_client import BenchmarkAppClient
 
 
 def utcnow_iso() -> str:
@@ -66,6 +68,8 @@ class RunBenchmarkSampleResult:
     final_answer: str = ""
     finish_reason: str = ""
     latency_ms: int | None = None
+    stream_event_count: int = 0
+    stream_event_types: Dict[str, int] = field(default_factory=dict)
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     retrieval_trace_ids: List[str] = field(default_factory=list)
     retrieval_trace_records: List[Dict[str, Any]] = field(default_factory=list)
@@ -103,21 +107,187 @@ class RunBenchmarkReport:
         }
 
 
-def run_benchmark(request: RunBenchmarkRequest) -> RunBenchmarkReport:
+def run_benchmark(request: RunBenchmarkRequest, client: Any | None = None) -> RunBenchmarkReport:
     """Prepare one benchmark run from a portable package."""
 
     loaded = load_benchmark_package(request.package_dir)
     started_at = utcnow_iso()
-    sample_results = [
-        build_pending_sample_result(
-            sample=sample,
-            request=request,
-            session_id=f"{request.session_prefix}-{sample.sample_id}",
-        )
-        for sample in loaded.benchmark_samples
-    ]
+    client = client or BenchmarkAppClient(
+        base_url=request.base_url,
+        timeout_seconds=request.timeout_seconds,
+        verify_ssl=request.verify_ssl,
+    )
+    sample_results = [execute_sample(sample, request, client) for sample in loaded.benchmark_samples]
     completed_at = utcnow_iso()
     return build_report(request, loaded, started_at, completed_at, sample_results)
+
+
+def execute_sample(
+    sample: BenchmarkSample,
+    request: RunBenchmarkRequest,
+    client: Any,
+) -> RunBenchmarkSampleResult:
+    session_id = build_session_id(request.session_prefix, sample.sample_id)
+    try:
+        stream_capture = client.stream_agent_turn(
+            provider=request.provider,
+            user_id=request.user_id,
+            session_id=session_id,
+            prompt=sample.question,
+            build_id=request.build_id,
+            tools=request.tools,
+            tool_choice=request.tool_choice,
+        )
+    except Exception as exc:
+        return build_error_sample_result(
+            sample=sample,
+            request=request,
+            session_id=session_id,
+            turn_id=None,
+            trace_id=None,
+            stream_event_count=0,
+            stream_event_types={},
+            error=f"Failed to stream agent turn: {exc}",
+        )
+    if not stream_capture.turn_id:
+        return build_error_sample_result(
+            sample=sample,
+            request=request,
+            session_id=session_id,
+            turn_id=None,
+            trace_id=None,
+            stream_event_count=stream_capture.event_count,
+            stream_event_types=dict(stream_capture.event_type_counts),
+            error=stream_capture.transport_error or "Agent stream did not produce turnId",
+        )
+
+    try:
+        summary = client.get_turn_summary(stream_capture.turn_id)
+    except Exception as exc:
+        return build_error_sample_result(
+            sample=sample,
+            request=request,
+            session_id=session_id,
+            turn_id=stream_capture.turn_id,
+            trace_id=None,
+            stream_event_count=stream_capture.event_count,
+            stream_event_types=dict(stream_capture.event_type_counts),
+            error=f"Failed to fetch turn summary: {exc}",
+        )
+
+    trace_id = normalize_optional_text(summary.get("traceId"))
+    retrieval_trace_ids = merge_trace_ids(trace_id, normalize_string_list(summary.get("retrievalTraceIds")))
+    retrieval_trace_records: List[Dict[str, Any]] = []
+    retrieval_error: str | None = None
+    if retrieval_trace_ids:
+        try:
+            retrieval_trace_records = collect_retrieval_trace_records(client, retrieval_trace_ids)
+        except Exception as exc:
+            retrieval_error = f"Failed to fetch retrieval traces: {exc}"
+
+    return RunBenchmarkSampleResult(
+        sample_id=sample.sample_id,
+        question=sample.question,
+        ground_truth=sample.ground_truth,
+        ground_truth_contexts=list(sample.ground_truth_contexts),
+        gold_evidence_refs=list(sample.gold_evidence_refs),
+        provider=request.provider,
+        build_id=request.build_id,
+        session_id=session_id,
+        turn_id=normalize_optional_text(summary.get("turnId")) or stream_capture.turn_id,
+        trace_id=trace_id,
+        final_answer=normalize_optional_text(summary.get("finalAnswer")) or "",
+        finish_reason=normalize_optional_text(summary.get("finishReason")) or "",
+        latency_ms=normalize_optional_int(summary.get("latencyMs")),
+        stream_event_count=stream_capture.event_count,
+        stream_event_types=dict(stream_capture.event_type_counts),
+        tool_calls=normalize_object_list(summary.get("toolCalls")),
+        retrieval_trace_ids=retrieval_trace_ids,
+        retrieval_trace_records=retrieval_trace_records,
+        error=retrieval_error or stream_capture.transport_error,
+    )
+
+
+def build_error_sample_result(
+    sample: BenchmarkSample,
+    request: RunBenchmarkRequest,
+    session_id: str,
+    turn_id: str | None,
+    trace_id: str | None,
+    stream_event_count: int,
+    stream_event_types: Dict[str, int],
+    error: str,
+) -> RunBenchmarkSampleResult:
+    return RunBenchmarkSampleResult(
+        sample_id=sample.sample_id,
+        question=sample.question,
+        ground_truth=sample.ground_truth,
+        ground_truth_contexts=list(sample.ground_truth_contexts),
+        gold_evidence_refs=list(sample.gold_evidence_refs),
+        provider=request.provider,
+        build_id=request.build_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        trace_id=trace_id,
+        stream_event_count=stream_event_count,
+        stream_event_types=stream_event_types,
+        error=error,
+    )
+
+
+def build_session_id(session_prefix: str, sample_id: str) -> str:
+    return f"{session_prefix}-{sample_id}-{uuid4().hex[:8]}"
+
+
+def merge_trace_ids(primary_trace_id: str | None, trace_ids: List[str]) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for candidate in [primary_trace_id, *trace_ids]:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        out.append(candidate)
+    return out
+
+
+def collect_retrieval_trace_records(client: Any, trace_ids: List[str]) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    for trace_id in trace_ids:
+        records.extend(client.get_retrieval_traces(trace_id))
+    return records
+
+
+def normalize_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def normalize_optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    return int(text)
+
+
+def normalize_string_list(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    out = [normalize_optional_text(item) for item in value]
+    return [item for item in out if item is not None]
+
+
+def normalize_object_list(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
 
 
 def build_pending_sample_result(
@@ -125,6 +295,8 @@ def build_pending_sample_result(
     request: RunBenchmarkRequest,
     session_id: str,
 ) -> RunBenchmarkSampleResult:
+    """Backward-compatible helper kept for tests and staged evolution."""
+
     return RunBenchmarkSampleResult(
         sample_id=sample.sample_id,
         question=sample.question,
