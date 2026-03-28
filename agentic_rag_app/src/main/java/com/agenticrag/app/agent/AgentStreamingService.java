@@ -100,8 +100,15 @@ public class AgentStreamingService {
 	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+\\.?|Step\\s*\\d+\\.?|\\d+\\.)\\s+)");
 	private static final String THINK_OPEN = "<think>";
 	private static final String THINK_CLOSE = "</think>";
+	private static final Pattern MINIMAX_TOOL_CALL_BLOCK_PATTERN = Pattern.compile(
+		"(?is)<minimax:tool_call>.*?</minimax:tool_call>"
+	);
 	private static final String FINAL_ITERATION_WARNING =
-		"系统警告：你已达到最大思考步数。请立即停止调用新工具，基于目前已有的观察结果，向用户输出最终总结回复。";
+		"系统警告：你已达到最大思考步数。请立即停止调用新工具，基于目前已有的观察结果，向用户输出最终总结回复。"
+			+ "严禁输出任何工具调用、函数调用、XML 标签、<minimax:tool_call>、<invoke> 或参数片段。"
+			+ "如果证据仍然不足，请直接明确说明当前已检索到的信息不足以支持确定答案。";
+	private static final String FINAL_ITERATION_DEFAULT_ANSWER =
+		"根据当前已检索到的内容，我暂时无法给出确定答案。";
 
 	public AgentStreamingService(
 		OpenAIClient openAiClient,
@@ -500,6 +507,9 @@ public class AgentStreamingService {
 												content,
 												answerPart -> {
 													assistantContent.append(answerPart);
+													if (isFinalIteration) {
+														return;
+													}
 														emit.accept(LlmStreamEvent.delta(
 															answerPart,
 															turnId,
@@ -559,6 +569,18 @@ public class AgentStreamingService {
 
 						List<LlmToolCall> toolCalls = toolCallAccumulator.buildToolCalls();
 						String assistantFinal = assistantContent.toString().trim();
+						if (isFinalIteration) {
+							assistantFinal = normalizeFinalIterationAnswer(assistantFinal);
+							if (!assistantFinal.isEmpty()) {
+								emit.accept(LlmStreamEvent.delta(
+									assistantFinal,
+									turnId,
+									nextSequence.getAsLong(),
+									System.currentTimeMillis(),
+									iterationFinal
+								));
+							}
+						}
 						executionAccumulator.recordOriginModel(originModelRef.get());
 
 						if (!assistantFinal.isEmpty()) {
@@ -912,6 +934,31 @@ public class AgentStreamingService {
 			return FINAL_ITERATION_WARNING;
 		}
 		return base + "\n\n" + FINAL_ITERATION_WARNING;
+	}
+
+	private String normalizeFinalIterationAnswer(String assistantFinal) {
+		String normalized = assistantFinal == null ? "" : assistantFinal.trim();
+		if (normalized.isEmpty()) {
+			return FINAL_ITERATION_DEFAULT_ANSWER;
+		}
+
+		String stripped = MINIMAX_TOOL_CALL_BLOCK_PATTERN.matcher(normalized).replaceAll("").trim();
+		if (containsToolInvocationMarkup(normalized)) {
+			return stripped.isEmpty() ? FINAL_ITERATION_DEFAULT_ANSWER : stripped;
+		}
+		return normalized;
+	}
+
+	private boolean containsToolInvocationMarkup(String content) {
+		if (content == null || content.isEmpty()) {
+			return false;
+		}
+		String normalized = content.toLowerCase();
+		return normalized.contains("<minimax:tool_call>")
+			|| normalized.contains("</minimax:tool_call>")
+			|| normalized.contains("<invoke ")
+			|| normalized.contains("</invoke>")
+			|| normalized.contains("<parameter ");
 	}
 
 	private boolean isSessionSwitchCommand(String prompt) {

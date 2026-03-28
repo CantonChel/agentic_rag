@@ -676,6 +676,76 @@ class AgentStreamingServiceTest {
 	}
 
 	@Test
+	void finalIterationSanitizesMinimaxToolMarkupAnswer() {
+		ObjectMapper objectMapper = new ObjectMapper();
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+
+		String fakeMarkup = "<minimax:tool_call>\n"
+			+ "<invoke name=\"search_knowledge_base\">\n"
+			+ "<parameter name=\"query\">通讯录模板 字段信息</parameter>\n"
+			+ "</invoke>\n"
+			+ "</minimax:tool_call>";
+		StreamResponse<ChatCompletionChunk> r1 = new FakeStreamResponse(Stream.of(toolCallsChunk()));
+		StreamResponse<ChatCompletionChunk> r2 = new FakeStreamResponse(Stream.of(textChunk(fakeMarkup)));
+		Mockito.when(minimaxClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(r1, r2);
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		ToolRouter toolRouter = new ToolRouter();
+		toolRouter.register(new CalculatorTool(objectMapper));
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(2);
+		agentProps.setToolTimeoutSeconds(5);
+
+		ToolArgumentValidator validator = new ToolArgumentValidator();
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			validator
+		);
+
+		List<LlmStreamEvent> events = service.stream(LlmProvider.MINIMAX, "s1", "calc", true, LlmToolChoiceMode.AUTO)
+			.collectList()
+			.block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		List<LlmStreamEvent> deltaEvents = events.stream()
+			.filter(e -> "delta".equals(e.getType()))
+			.toList();
+		Assertions.assertFalse(deltaEvents.isEmpty());
+		Assertions.assertTrue(deltaEvents.stream().noneMatch(e -> e.getContent() != null && e.getContent().contains("<minimax:tool_call>")));
+		Assertions.assertEquals("根据当前已检索到的内容，我暂时无法给出确定答案。", deltaEvents.get(deltaEvents.size() - 1).getContent());
+	}
+
+	@Test
 	void agentPromptUsesAgentModeContext() {
 		ObjectMapper objectMapper = new ObjectMapper();
 
