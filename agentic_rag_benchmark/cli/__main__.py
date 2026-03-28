@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from agentic_rag_benchmark.pipeline import build_benchmark_package
+from agentic_rag_benchmark.ragas_runner import evaluate_ragas_for_report
 from agentic_rag_benchmark.report_writer import write_benchmark_outputs
 from agentic_rag_benchmark.runner import RunBenchmarkRequest
 from agentic_rag_benchmark.runner import run_benchmark
@@ -117,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         report = run_benchmark(request)
         artifacts = write_benchmark_outputs(report)
+        ragas_artifacts = evaluate_ragas_for_report(report, artifacts.output_dir)
         for line in (
             f"[info] Benchmark package ready: {request.package_dir}",
             f"[info] Project key: {report.project_key}",
@@ -124,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
             f"[info] Evidence count: {report.evidence_count}",
             f"[info] Sample count: {report.sample_count}",
             f"[info] Output directory: {artifacts.output_dir}",
+            f"[info] RAGAS summary: {ragas_artifacts.summary_path or 'not generated'}",
+            f"[info] RAGAS error: {ragas_artifacts.error_path or 'none'}",
             f"[info] Execution mode: evalMode={request.eval_mode}, kbScope={request.kb_scope}, memoryEnabled={str(request.memory_enabled).lower()}, thinkingProfile={request.thinking_profile}",
         ):
             print(line)
