@@ -100,6 +100,8 @@ public class AgentStreamingService {
 	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+\\.?|Step\\s*\\d+\\.?|\\d+\\.)\\s+)");
 	private static final String THINK_OPEN = "<think>";
 	private static final String THINK_CLOSE = "</think>";
+	private static final String FINAL_ITERATION_WARNING =
+		"系统警告：你已达到最大思考步数。请立即停止调用新工具，基于目前已有的观察结果，向用户输出最终总结回复。";
 
 	public AgentStreamingService(
 		OpenAIClient openAiClient,
@@ -435,18 +437,17 @@ public class AgentStreamingService {
 						final int iterationFinal = iteration;
 						turnRoundIdRef.set(iterationFinal);
 						boolean isFinalIteration = iteration >= maxIterations;
+						String iterationSystemPrompt = isFinalIteration
+							? appendFinalIterationWarning(systemPrompt)
+							: systemPrompt;
 
-						localExecutionContextRecorder.record(scopedSid, systemPrompt, localContext, iteration);
+						localExecutionContextRecorder.record(scopedSid, iterationSystemPrompt, localContext, iteration);
 
 						ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder()
 							.model(model)
-							.addSystemMessage(systemPrompt);
+							.addSystemMessage(iterationSystemPrompt);
 						if (thinkingVisible) {
 							MinimaxReasoningSupport.applyReasoningSplit(paramsBuilder, provider, minimaxProperties);
-						}
-
-						if (isFinalIteration) {
-							paramsBuilder.addSystemMessage("系统警告：你已达到最大思考步数。请立即停止调用新工具，基于目前已有的观察结果，向用户输出最终总结回复。");
 						}
 
 						List<com.openai.models.chat.completions.ChatCompletionMessageParam> messageParams = adapter.toMessageParams(localContext);
@@ -903,6 +904,14 @@ public class AgentStreamingService {
 			return ChatCompletionToolChoiceOption.Auto.NONE;
 		}
 		return ChatCompletionToolChoiceOption.Auto.AUTO;
+	}
+
+	private String appendFinalIterationWarning(String systemPrompt) {
+		String base = systemPrompt == null ? "" : systemPrompt.trim();
+		if (base.isEmpty()) {
+			return FINAL_ITERATION_WARNING;
+		}
+		return base + "\n\n" + FINAL_ITERATION_WARNING;
 	}
 
 	private boolean isSessionSwitchCommand(String prompt) {

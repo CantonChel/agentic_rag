@@ -38,6 +38,7 @@ import com.openai.core.JsonValue;
 import com.openai.core.http.StreamResponse;
 import com.openai.models.chat.completions.ChatCompletionChunk;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
+import com.openai.models.chat.completions.ChatCompletionMessageParam;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -599,6 +600,79 @@ class AgentStreamingServiceTest {
 		Mockito.verify(minimaxClient.chat().completions()).createStreaming(paramsCaptor.capture());
 		ChatCompletionCreateParams params = paramsCaptor.getValue();
 		Assertions.assertEquals(Boolean.TRUE, params._additionalBodyProperties().get("reasoning_split").convert(Boolean.class));
+	}
+
+	@Test
+	void minimaxFinalIterationUsesSingleSystemMessage() {
+		ObjectMapper objectMapper = new ObjectMapper();
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+
+		StreamResponse<ChatCompletionChunk> r1 = new FakeStreamResponse(Stream.of(toolCallsChunk()));
+		StreamResponse<ChatCompletionChunk> r2 = new FakeStreamResponse(Stream.of(textChunk("收尾答案")));
+		Mockito.when(minimaxClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(r1, r2);
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		ToolRouter toolRouter = new ToolRouter();
+		toolRouter.register(new CalculatorTool(objectMapper));
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(2);
+		agentProps.setToolTimeoutSeconds(5);
+
+		ToolArgumentValidator validator = new ToolArgumentValidator();
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			validator
+		);
+
+		List<LlmStreamEvent> events = service.stream(LlmProvider.MINIMAX, "s1", "calc", true, LlmToolChoiceMode.AUTO)
+			.collectList()
+			.block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		ArgumentCaptor<ChatCompletionCreateParams> paramsCaptor = ArgumentCaptor.forClass(ChatCompletionCreateParams.class);
+		Mockito.verify(minimaxClient.chat().completions(), Mockito.times(2)).createStreaming(paramsCaptor.capture());
+
+		List<ChatCompletionCreateParams> allParams = paramsCaptor.getAllValues();
+		Assertions.assertEquals(2, allParams.size());
+
+		ChatCompletionCreateParams finalParams = allParams.get(1);
+		List<ChatCompletionMessageParam> systemMessages = finalParams.messages().stream()
+			.filter(ChatCompletionMessageParam::isSystem)
+			.toList();
+		Assertions.assertEquals(1, systemMessages.size());
+		String systemContent = systemMessages.get(0).asSystem().content().asText();
+		Assertions.assertTrue(systemContent.contains("system"));
+		Assertions.assertTrue(systemContent.contains("系统警告：你已达到最大思考步数"));
 	}
 
 	@Test
