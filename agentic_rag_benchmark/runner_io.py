@@ -8,11 +8,14 @@ from pathlib import Path
 from typing import Any
 from typing import Iterable
 from typing import List
+from datetime import datetime
+from datetime import timezone
 
 from .contracts import BenchmarkSample
 from .contracts import EvidenceReference
 from .contracts import EvidenceUnit
 from .contracts import SuiteManifest
+from .legacy_import import load_legacy_dataset
 from .package_spec import STANDARD_PACKAGE_FILES
 from .validator import validate_package_dir
 
@@ -25,6 +28,18 @@ class LoadedBenchmarkPackage:
     manifest: SuiteManifest
     evidence_units: List[EvidenceUnit]
     benchmark_samples: List[BenchmarkSample]
+
+
+def load_benchmark_input(package_dir: Path | None = None, legacy_dataset: Path | None = None) -> LoadedBenchmarkPackage:
+    """Load either a standard package or a legacy dataset."""
+
+    if package_dir and legacy_dataset:
+        raise ValueError("package_dir and legacy_dataset are mutually exclusive")
+    if package_dir:
+        return load_benchmark_package(package_dir)
+    if legacy_dataset:
+        return load_legacy_benchmark_input(legacy_dataset)
+    raise ValueError("Either package_dir or legacy_dataset must be provided")
 
 
 def load_benchmark_package(package_dir: Path) -> LoadedBenchmarkPackage:
@@ -44,6 +59,25 @@ def load_benchmark_package(package_dir: Path) -> LoadedBenchmarkPackage:
         manifest=parse_suite_manifest(json.loads(manifest_path.read_text(encoding="utf-8"))),
         evidence_units=[parse_evidence_unit(item) for item in read_jsonl(evidence_path)],
         benchmark_samples=[parse_benchmark_sample(item) for item in read_jsonl(benchmark_path)],
+    )
+
+
+def load_legacy_benchmark_input(dataset_path: Path) -> LoadedBenchmarkPackage:
+    """Load one legacy dataset and wrap it into the runner's common input shape."""
+
+    samples = load_legacy_dataset(dataset_path)
+    return LoadedBenchmarkPackage(
+        package_dir=dataset_path.parent,
+        manifest=SuiteManifest(
+            package_version="legacy_import_v1",
+            project_key="legacy_dataset",
+            suite_version="legacy_import_v1",
+            created_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            generator_version="legacy_import",
+            files={},
+        ),
+        evidence_units=[],
+        benchmark_samples=samples,
     )
 
 

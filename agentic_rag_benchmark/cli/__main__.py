@@ -51,7 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     run_benchmark_parser = subparsers.add_parser("run-benchmark", help="Run benchmark against one imported build")
-    run_benchmark_parser.add_argument("--package-dir", required=True, help="Path to packages/<project_key>/<suite_version>")
+    input_group = run_benchmark_parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument("--package-dir", help="Path to packages/<project_key>/<suite_version>")
+    input_group.add_argument("--legacy-dataset", help="Path to one legacy JSONL dataset")
     run_benchmark_parser.add_argument(
         "--base-url",
         default=os.getenv("APP_BASE_URL", "http://127.0.0.1:8081"),
@@ -106,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     elif args.command == "run-benchmark":
         request = RunBenchmarkRequest(
-            package_dir=Path(args.package_dir),
+            package_dir=Path(args.package_dir) if args.package_dir else None,
             base_url=args.base_url,
             provider=args.provider,
             build_id=args.build_id,
@@ -114,13 +116,15 @@ def main(argv: list[str] | None = None) -> int:
             session_prefix=args.session_prefix,
             timeout_seconds=args.timeout_seconds,
             output_root=Path(args.output_root),
+            legacy_dataset=Path(args.legacy_dataset) if args.legacy_dataset else None,
             verify_ssl=bool(args.verify_ssl),
         )
         report = run_benchmark(request)
         artifacts = write_benchmark_outputs(report)
         ragas_artifacts = evaluate_ragas_for_report(report, artifacts.output_dir)
         for line in (
-            f"[info] Benchmark package ready: {request.package_dir}",
+            f"[info] Benchmark input package: {request.package_dir or 'n/a'}",
+            f"[info] Benchmark input legacy dataset: {request.legacy_dataset or 'n/a'}",
             f"[info] Project key: {report.project_key}",
             f"[info] Suite version: {report.suite_version}",
             f"[info] Evidence count: {report.evidence_count}",

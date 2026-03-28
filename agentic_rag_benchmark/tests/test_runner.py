@@ -154,6 +154,33 @@ class RunnerPackageLoadTest(unittest.TestCase):
             self.assertEqual(report.sample_results[0].retrieval_trace_records, [])
             self.assertIsNone(report.sample_results[0].error)
 
+    def test_run_benchmark_supports_legacy_dataset_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            fixture = Path(__file__).resolve().parents[1] / "fixtures" / "legacy" / "legacy_question_bank_sample.jsonl"
+            legacy_dataset = root / "legacy_sample.jsonl"
+            legacy_dataset.write_text(fixture.read_text(encoding="utf-8"), encoding="utf-8")
+
+            request = RunBenchmarkRequest(
+                package_dir=None,
+                legacy_dataset=legacy_dataset,
+                base_url="http://127.0.0.1:8081",
+                provider="openai",
+                build_id="build_123",
+                user_id="bench-user",
+                session_prefix="bench",
+                timeout_seconds=180,
+                output_root=root / "outputs",
+            )
+
+            report = run_benchmark(request, client=FakeBenchmarkAppClient())
+
+            self.assertEqual(report.project_key, "legacy_dataset")
+            self.assertEqual(report.suite_version, "legacy_import_v1")
+            self.assertEqual(report.sample_count, 1)
+            self.assertEqual(report.sample_results[0].question, "该接口的必填请求头有哪些？")
+            self.assertEqual(report.sample_results[0].final_answer, "sample answer")
+
     def _write_package(self, package_dir: Path) -> None:
         manifest = {
             "package_version": "v1",

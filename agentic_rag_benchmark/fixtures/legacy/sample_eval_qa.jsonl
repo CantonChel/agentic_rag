@@ -1,0 +1,2 @@
+{"id":"q001","question":"什么是 RAG？请用两句话解释。","ground_truth":"RAG（Retrieval-Augmented Generation）是一种先检索外部知识再生成答案的方法。它通过把检索到的上下文注入生成过程来降低幻觉并提升可追溯性。"}
+{"id":"q002","question":"在这个项目里，知识检索工具的名字是什么？","ground_truth":"知识检索工具名是 search_knowledge_base。"}

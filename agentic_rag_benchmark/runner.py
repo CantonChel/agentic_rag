@@ -16,7 +16,7 @@ from uuid import uuid4
 from .contracts import BenchmarkSample
 from .contracts import EvidenceReference
 from .runner_io import LoadedBenchmarkPackage
-from .runner_io import load_benchmark_package
+from .runner_io import load_benchmark_input
 from .runner_client import BenchmarkAppClient
 
 
@@ -28,7 +28,7 @@ def utcnow_iso() -> str:
 class RunBenchmarkRequest:
     """Input contract for one benchmark run."""
 
-    package_dir: Path
+    package_dir: Path | None
     base_url: str
     provider: str
     build_id: str
@@ -36,6 +36,7 @@ class RunBenchmarkRequest:
     session_prefix: str
     timeout_seconds: int
     output_root: Path
+    legacy_dataset: Path | None = None
     verify_ssl: bool = False
     eval_mode: str = "SINGLE_TURN"
     kb_scope: str = "BENCHMARK_BUILD"
@@ -46,7 +47,8 @@ class RunBenchmarkRequest:
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
-        payload["package_dir"] = str(self.package_dir)
+        payload["package_dir"] = str(self.package_dir) if self.package_dir else None
+        payload["legacy_dataset"] = str(self.legacy_dataset) if self.legacy_dataset else None
         payload["output_root"] = str(self.output_root)
         return payload
 
@@ -110,7 +112,7 @@ class RunBenchmarkReport:
 def run_benchmark(request: RunBenchmarkRequest, client: Any | None = None) -> RunBenchmarkReport:
     """Prepare one benchmark run from a portable package."""
 
-    loaded = load_benchmark_package(request.package_dir)
+    loaded = load_benchmark_input(package_dir=request.package_dir, legacy_dataset=request.legacy_dataset)
     started_at = utcnow_iso()
     client = client or BenchmarkAppClient(
         base_url=request.base_url,

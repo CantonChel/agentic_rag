@@ -69,7 +69,8 @@ def write_benchmark_outputs(report: RunBenchmarkReport) -> BenchmarkReportArtifa
 
 def build_run_meta(report: RunBenchmarkReport) -> Dict[str, Any]:
     return {
-        "package_dir": str(report.request.package_dir),
+        "package_dir": str(report.request.package_dir) if report.request.package_dir else None,
+        "legacy_dataset": str(report.request.legacy_dataset) if report.request.legacy_dataset else None,
         "project_key": report.project_key,
         "suite_version": report.suite_version,
         "provider": report.request.provider,
@@ -143,6 +144,7 @@ def build_markdown_report(
         "",
         "## 运行摘要",
         f"- package_dir: `{run_meta['package_dir']}`",
+        f"- legacy_dataset: `{run_meta['legacy_dataset']}`",
         f"- project_key: `{run_meta['project_key']}`",
         f"- suite_version: `{run_meta['suite_version']}`",
         f"- provider: `{run_meta['provider']}`",
