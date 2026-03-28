@@ -106,8 +106,9 @@ APP_LOG_FILE="${LOG_DIR}/app.log"
 APP_BUILD_LOG_FILE="${LOG_DIR}/app-build.log"
 DOCREADER_LOG_FILE="${LOG_DIR}/docreader.log"
 REDIS_LOG_FILE="${LOG_DIR}/redis.log"
-APP_PID_FILE="${LOG_DIR}/app-mvn.pid"
+APP_PID_FILE="${LOG_DIR}/app.pid"
 DOCREADER_PID_FILE="${LOG_DIR}/docreader.pid"
+LEGACY_APP_PID_FILE="${LOG_DIR}/app-mvn.pid"
 
 # ============================================================================
 # 模式标准化处理
@@ -368,7 +369,7 @@ fi
 # 通过端口号停止业务服务进程
 kill_by_port "${JAVA_PORT}"
 kill_by_port "${DOCREADER_PORT}"
-rm -f "${APP_PID_FILE}" "${DOCREADER_PID_FILE}"
+rm -f "${APP_PID_FILE}" "${DOCREADER_PID_FILE}" "${LEGACY_APP_PID_FILE}"
 
 # 如果是本地模式的 Redis/PostgreSQL，也需要停止端口上的进程
 if [[ "${REDIS_MODE}" != "docker" ]]; then
@@ -635,19 +636,23 @@ log "Starting agentic_rag_app (port ${JAVA_PORT})"
   export MINIMAX_API_KEY="${MINIMAX_API_KEY:-}"
   export SILICONFLOW_API_KEY="${SILICONFLOW_API_KEY:-}"
 
-  # 先用当前 JAVA_HOME 做一次干净编译，避免 target/classes 中残留更高版本 JDK 编译产物
-  # 导致 spring-boot:run 在 Java 17 下报 UnsupportedClassVersionError（class file version 65.0）。
+  # 先用当前 JAVA_HOME 做一次干净打包，直接启动 fat jar。
+  # 这样可以避免后台挂 spring-boot:run 时 Maven 进程退出导致实际应用进程被带掉。
   log "Java runtime: $("${JAVA_HOME}/bin/java" -version 2>&1 | head -n 1)"
-  log "Compiling agentic_rag_app with JAVA_HOME=${JAVA_HOME} ..."
-  if ! ./mvnw -q -DskipTests clean compile > "${APP_BUILD_LOG_FILE}" 2>&1; then
+  log "Packaging agentic_rag_app with JAVA_HOME=${JAVA_HOME} ..."
+  if ! ./mvnw -q -DskipTests clean package > "${APP_BUILD_LOG_FILE}" 2>&1; then
     log "Build failed. See ${APP_BUILD_LOG_FILE}"
     exit 1
   fi
-  
-  # 使用 Maven Wrapper 启动 Spring Boot
-  # -q: 安静模式，减少输出
-  # spring-boot:run: Maven 插件目标，直接运行应用（不需要先打包）
-  nohup ./mvnw -q spring-boot:run > "${APP_LOG_FILE}" 2>&1 &
+
+  APP_JAR_FILE="$(find "${ROOT_DIR}/agentic_rag_app/target" -maxdepth 1 -type f -name '*.jar' ! -name 'original-*.jar' | sort | head -n 1)"
+  if [[ -z "${APP_JAR_FILE}" ]]; then
+    log "Packaged jar not found under ${ROOT_DIR}/agentic_rag_app/target"
+    exit 1
+  fi
+
+  log "Starting agentic_rag_app jar: ${APP_JAR_FILE}"
+  nohup "${JAVA_HOME}/bin/java" -jar "${APP_JAR_FILE}" > "${APP_LOG_FILE}" 2>&1 &
   echo $! > "${APP_PID_FILE}"
 )
 
@@ -655,7 +660,7 @@ if [[ -f "${DOCREADER_PID_FILE}" ]]; then
   log "docreader pid: $(cat "${DOCREADER_PID_FILE}")"
 fi
 if [[ -f "${APP_PID_FILE}" ]]; then
-  log "app(maven wrapper) pid: $(cat "${APP_PID_FILE}")"
+  log "app(java) pid: $(cat "${APP_PID_FILE}")"
 fi
 
 if ! wait_for_port "docreader_service" "${DOCREADER_PORT}" "${STARTUP_TIMEOUT_SEC}"; then
@@ -682,6 +687,15 @@ if ! wait_for_http_ok "agentic_rag_app" "http://127.0.0.1:${JAVA_PORT}/actuator/
   log "Warning: /actuator/health check failed, but port ${JAVA_PORT} is open."
   tail_log_file "${APP_LOG_FILE}" 80
   print_startup_diagnostics
+fi
+
+sleep 2
+if ! lsof -iTCP:"${JAVA_PORT}" -sTCP:LISTEN -n -P >/dev/null 2>&1; then
+  log "agentic_rag_app exited during post-start stabilization"
+  tail_log_file "${APP_BUILD_LOG_FILE}" 120
+  tail_log_file "${APP_LOG_FILE}" 120
+  print_startup_diagnostics
+  exit 1
 fi
 
 log "Done. Logs:"
