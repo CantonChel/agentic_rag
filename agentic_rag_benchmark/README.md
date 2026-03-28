@@ -2,30 +2,17 @@
 
 通用 Benchmark 自动化流水线包。
 
-这个包是新评测体系的顶层入口，目标是把以下能力逐步沉淀出来：
-
-- 离线标准化文档
-- 提取稳定 evidence units
-- 生成可迁移的 benchmark 数据包
-- 兼容导入历史题库
-- 对 package、schema 和历史数据做自动校验
-- 后续承接真实运行编排与评测报告输出
-
-当前第一阶段只提供：
-
-- 顶层目录骨架
-- 四个核心评测对象契约
-- portable package 规范
-- 历史题库兼容导入入口
-- 基础校验 CLI
-
-当前第二阶段新增：
+当前第六阶段完成后，这个包已经是仓库内唯一的长期 benchmark 入口，负责：
 
 - 复用 `docreader` 做文档标准化
-- 从规范文本提取 `EvidenceUnit`
-- 基于规则生成 `BenchmarkSample`
-- 导出标准 benchmark 数据包
-- 自动生成人工审阅版 `benchmark_suite.md`
+- 生成稳定 `EvidenceUnit`
+- 生成可迁移的标准 benchmark package
+- 兼容导入历史 JSONL 题库
+- 调真实 `agentic_rag_app` 单轮链路跑分
+- 读取 `turn summary + retrieval trace` 作为后端真源
+- 输出统一的 `json + md + RAGAS` 报告
+
+旧的 `agentic_rag_ragas` 已退场，不再作为默认入口。
 
 ## 目录结构
 
@@ -43,28 +30,26 @@ agentic_rag_benchmark/
 └── tests/
 ```
 
-目录职责如下：
-
 - `cli/`
-  命令行入口
+  benchmark 命令入口
 - `docs/`
-  契约与规范文档
+  契约与 package 规范文档
 - `fixtures/legacy/`
-  历史样本和导入验证数据
+  历史验证样本
 - `outputs/`
-  运行输出目录
+  runner 输出目录
 - `packages/`
-  标准 benchmark 数据包根目录
+  标准 benchmark package 根目录
 - `schemas/`
-  JSON Schema 定义
+  JSON Schema
 - `tests/`
-  单元测试
+  Python 单元测试
 
-## 四个核心对象
+## 核心对象
 
 ### EvidenceUnit
 
-稳定证据单元，不绑定具体 chunk。
+稳定证据单元。
 
 - `evidence_id`
 - `doc_path`
@@ -77,7 +62,7 @@ agentic_rag_benchmark/
 
 ### BenchmarkSample
 
-一条完整评测样本。
+一条可迁移评测样本。
 
 - `sample_id`
 - `question`
@@ -90,7 +75,7 @@ agentic_rag_benchmark/
 
 ### BuildDescriptor
 
-一版知识库构建的描述对象。
+一版可评测知识库构建的描述对象。
 
 - `build_id`
 - `source_snapshot_id`
@@ -117,9 +102,9 @@ agentic_rag_benchmark/
 - `thinking_profile`
 - `memory_enabled`
 
-更详细说明见 [core_object_contracts.md](/Users/luolinhao/Documents/trae_projects/agentic_rag/agentic_rag_benchmark/docs/core_object_contracts.md)。
+详细字段说明见 [core_object_contracts.md](/Users/luolinhao/Documents/trae_projects/agentic_rag/agentic_rag_benchmark/docs/core_object_contracts.md)。
 
-## 标准数据包目录
+## 标准 Package
 
 标准 package 目录规则：
 
@@ -127,7 +112,7 @@ agentic_rag_benchmark/
 packages/<project_key>/<suite_version>/
 ```
 
-每个 package 固定包含四个文件：
+每个 package 固定包含：
 
 - `evidence_units.jsonl`
 - `benchmark_suite.jsonl`
@@ -139,23 +124,7 @@ packages/<project_key>/<suite_version>/
 - `jsonl` 是机器真源
 - `md` 是人工审阅导出
 
-更详细说明见 [portable_package_spec.md](/Users/luolinhao/Documents/trae_projects/agentic_rag/agentic_rag_benchmark/docs/portable_package_spec.md)。
-
-## 历史数据如何导入
-
-第一阶段提供的是“历史题库兼容导入”，不是旧脚本兼容。
-
-当前支持：
-
-- 读取旧 JSONL 题库
-- 识别 `question`
-- 识别 `ground_truth` / `reference` / `answer`
-- 识别 `ground_truth_contexts`
-- 从旧 `meta.sources` 推导新的 `gold_evidence_refs`
-
-仓库里附带了一份最小 legacy 样本：
-
-[legacy_question_bank_sample.jsonl](/Users/luolinhao/Documents/trae_projects/agentic_rag/agentic_rag_benchmark/fixtures/legacy/legacy_question_bank_sample.jsonl)
+详细规范见 [portable_package_spec.md](/Users/luolinhao/Documents/trae_projects/agentic_rag/agentic_rag_benchmark/docs/portable_package_spec.md)。
 
 ## CLI 用法
 
@@ -168,14 +137,7 @@ PYTHONPATH=/Users/luolinhao/Documents/trae_projects/agentic_rag \
 python3 -m agentic_rag_benchmark.cli describe-schema
 ```
 
-查看单个 schema：
-
-```bash
-PYTHONPATH=/Users/luolinhao/Documents/trae_projects/agentic_rag \
-python3 -m agentic_rag_benchmark.cli describe-schema --schema benchmark_sample
-```
-
-### 2. 校验历史数据
+### 2. 校验历史题库
 
 ```bash
 PYTHONPATH=/Users/luolinhao/Documents/trae_projects/agentic_rag \
@@ -191,15 +153,9 @@ python3 -m agentic_rag_benchmark.cli validate-package \
   /absolute/path/to/packages/<project_key>/<suite_version>
 ```
 
-说明：
-
-- 目录缺少固定文件会直接报错
-- 空 JSON / JSONL 文件会跳过内容校验，但结构会判定为有效
-- 非空文件会按 schema 做内容校验
-
 ### 4. 从文档构建标准 package
 
-确保 `docreader_service` 已启动后，可以直接从单文件或目录生成 package：
+确保 `docreader_service` 可用后：
 
 ```bash
 PYTHONPATH=/Users/luolinhao/Documents/trae_projects/agentic_rag \
@@ -210,32 +166,83 @@ python3 -m agentic_rag_benchmark.cli build-package \
   --docreader-base-url http://127.0.0.1:8090
 ```
 
-可选参数：
+### 5. 跑真实 benchmark
 
-- `--source-root`
-  控制导出到 `doc_path` 的相对根目录
-- `--package-root`
-  控制 `packages/` 根目录，默认是当前 `agentic_rag_benchmark/`
+标准 package 模式：
 
-生成完成后会在：
+```bash
+PYTHONPATH=/Users/luolinhao/Documents/trae_projects/agentic_rag \
+python3 -m agentic_rag_benchmark.cli run-benchmark \
+  --package-dir /absolute/path/to/packages/<project_key>/<suite_version> \
+  --base-url http://127.0.0.1:8081 \
+  --provider minimax \
+  --build-id <build_id> \
+  --user-id benchmark-runner
+```
 
-`packages/<project_key>/<suite_version>/`
+legacy 兼容模式：
 
-下得到：
+```bash
+PYTHONPATH=/Users/luolinhao/Documents/trae_projects/agentic_rag \
+python3 -m agentic_rag_benchmark.cli run-benchmark \
+  --legacy-dataset /absolute/path/to/legacy.jsonl \
+  --base-url http://127.0.0.1:8081 \
+  --provider minimax \
+  --build-id <build_id> \
+  --user-id benchmark-runner
+```
 
-- `evidence_units.jsonl`
-- `benchmark_suite.jsonl`
-- `suite_manifest.json`
-- `benchmark_suite.md`
+runner 固定使用：
 
-## 第一阶段范围边界
+- `evalMode=SINGLE_TURN`
+- `kbScope=BENCHMARK_BUILD`
+- `memoryEnabled=false`
+- `thinkingProfile=HIDE`
 
-第一阶段不会做这些事：
+## 真实闭环真源
 
-- 不接入 docreader
-- 不生成 evidence units
-- 不新增后端 API
-- 不修改在线问答链路
-- 不删除旧评测目录
+新 runner 不再依赖：
 
-这些内容会留在后续阶段继续补齐。
+- session messages
+- replay
+- `<context>` 正则解析
+
+统一改为读取：
+
+- `turn summary`
+- `retrieval trace`
+
+也就是说：
+
+- 最终答案只认 `turn summary.finalAnswer`
+- 完成状态只认 `turn summary.finishReason`
+- 检索上下文只认 `retrieval trace` 中 `stage=context_output`
+
+## 输出文件
+
+每次运行会在 `outputs/run_<timestamp>/` 下生成：
+
+- `run_meta.json`
+- `samples_collected.jsonl`
+- `benchmark_report.json`
+- `benchmark_report.md`
+
+RAGAS 成功时还会生成：
+
+- `ragas_summary.json`
+- `ragas_scores_per_sample.csv`
+
+RAGAS 执行失败时会额外生成：
+
+- `ragas_error.json`
+
+## 历史题库
+
+保留在新包内的历史验证样本位于：
+
+- [legacy_question_bank_sample.jsonl](/Users/luolinhao/Documents/trae_projects/agentic_rag/agentic_rag_benchmark/fixtures/legacy/legacy_question_bank_sample.jsonl)
+- [weknora_question_bank_single.jsonl](/Users/luolinhao/Documents/trae_projects/agentic_rag/agentic_rag_benchmark/fixtures/legacy/weknora_question_bank_single.jsonl)
+- [weknora_question_bank_multi.jsonl](/Users/luolinhao/Documents/trae_projects/agentic_rag/agentic_rag_benchmark/fixtures/legacy/weknora_question_bank_multi.jsonl)
+- [sample_eval_qa.jsonl](/Users/luolinhao/Documents/trae_projects/agentic_rag/agentic_rag_benchmark/fixtures/legacy/sample_eval_qa.jsonl)
+
+这些文件仅作为兼容验证输入，不进入 feature 默认命名。
