@@ -10,7 +10,11 @@ public interface ContextManager {
 
 	void ensureSystemPrompt(String sessionId, String systemPrompt);
 
-	void addMessage(String sessionId, ChatMessage message);
+	default void addMessage(String sessionId, ChatMessage message) {
+		addMessage(sessionId, message, SessionContextAppendOptions.defaults());
+	}
+
+	void addMessage(String sessionId, ChatMessage message, SessionContextAppendOptions options);
 
 	void clear(String sessionId);
 }

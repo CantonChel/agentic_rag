@@ -81,6 +81,11 @@ public class InMemorySessionContextManager implements ContextManager {
 
 	@Override
 	public void addMessage(String sessionId, ChatMessage message) {
+		addMessage(sessionId, message, SessionContextAppendOptions.defaults());
+	}
+
+	@Override
+	public void addMessage(String sessionId, ChatMessage message, SessionContextAppendOptions options) {
 		if (message == null) {
 			return;
 		}
@@ -94,6 +99,9 @@ public class InMemorySessionContextManager implements ContextManager {
 		List<ChatMessage> list = contextsBySessionId.computeIfAbsent(sid, k -> Collections.synchronizedList(new ArrayList<>()));
 		list.add(message);
 
+		SessionContextAppendOptions effectiveOptions = options != null
+			? options
+			: SessionContextAppendOptions.defaults();
 		int maxTokens = props != null && props.getMaxTokens() > 0 ? props.getMaxTokens() : 20000;
 		int tokens = countTokens(list);
 		int maxBytes = props != null ? props.getMaxBytes() : 0;
@@ -103,10 +111,12 @@ public class InMemorySessionContextManager implements ContextManager {
 		if (!tokenOverflow && !bytesOverflow) {
 			return;
 		}
-		if (memoryFlushService != null) {
+		if (memoryFlushService != null && effectiveOptions.isAllowPreCompactionFlush()) {
 			memoryFlushService.flushPreCompaction(sid, list);
 		}
 
+		// Stage 1 keeps overflow trimming as a transitional session-context capacity guard.
+		// Formal preflight compaction will be introduced separately in a later stage.
 		List<ChatMessage> compressed = compressionStrategy.compress(list, props != null ? props.getKeepLastMessages() : 20);
 		contextsBySessionId.put(sid, Collections.synchronizedList(compressed));
 	}

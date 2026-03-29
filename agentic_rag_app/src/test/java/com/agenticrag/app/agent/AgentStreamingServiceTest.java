@@ -24,6 +24,7 @@ import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
 import com.agenticrag.app.prompt.SystemPromptMode;
 import com.agenticrag.app.rag.splitter.TokenCounter;
+import com.agenticrag.app.memory.MemoryFlushService;
 import com.agenticrag.app.tool.Tool;
 import com.agenticrag.app.tool.ToolArgumentValidator;
 import com.agenticrag.app.tool.ToolExecutionContext;
@@ -944,6 +945,79 @@ class AgentStreamingServiceTest {
 	}
 
 	@Test
+	void memoryDisabledSkipsPreCompactionFlushButKeepsSessionContextTrajectory() {
+		ObjectMapper objectMapper = new ObjectMapper();
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		StreamResponse<ChatCompletionChunk> r1 = new FakeStreamResponse(Stream.of(toolCallsChunk()));
+		StreamResponse<ChatCompletionChunk> r2 = new FakeStreamResponse(Stream.of(textChunk(repeat("答", 24))));
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(r1, r2);
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		ToolRouter toolRouter = new ToolRouter();
+		toolRouter.register(new CalculatorTool(objectMapper));
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(20);
+		ctxProps.setKeepLastMessages(10);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter, memoryFlushService);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(4);
+		agentProps.setToolTimeoutSeconds(5);
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			new ToolArgumentValidator()
+		);
+
+		List<LlmStreamEvent> events = service.stream(
+			LlmProvider.OPENAI,
+			"anonymous",
+			"s1",
+			repeat("问", 24),
+			true,
+			LlmToolChoiceMode.AUTO,
+			null,
+			new AgentExecutionControl(null, null, AgentKbScope.AUTO, AgentEvalMode.DEFAULT, AgentThinkingProfile.DEFAULT, false)
+		).collectList().block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		Mockito.verify(memoryFlushService, Mockito.never())
+			.flushPreCompaction(Mockito.anyString(), Mockito.anyList());
+
+		List<ChatMessage> sessionContext = contextManager.getContext("anonymous::s1");
+		Assertions.assertEquals(ChatMessageType.SYSTEM, sessionContext.get(0).getType());
+		Assertions.assertTrue(sessionContext.stream().anyMatch(msg -> msg.getType() == ChatMessageType.USER));
+		Assertions.assertTrue(sessionContext.stream().anyMatch(msg -> msg.getType() == ChatMessageType.TOOL_CALL));
+		Assertions.assertTrue(sessionContext.stream().anyMatch(msg -> msg.getType() == ChatMessageType.TOOL_RESULT));
+		Assertions.assertTrue(sessionContext.stream().anyMatch(msg -> msg.getType() == ChatMessageType.ASSISTANT));
+	}
+
+	@Test
 	void thinkingProfileHideSuppressesThinkingEventsAndMessages() {
 		ObjectMapper objectMapper = new ObjectMapper();
 
@@ -1343,6 +1417,14 @@ class AgentStreamingServiceTest {
 			.object_(JsonValue.from("chat.completion.chunk"))
 			.addChoice(choice)
 			.build();
+	}
+
+	private static String repeat(String value, int times) {
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < times; i++) {
+			sb.append(value);
+		}
+		return sb.toString();
 	}
 
 	private static ChatCompletionChunk reasoningChunk(String reasoning) {

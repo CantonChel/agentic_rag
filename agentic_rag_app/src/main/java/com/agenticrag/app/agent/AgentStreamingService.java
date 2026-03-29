@@ -6,6 +6,7 @@ import com.agenticrag.app.agent.execution.AgentThinkingProfile;
 import com.agenticrag.app.agent.execution.AgentTurnExecutionAccumulator;
 import com.agenticrag.app.benchmark.execution.BenchmarkTurnExecutionSummaryService;
 import com.agenticrag.app.chat.context.ContextManager;
+import com.agenticrag.app.chat.context.SessionContextAppendOptions;
 import com.agenticrag.app.chat.message.AssistantMessage;
 import com.agenticrag.app.chat.message.ChatMessage;
 import com.agenticrag.app.chat.message.SystemMessage;
@@ -431,9 +432,7 @@ public class AgentStreamingService {
 					ChatMessage userMsg = new UserMessage(prompt);
 					localContext.add(userMsg);
 					persistentMessageStore.append(scopedSid, userMsg);
-					if (!singleTurn) {
-						contextManager.addMessage(scopedSid, userMsg);
-					}
+					appendSessionContextMessage(scopedSid, userMsg, singleTurn, control);
 
 					boolean finished = false;
 					int iteration = 0;
@@ -588,9 +587,7 @@ public class AgentStreamingService {
 							AssistantMessage am = new AssistantMessage(assistantFinal);
 							localContext.add(am);
 							persistentMessageStore.append(scopedSid, am);
-							if (!singleTurn) {
-								contextManager.addMessage(scopedSid, am);
-							}
+							appendSessionContextMessage(scopedSid, am, singleTurn, control);
 						}
 
 						if (isFinalIteration) {
@@ -643,9 +640,7 @@ public class AgentStreamingService {
 						ToolCallMessage tcm = new ToolCallMessage(toolCalls);
 						localContext.add(tcm);
 						persistentMessageStore.append(scopedSid, tcm);
-						if (!singleTurn) {
-							contextManager.addMessage(scopedSid, tcm);
-						}
+						appendSessionContextMessage(scopedSid, tcm, singleTurn, control);
 
 						for (LlmToolCall call : toolCalls) {
 							throwIfCancelled(sink, cancelled);
@@ -779,9 +774,7 @@ public class AgentStreamingService {
 							);
 							localContext.add(trm);
 							persistentMessageStore.append(scopedSid, trm);
-							if (!singleTurn) {
-								contextManager.addMessage(scopedSid, trm);
-							}
+							appendSessionContextMessage(scopedSid, trm, singleTurn, control);
 						}
 
 						if (!hasToolThinking) {
@@ -1359,6 +1352,25 @@ public class AgentStreamingService {
 			return;
 		}
 		persistentMessageStore.append(sessionId, new ThinkingMessage(content));
+	}
+
+	private void appendSessionContextMessage(
+		String scopedSessionId,
+		ChatMessage message,
+		boolean singleTurn,
+		AgentExecutionControl control
+	) {
+		if (singleTurn || message == null) {
+			return;
+		}
+		contextManager.addMessage(scopedSessionId, message, resolveSessionContextAppendOptions(control));
+	}
+
+	private SessionContextAppendOptions resolveSessionContextAppendOptions(AgentExecutionControl control) {
+		if (control != null && !control.isMemoryEnabled()) {
+			return SessionContextAppendOptions.withoutPreCompactionFlush();
+		}
+		return SessionContextAppendOptions.defaults();
 	}
 
 	private Set<String> resolveAllowedToolNames(boolean includeTools, boolean memoryEnabled) {

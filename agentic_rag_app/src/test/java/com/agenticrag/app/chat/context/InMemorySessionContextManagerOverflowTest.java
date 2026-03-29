@@ -78,4 +78,31 @@ class InMemorySessionContextManagerOverflowTest {
 		Mockito.verify(memoryFlushService, Mockito.atLeastOnce())
 			.flushPreCompaction(Mockito.eq(sid), Mockito.anyList());
 	}
+
+	@Test
+	void skipsPreCompactionFlushWhenAppendOptionsDisableIt() {
+		SessionContextProperties props = new SessionContextProperties();
+		props.setMaxTokens(120);
+		props.setKeepLastMessages(3);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
+		InMemorySessionContextManager mgr = new InMemorySessionContextManager(props, tokenCounter, memoryFlushService);
+
+		String sid = "u1::no-flush";
+		mgr.ensureSystemPrompt(sid, "SYSTEM_PROMPT");
+		for (int i = 0; i < 20; i++) {
+			mgr.addMessage(
+				sid,
+				new UserMessage("m" + i + ":" + repeat("x", 30)),
+				SessionContextAppendOptions.withoutPreCompactionFlush()
+			);
+		}
+
+		List<ChatMessage> ctx = mgr.getContext(sid);
+		Assertions.assertFalse(ctx.isEmpty());
+		Assertions.assertEquals("SYSTEM", ctx.get(0).getType().name());
+		Assertions.assertTrue(ctx.size() <= 1 + props.getKeepLastMessages());
+		Mockito.verify(memoryFlushService, Mockito.never())
+			.flushPreCompaction(Mockito.anyString(), Mockito.anyList());
+	}
 }

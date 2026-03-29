@@ -97,7 +97,8 @@ class AgentFaultInjectionIntegrationTest {
 
 		// 只要流能走到 done，就说明“没有崩溃/没有中断”
 		Assertions.assertNotNull(events);
-		Assertions.assertEquals("done", events.get(events.size() - 1).getType());
+		Assertions.assertTrue(events.stream().anyMatch(event -> "done".equals(event.getType())));
+		Assertions.assertEquals("turn_end", events.get(events.size() - 1).getType());
 
 		// 关键断言：第二轮请求的 messages 里应该带有“参数解析失败”的 tool 错误提示
 		//          证明第一轮错误没有抛异常终止，而是被包装成 tool message 反馈给模型
@@ -139,8 +140,13 @@ class AgentFaultInjectionIntegrationTest {
 			.block(Duration.ofSeconds(5));
 
 		Assertions.assertNotNull(events);
-		Assertions.assertEquals("done", events.get(events.size() - 1).getType());
-		Assertions.assertEquals("max_iterations_fallback", events.get(events.size() - 1).getFinishReason());
+		LlmStreamEvent doneEvent = events.stream()
+			.filter(event -> "done".equals(event.getType()))
+			.findFirst()
+			.orElse(null);
+		Assertions.assertNotNull(doneEvent);
+		Assertions.assertEquals("max_iterations_fallback", doneEvent.getFinishReason());
+		Assertions.assertEquals("turn_end", events.get(events.size() - 1).getType());
 	}
 
 	@Test
