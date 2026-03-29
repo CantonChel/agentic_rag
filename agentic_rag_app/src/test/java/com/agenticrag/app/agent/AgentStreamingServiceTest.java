@@ -8,12 +8,15 @@ import com.agenticrag.app.benchmark.execution.BenchmarkTurnExecutionSummaryServi
 import com.agenticrag.app.benchmark.execution.BenchmarkTurnExecutionSummaryWriteModel;
 import com.agenticrag.app.chat.context.InMemorySessionContextManager;
 import com.agenticrag.app.chat.context.LocalExecutionContextRecorder;
+import com.agenticrag.app.chat.context.SessionContextBudgetEvaluator;
+import com.agenticrag.app.chat.context.SessionContextPreflightCompactor;
 import com.agenticrag.app.chat.context.SessionContextProperties;
+import com.agenticrag.app.chat.context.SessionContextProjector;
 import com.agenticrag.app.chat.message.ChatMessage;
 import com.agenticrag.app.chat.message.ChatMessageType;
-import com.agenticrag.app.chat.message.UserMessage;
 import com.agenticrag.app.chat.message.AssistantMessage;
 import com.agenticrag.app.chat.message.ThinkingMessage;
+import com.agenticrag.app.chat.message.UserMessage;
 import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.config.MinimaxClientProperties;
 import com.agenticrag.app.config.OpenAiClientProperties;
@@ -1113,6 +1116,214 @@ class AgentStreamingServiceTest {
 	}
 
 	@Test
+	void preflightCompactsSessionHistoryBeforeTurnInitialization() {
+		ObjectMapper objectMapper = new ObjectMapper();
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(new FakeStreamResponse(Stream.of(textChunk("fresh answer"))));
+
+		ToolRouter toolRouter = new ToolRouter();
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(600);
+		ctxProps.setPreflightReserveTokens(180);
+		ctxProps.setKeepLastMessages(20);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter, memoryFlushService);
+		contextManager.ensureSystemPrompt("anonymous::s1", "system");
+		contextManager.addMessage("anonymous::s1", new UserMessage("old-1-user-" + repeat("a", 100)));
+		contextManager.addMessage("anonymous::s1", new AssistantMessage("old-1-assistant-" + repeat("a", 100)));
+		contextManager.addMessage("anonymous::s1", new UserMessage("keep-user-" + repeat("b", 100)));
+		contextManager.addMessage("anonymous::s1", new AssistantMessage("keep-assistant-" + repeat("b", 100)));
+
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(2);
+		agentProps.setToolTimeoutSeconds(5);
+
+		AgentStreamingService service = newServiceWithPreflight(
+			openAiClient,
+			minimaxClient,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			new ToolArgumentValidator(),
+			ctxProps,
+			tokenCounter,
+			memoryFlushService
+		);
+
+		List<LlmStreamEvent> events = service.stream(
+			LlmProvider.OPENAI,
+			"anonymous",
+			"s1",
+			"current question",
+			false,
+			LlmToolChoiceMode.NONE,
+			null,
+			new AgentExecutionControl(null, null, AgentKbScope.AUTO, AgentEvalMode.DEFAULT, AgentThinkingProfile.DEFAULT, true)
+		).collectList().block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		LocalExecutionContextRecorder.LocalExecutionContextSnapshot snapshot = recorder.getLatest("anonymous::s1");
+		Assertions.assertNotNull(snapshot);
+		Assertions.assertEquals(ChatMessageType.SYSTEM, snapshot.getMessages().get(0).getType());
+		Assertions.assertTrue(snapshot.getMessages().stream().anyMatch(msg -> messageContent(msg).startsWith("keep-user-")));
+		Assertions.assertTrue(snapshot.getMessages().stream().anyMatch(msg -> messageContent(msg).startsWith("keep-assistant-")));
+		Assertions.assertTrue(snapshot.getMessages().stream().noneMatch(msg -> messageContent(msg).startsWith("old-1-user-")));
+		Assertions.assertTrue(snapshot.getMessages().stream().noneMatch(msg -> messageContent(msg).startsWith("old-1-assistant-")));
+		Assertions.assertTrue(snapshot.getMessages().stream().anyMatch(msg -> "current question".equals(messageContent(msg))));
+		Mockito.verify(memoryFlushService, Mockito.times(1))
+			.flushPreCompaction(Mockito.eq("anonymous::s1"), Mockito.anyList());
+	}
+
+	@Test
+	void memoryDisabledPreflightCompactsWithoutFlushBeforeTurnStarts() {
+		ObjectMapper objectMapper = new ObjectMapper();
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(new FakeStreamResponse(Stream.of(textChunk("fresh answer"))));
+
+		ToolRouter toolRouter = new ToolRouter();
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(600);
+		ctxProps.setPreflightReserveTokens(180);
+		ctxProps.setKeepLastMessages(20);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter, memoryFlushService);
+		contextManager.ensureSystemPrompt("anonymous::s1", "system");
+		contextManager.addMessage("anonymous::s1", new UserMessage("old-1-user-" + repeat("a", 100)));
+		contextManager.addMessage("anonymous::s1", new AssistantMessage("old-1-assistant-" + repeat("a", 100)));
+		contextManager.addMessage("anonymous::s1", new UserMessage("keep-user-" + repeat("b", 100)));
+		contextManager.addMessage("anonymous::s1", new AssistantMessage("keep-assistant-" + repeat("b", 100)));
+
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(2);
+		agentProps.setToolTimeoutSeconds(5);
+
+		AgentStreamingService service = newServiceWithPreflight(
+			openAiClient,
+			minimaxClient,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			new ToolArgumentValidator(),
+			ctxProps,
+			tokenCounter,
+			memoryFlushService
+		);
+
+		List<LlmStreamEvent> events = service.stream(
+			LlmProvider.OPENAI,
+			"anonymous",
+			"s1",
+			"memory off question",
+			false,
+			LlmToolChoiceMode.NONE,
+			null,
+			new AgentExecutionControl(null, null, AgentKbScope.AUTO, AgentEvalMode.DEFAULT, AgentThinkingProfile.DEFAULT, false)
+		).collectList().block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		LocalExecutionContextRecorder.LocalExecutionContextSnapshot snapshot = recorder.getLatest("anonymous::s1");
+		Assertions.assertNotNull(snapshot);
+		Assertions.assertTrue(snapshot.getMessages().stream().anyMatch(msg -> messageContent(msg).startsWith("keep-user-")));
+		Assertions.assertTrue(snapshot.getMessages().stream().noneMatch(msg -> messageContent(msg).startsWith("old-1-user-")));
+		Mockito.verify(memoryFlushService, Mockito.never())
+			.flushPreCompaction(Mockito.anyString(), Mockito.anyList());
+	}
+
+	@Test
+	void singleTurnSkipsPreflightCompactionAndIgnoresSessionHistory() {
+		ObjectMapper objectMapper = new ObjectMapper();
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(new FakeStreamResponse(Stream.of(textChunk("fresh answer"))));
+
+		ToolRouter toolRouter = new ToolRouter();
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(600);
+		ctxProps.setPreflightReserveTokens(180);
+		ctxProps.setKeepLastMessages(20);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter, memoryFlushService);
+		contextManager.ensureSystemPrompt("anonymous::s1", "system");
+		contextManager.addMessage("anonymous::s1", new UserMessage("old-1-user-" + repeat("a", 100)));
+		contextManager.addMessage("anonymous::s1", new AssistantMessage("old-1-assistant-" + repeat("a", 100)));
+		contextManager.addMessage("anonymous::s1", new UserMessage("keep-user-" + repeat("b", 100)));
+		contextManager.addMessage("anonymous::s1", new AssistantMessage("keep-assistant-" + repeat("b", 100)));
+
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(2);
+		agentProps.setToolTimeoutSeconds(5);
+
+		AgentStreamingService service = newServiceWithPreflight(
+			openAiClient,
+			minimaxClient,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			new ToolArgumentValidator(),
+			ctxProps,
+			tokenCounter,
+			memoryFlushService
+		);
+
+		List<LlmStreamEvent> events = service.stream(
+			LlmProvider.OPENAI,
+			"anonymous",
+			"s1",
+			"single turn question",
+			false,
+			LlmToolChoiceMode.NONE,
+			null,
+			new AgentExecutionControl(null, null, AgentKbScope.AUTO, AgentEvalMode.SINGLE_TURN, AgentThinkingProfile.DEFAULT, true)
+		).collectList().block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		LocalExecutionContextRecorder.LocalExecutionContextSnapshot snapshot = recorder.getLatest("anonymous::s1");
+		Assertions.assertNotNull(snapshot);
+		long userCount = snapshot.getMessages().stream().filter(msg -> msg.getType() == ChatMessageType.USER).count();
+		long assistantCount = snapshot.getMessages().stream().filter(msg -> msg.getType() == ChatMessageType.ASSISTANT).count();
+		Assertions.assertEquals(1, userCount);
+		Assertions.assertEquals(0, assistantCount);
+		Assertions.assertTrue(snapshot.getMessages().stream().noneMatch(msg -> messageContent(msg).startsWith("keep-user-")));
+		Mockito.verify(memoryFlushService, Mockito.never())
+			.flushPreCompaction(Mockito.anyString(), Mockito.anyList());
+	}
+
+	@Test
 	void thinkingProfileHideSuppressesThinkingEventsAndMessages() {
 		ObjectMapper objectMapper = new ObjectMapper();
 
@@ -1512,6 +1723,55 @@ class AgentStreamingServiceTest {
 			.object_(JsonValue.from("chat.completion.chunk"))
 			.addChoice(choice)
 			.build();
+	}
+
+	private AgentStreamingService newServiceWithPreflight(
+		OpenAIClient openAiClient,
+		OpenAIClient minimaxClient,
+		ToolRouter toolRouter,
+		ObjectMapper objectMapper,
+		SystemPromptManager systemPromptManager,
+		InMemorySessionContextManager contextManager,
+		PersistentMessageStore persistentMessageStore,
+		LocalExecutionContextRecorder recorder,
+		AgentProperties agentProperties,
+		ToolArgumentValidator validator,
+		SessionContextProperties ctxProps,
+		TokenCounter tokenCounter,
+		MemoryFlushService memoryFlushService
+	) {
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+		return new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistentMessageStore,
+			null,
+			recorder,
+			agentProperties,
+			validator,
+			null,
+			memoryFlushService,
+			null,
+			new SessionContextProjector(),
+			new SessionContextPreflightCompactor(
+				contextManager,
+				new SessionContextBudgetEvaluator(ctxProps, tokenCounter),
+				memoryFlushService
+			)
+		);
+	}
+
+	private static String messageContent(ChatMessage message) {
+		return message != null && message.getContent() != null ? message.getContent() : "";
 	}
 
 	private static String repeat(String value, int times) {

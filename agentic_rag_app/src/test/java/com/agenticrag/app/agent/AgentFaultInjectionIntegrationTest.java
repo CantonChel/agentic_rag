@@ -2,7 +2,10 @@ package com.agenticrag.app.agent;
 
 import com.agenticrag.app.chat.context.InMemorySessionContextManager;
 import com.agenticrag.app.chat.context.LocalExecutionContextRecorder;
+import com.agenticrag.app.chat.context.SessionContextBudgetEvaluator;
+import com.agenticrag.app.chat.context.SessionContextPreflightCompactor;
 import com.agenticrag.app.chat.context.SessionContextProperties;
+import com.agenticrag.app.chat.context.SessionContextProjector;
 import com.agenticrag.app.chat.message.ChatMessage;
 import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.config.MinimaxClientProperties;
@@ -10,6 +13,7 @@ import com.agenticrag.app.config.OpenAiClientProperties;
 import com.agenticrag.app.llm.LlmProvider;
 import com.agenticrag.app.llm.LlmStreamEvent;
 import com.agenticrag.app.llm.LlmToolChoiceMode;
+import com.agenticrag.app.memory.MemoryFlushService;
 import com.agenticrag.app.prompt.SystemPromptManager;
 import com.agenticrag.app.rag.splitter.TokenCounter;
 import com.agenticrag.app.tool.Tool;
@@ -234,6 +238,105 @@ class AgentFaultInjectionIntegrationTest {
 		Assertions.assertTrue(msgs.stream().noneMatch(m -> m != null && "TOOL_RESULT".equals(m.getType().name())));
 	}
 
+	@Test
+	void preflightCompactsProjectedSessionHistoryBeforeThirdTurn() {
+		ObjectMapper om = new ObjectMapper();
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+
+		StreamResponse<ChatCompletionChunk> r1 = new FakeStreamResponse(Stream.of(textChunk("answer-1-" + repeat("甲", 100))));
+		StreamResponse<ChatCompletionChunk> r2 = new FakeStreamResponse(Stream.of(textChunk("answer-2-" + repeat("乙", 100))));
+		StreamResponse<ChatCompletionChunk> r3 = new FakeStreamResponse(Stream.of(textChunk("answer-3")));
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(r1, r2, r3);
+
+		ToolRouter toolRouter = new ToolRouter();
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(600);
+		ctxProps.setPreflightReserveTokens(180);
+		ctxProps.setKeepLastMessages(20);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter, memoryFlushService);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(2);
+		agentProps.setToolTimeoutSeconds(5);
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		ToolArgumentValidator validator = new ToolArgumentValidator();
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			toolRouter,
+			om,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			null,
+			recorder,
+			agentProps,
+			validator,
+			null,
+			memoryFlushService,
+			null,
+			new SessionContextProjector(),
+			new SessionContextPreflightCompactor(
+				contextManager,
+				new SessionContextBudgetEvaluator(ctxProps, tokenCounter),
+				memoryFlushService
+			)
+		);
+
+		List<LlmStreamEvent> turn1 = service.stream(
+			LlmProvider.OPENAI,
+			"s1",
+			"question-1-" + repeat("甲", 100),
+			false,
+			LlmToolChoiceMode.NONE
+		).collectList().block(Duration.ofSeconds(5));
+		List<LlmStreamEvent> turn2 = service.stream(
+			LlmProvider.OPENAI,
+			"s1",
+			"question-2-" + repeat("乙", 100),
+			false,
+			LlmToolChoiceMode.NONE
+		).collectList().block(Duration.ofSeconds(5));
+		List<LlmStreamEvent> turn3 = service.stream(
+			LlmProvider.OPENAI,
+			"s1",
+			"question-3",
+			false,
+			LlmToolChoiceMode.NONE
+		).collectList().block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(turn1);
+		Assertions.assertNotNull(turn2);
+		Assertions.assertNotNull(turn3);
+
+		LocalExecutionContextRecorder.LocalExecutionContextSnapshot snapshot = recorder.getLatest("anonymous::s1");
+		Assertions.assertNotNull(snapshot);
+		Assertions.assertTrue(snapshot.getMessages().stream().anyMatch(msg -> messageContent(msg).startsWith("question-2-")));
+		Assertions.assertTrue(snapshot.getMessages().stream().anyMatch(msg -> messageContent(msg).startsWith("answer-2-")));
+		Assertions.assertTrue(snapshot.getMessages().stream().noneMatch(msg -> messageContent(msg).startsWith("question-1-")));
+		Assertions.assertTrue(snapshot.getMessages().stream().noneMatch(msg -> messageContent(msg).startsWith("answer-1-")));
+		Mockito.verify(memoryFlushService, Mockito.times(1))
+			.flushPreCompaction(Mockito.eq("anonymous::s1"), Mockito.anyList());
+	}
+
 	private AgentStreamingService newService(
 		OpenAIClient openAiClient,
 		OpenAIClient minimaxClient,
@@ -325,6 +428,18 @@ class AgentFaultInjectionIntegrationTest {
 			.object_(JsonValue.from("chat.completion.chunk"))
 			.addChoice(choice)
 			.build();
+	}
+
+	private static String messageContent(ChatMessage message) {
+		return message != null && message.getContent() != null ? message.getContent() : "";
+	}
+
+	private static String repeat(String value, int times) {
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < times; i++) {
+			sb.append(value);
+		}
+		return sb.toString();
 	}
 
 	private static final class FakeStreamResponse implements StreamResponse<ChatCompletionChunk> {

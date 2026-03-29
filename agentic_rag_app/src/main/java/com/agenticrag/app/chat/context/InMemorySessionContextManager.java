@@ -5,7 +5,6 @@ import com.agenticrag.app.chat.message.ChatMessageType;
 import com.agenticrag.app.chat.message.SystemMessage;
 import com.agenticrag.app.memory.MemoryFlushService;
 import com.agenticrag.app.rag.splitter.TokenCounter;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -17,8 +16,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class InMemorySessionContextManager implements ContextManager {
 	private final SessionContextProperties props;
-	private final TokenCounter tokenCounter;
-	private final MemoryFlushService memoryFlushService;
+	private final SessionContextBudgetEvaluator budgetEvaluator;
 	private final SlidingWindowCompressionStrategy compressionStrategy = new SlidingWindowCompressionStrategy();
 	private final Map<String, List<ChatMessage>> contextsBySessionId = new ConcurrentHashMap<>();
 
@@ -30,11 +28,10 @@ public class InMemorySessionContextManager implements ContextManager {
 	public InMemorySessionContextManager(
 		SessionContextProperties props,
 		TokenCounter tokenCounter,
-		MemoryFlushService memoryFlushService
+		MemoryFlushService ignoredMemoryFlushService
 	) {
 		this.props = props;
-		this.tokenCounter = tokenCounter;
-		this.memoryFlushService = memoryFlushService;
+		this.budgetEvaluator = new SessionContextBudgetEvaluator(props, tokenCounter);
 	}
 
 	@Override
@@ -99,24 +96,11 @@ public class InMemorySessionContextManager implements ContextManager {
 		List<ChatMessage> list = contextsBySessionId.computeIfAbsent(sid, k -> Collections.synchronizedList(new ArrayList<>()));
 		list.add(message);
 
-		SessionContextAppendOptions effectiveOptions = options != null
-			? options
-			: SessionContextAppendOptions.defaults();
-		int maxTokens = props != null && props.getMaxTokens() > 0 ? props.getMaxTokens() : 20000;
-		int tokens = countTokens(list);
-		int maxBytes = props != null ? props.getMaxBytes() : 0;
-		int bytes = countBytes(list);
-		boolean tokenOverflow = tokens > maxTokens;
-		boolean bytesOverflow = maxBytes > 0 && bytes > maxBytes;
-		if (!tokenOverflow && !bytesOverflow) {
+		if (!budgetEvaluator.exceedsStorageBudget(list)) {
 			return;
 		}
-		if (memoryFlushService != null && effectiveOptions.isAllowPreCompactionFlush()) {
-			memoryFlushService.flushPreCompaction(sid, list);
-		}
 
-		// Stage 1 keeps overflow trimming as a transitional session-context capacity guard.
-		// Formal preflight compaction will be introduced separately in a later stage.
+		// Stage 3 keeps overflow trimming only as a final session-store capacity guard.
 		List<ChatMessage> compressed = compressionStrategy.compress(list, props != null ? props.getKeepLastMessages() : 20);
 		contextsBySessionId.put(sid, Collections.synchronizedList(compressed));
 	}
@@ -124,42 +108,6 @@ public class InMemorySessionContextManager implements ContextManager {
 	@Override
 	public void clear(String sessionId) {
 		contextsBySessionId.remove(normalize(sessionId));
-	}
-
-	private int countTokens(List<ChatMessage> messages) {
-		if (messages == null || messages.isEmpty()) {
-			return 0;
-		}
-		int tokens = 0;
-		for (ChatMessage m : messages) {
-			if (m == null) {
-				continue;
-			}
-			String c = m.getContent();
-			if (c == null || c.isEmpty()) {
-				continue;
-			}
-			tokens += tokenCounter != null ? tokenCounter.count(c) : c.length();
-		}
-		return tokens;
-	}
-
-	private int countBytes(List<ChatMessage> messages) {
-		if (messages == null || messages.isEmpty()) {
-			return 0;
-		}
-		int bytes = 0;
-		for (ChatMessage m : messages) {
-			if (m == null) {
-				continue;
-			}
-			String c = m.getContent();
-			if (c == null || c.isEmpty()) {
-				continue;
-			}
-			bytes += c.getBytes(StandardCharsets.UTF_8).length;
-		}
-		return bytes;
 	}
 
 	private String normalize(String sessionId) {

@@ -7,6 +7,8 @@ public class SessionContextProperties {
 	private int maxTokens = 20000;
 	private int maxBytes = 0;
 	private int keepLastMessages = 20;
+	private int preflightReserveTokens = 0;
+	private int preflightReserveBytes = 0;
 
 	public int getMaxTokens() {
 		return maxTokens;
@@ -30,5 +32,21 @@ public class SessionContextProperties {
 
 	public void setKeepLastMessages(int keepLastMessages) {
 		this.keepLastMessages = keepLastMessages;
+	}
+
+	public int getPreflightReserveTokens() {
+		return preflightReserveTokens;
+	}
+
+	public void setPreflightReserveTokens(int preflightReserveTokens) {
+		this.preflightReserveTokens = preflightReserveTokens;
+	}
+
+	public int getPreflightReserveBytes() {
+		return preflightReserveBytes;
+	}
+
+	public void setPreflightReserveBytes(int preflightReserveBytes) {
+		this.preflightReserveBytes = preflightReserveBytes;
 	}
 }

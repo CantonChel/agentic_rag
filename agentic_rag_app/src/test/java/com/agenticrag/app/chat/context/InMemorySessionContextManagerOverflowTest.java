@@ -41,7 +41,7 @@ class InMemorySessionContextManagerOverflowTest {
 	}
 
 	@Test
-	void triggersPreCompactionFlushBeforeCompression() {
+	void tokenOverflowStillCompressesButNeverFlushes() {
 		SessionContextProperties props = new SessionContextProperties();
 		props.setMaxTokens(120);
 		props.setKeepLastMessages(3);
@@ -55,12 +55,16 @@ class InMemorySessionContextManagerOverflowTest {
 			mgr.addMessage(sid, new UserMessage("m" + i + ":" + repeat("x", 30)));
 		}
 
-		Mockito.verify(memoryFlushService, Mockito.atLeastOnce())
+		List<ChatMessage> ctx = mgr.getContext(sid);
+		Assertions.assertFalse(ctx.isEmpty());
+		Assertions.assertEquals("SYSTEM", ctx.get(0).getType().name());
+		Assertions.assertTrue(ctx.size() <= 1 + props.getKeepLastMessages());
+		Mockito.verify(memoryFlushService, Mockito.never())
 			.flushPreCompaction(Mockito.eq(sid), Mockito.anyList());
 	}
 
 	@Test
-	void triggersPreCompactionFlushWhenByteLimitExceeded() {
+	void byteOverflowStillCompressesButNeverFlushes() {
 		SessionContextProperties props = new SessionContextProperties();
 		props.setMaxTokens(100000);
 		props.setMaxBytes(120);
@@ -75,12 +79,16 @@ class InMemorySessionContextManagerOverflowTest {
 			mgr.addMessage(sid, new UserMessage("m" + i + ":" + repeat("字", 20)));
 		}
 
-		Mockito.verify(memoryFlushService, Mockito.atLeastOnce())
+		List<ChatMessage> ctx = mgr.getContext(sid);
+		Assertions.assertFalse(ctx.isEmpty());
+		Assertions.assertEquals("SYSTEM", ctx.get(0).getType().name());
+		Assertions.assertTrue(ctx.size() <= 1 + props.getKeepLastMessages());
+		Mockito.verify(memoryFlushService, Mockito.never())
 			.flushPreCompaction(Mockito.eq(sid), Mockito.anyList());
 	}
 
 	@Test
-	void skipsPreCompactionFlushWhenAppendOptionsDisableIt() {
+	void overflowCompressionNoLongerDependsOnAppendOptions() {
 		SessionContextProperties props = new SessionContextProperties();
 		props.setMaxTokens(120);
 		props.setKeepLastMessages(3);

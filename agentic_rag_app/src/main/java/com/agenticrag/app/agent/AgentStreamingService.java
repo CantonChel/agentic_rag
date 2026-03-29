@@ -6,8 +6,9 @@ import com.agenticrag.app.agent.execution.AgentThinkingProfile;
 import com.agenticrag.app.agent.execution.AgentTurnExecutionAccumulator;
 import com.agenticrag.app.benchmark.execution.BenchmarkTurnExecutionSummaryService;
 import com.agenticrag.app.chat.context.ContextManager;
-import com.agenticrag.app.chat.context.SessionContextProjector;
 import com.agenticrag.app.chat.context.SessionContextAppendOptions;
+import com.agenticrag.app.chat.context.SessionContextPreflightCompactor;
+import com.agenticrag.app.chat.context.SessionContextProjector;
 import com.agenticrag.app.chat.context.TurnExecutionContext;
 import com.agenticrag.app.chat.message.AssistantMessage;
 import com.agenticrag.app.chat.message.ChatMessage;
@@ -101,6 +102,7 @@ public class AgentStreamingService {
 	private final MemoryFlushService memoryFlushService;
 	private final BenchmarkTurnExecutionSummaryService benchmarkTurnExecutionSummaryService;
 	private final SessionContextProjector sessionContextProjector;
+	private final SessionContextPreflightCompactor sessionContextPreflightCompactor;
 	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+\\.?|Step\\s*\\d+\\.?|\\d+\\.)\\s+)");
 	private static final String THINK_OPEN = "<think>";
 	private static final String THINK_CLOSE = "</think>";
@@ -145,7 +147,8 @@ public class AgentStreamingService {
 			null,
 			null,
 			null,
-			new SessionContextProjector()
+			new SessionContextProjector(),
+			new SessionContextPreflightCompactor(contextManager)
 		);
 	}
 
@@ -181,7 +184,8 @@ public class AgentStreamingService {
 			null,
 			null,
 			benchmarkTurnExecutionSummaryService,
-			new SessionContextProjector()
+			new SessionContextProjector(),
+			new SessionContextPreflightCompactor(contextManager)
 		);
 	}
 
@@ -203,7 +207,8 @@ public class AgentStreamingService {
 		SessionManager sessionManager,
 		MemoryFlushService memoryFlushService,
 		BenchmarkTurnExecutionSummaryService benchmarkTurnExecutionSummaryService,
-		SessionContextProjector sessionContextProjector
+		SessionContextProjector sessionContextProjector,
+		SessionContextPreflightCompactor sessionContextPreflightCompactor
 	) {
 		this.openAiClient = openAiClient;
 		this.minimaxClient = minimaxClient;
@@ -223,6 +228,9 @@ public class AgentStreamingService {
 		this.memoryFlushService = memoryFlushService;
 		this.benchmarkTurnExecutionSummaryService = benchmarkTurnExecutionSummaryService;
 		this.sessionContextProjector = sessionContextProjector != null ? sessionContextProjector : new SessionContextProjector();
+		this.sessionContextPreflightCompactor = sessionContextPreflightCompactor != null
+			? sessionContextPreflightCompactor
+			: new SessionContextPreflightCompactor(contextManager);
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -378,6 +386,7 @@ public class AgentStreamingService {
 
 					emit.accept(LlmStreamEvent.turnStart(turnId, nextSequence.getAsLong(), System.currentTimeMillis(), sid));
 					TurnExecutionContext turnExecutionContext = null;
+					SessionContextAppendOptions sessionContextAppendOptions = resolveSessionContextAppendOptions(control);
 					try {
 					throwIfCancelled(sink, cancelled);
 					OpenAIClient client = provider == LlmProvider.MINIMAX ? minimaxClient : openAiClient;
@@ -420,15 +429,17 @@ public class AgentStreamingService {
 						return;
 					}
 
-						String systemPrompt = configuredSystemPrompt != null ? configuredSystemPrompt : "";
+					String systemPrompt = configuredSystemPrompt != null ? configuredSystemPrompt : "";
+					List<ChatMessage> sessionHistory = Collections.emptyList();
 					if (!singleTurn) {
 						contextManager.ensureSystemPrompt(scopedSid, configuredSystemPrompt);
 						systemPrompt = contextManager.getSystemPrompt(scopedSid);
+						sessionHistory = sessionContextPreflightCompactor.prepareForTurn(scopedSid, sessionContextAppendOptions);
 					}
 					persistentMessageStore.ensureSystemPrompt(scopedSid, systemPrompt);
 					turnExecutionContext = new TurnExecutionContext(
 						systemPrompt,
-						!singleTurn ? contextManager.getContext(scopedSid) : Collections.emptyList()
+						sessionHistory
 					);
 
 					ChatMessage userMsg = new UserMessage(prompt);
@@ -896,7 +907,7 @@ public class AgentStreamingService {
 					scopedSid,
 					turnExecutionContext,
 					singleTurn,
-					control,
+					sessionContextAppendOptions,
 					turnFinishReasonRef.get()
 				);
 
@@ -1378,14 +1389,13 @@ public class AgentStreamingService {
 		String scopedSessionId,
 		TurnExecutionContext turnExecutionContext,
 		boolean singleTurn,
-		AgentExecutionControl control,
+		SessionContextAppendOptions options,
 		String finishReason
 	) {
 		List<ChatMessage> projectedMessages = sessionContextProjector.project(turnExecutionContext, finishReason, singleTurn);
 		if (projectedMessages.isEmpty()) {
 			return;
 		}
-		SessionContextAppendOptions options = resolveSessionContextAppendOptions(control);
 		for (ChatMessage projectedMessage : projectedMessages) {
 			contextManager.addMessage(scopedSessionId, projectedMessage, options);
 		}
