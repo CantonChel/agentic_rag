@@ -6,6 +6,7 @@ import com.agenticrag.app.chat.context.SessionContextBudgetEvaluator;
 import com.agenticrag.app.chat.context.SessionContextPreflightCompactor;
 import com.agenticrag.app.chat.context.SessionContextProperties;
 import com.agenticrag.app.chat.context.SessionContextProjector;
+import com.agenticrag.app.chat.context.TurnContextAutoCompactor;
 import com.agenticrag.app.chat.message.ChatMessage;
 import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.config.MinimaxClientProperties;
@@ -337,6 +338,126 @@ class AgentFaultInjectionIntegrationTest {
 			.flushPreCompaction(Mockito.eq("anonymous::s1"), Mockito.anyList());
 	}
 
+	@Test
+	void toolHeavyLoopAutoCompactsAndFallsBackWithoutPollutingSessionContext() {
+		ObjectMapper om = new ObjectMapper();
+		ArgumentCaptor<ChatCompletionCreateParams> captor = ArgumentCaptor.forClass(ChatCompletionCreateParams.class);
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		StreamResponse<ChatCompletionChunk> r1 = new FakeStreamResponse(Stream.of(toolCallsChunk("large_lookup", "{\"q\":\"first\"}")));
+		StreamResponse<ChatCompletionChunk> r2 = new FakeStreamResponse(Stream.of(toolCallsChunk("large_lookup", "{\"q\":\"second\"}")));
+		StreamResponse<ChatCompletionChunk> r3 = new FakeStreamResponse(Stream.of(textChunk("最终答案")));
+		Mockito.when(openAiClient.chat().completions().createStreaming(captor.capture()))
+			.thenReturn(r1, r2, r3);
+
+		ToolRouter toolRouter = new ToolRouter();
+		toolRouter.register(
+			new SequencedLargeResultTool(
+				"large_lookup",
+				om,
+				"FIRST-" + repeat("甲", 320),
+				"SECOND-" + repeat("乙", 320)
+			)
+		);
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+
+		AgentTurnContextProperties turnProps = new AgentTurnContextProperties();
+		turnProps.setContextWindowTokens(900);
+		turnProps.setReserveTokens(600);
+		turnProps.setKeepRecentTokens(80);
+
+		AgentStreamingService service = newServiceWithCompaction(
+			openAiClient,
+			minimaxClient,
+			toolRouter,
+			om,
+			contextManager,
+			persistent,
+			4,
+			ctxProps,
+			tokenCounter,
+			turnProps
+		);
+
+		List<LlmStreamEvent> events = service.stream(LlmProvider.OPENAI, "s1", "复杂问题", true, LlmToolChoiceMode.AUTO)
+			.collectList()
+			.block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		LlmStreamEvent doneEvent = events.stream().filter(event -> "done".equals(event.getType())).findFirst().orElse(null);
+		Assertions.assertNotNull(doneEvent);
+		Assertions.assertEquals("context_window_fallback", doneEvent.getFinishReason());
+		Assertions.assertEquals(2, captor.getAllValues().size());
+		String fallbackCallPayload = String.valueOf(captor.getAllValues().get(1));
+		Assertions.assertTrue(fallbackCallPayload.contains("当前上下文已接近窗口上限"));
+
+		List<ChatMessage> sessionContext = contextManager.getContext("anonymous::s1");
+		Assertions.assertEquals("SYSTEM", sessionContext.get(0).getType().name());
+		Assertions.assertTrue(sessionContext.stream().anyMatch(message -> "USER".equals(message.getType().name())));
+		Assertions.assertTrue(sessionContext.stream().anyMatch(message -> "ASSISTANT".equals(message.getType().name())));
+		Assertions.assertTrue(sessionContext.stream().noneMatch(message -> "TOOL_CALL".equals(message.getType().name())));
+		Assertions.assertTrue(sessionContext.stream().noneMatch(message -> "TOOL_RESULT".equals(message.getType().name())));
+	}
+
+	@Test
+	void minimalContextOverflowReturnsControlledErrorAndSkipsProjection() {
+		ObjectMapper om = new ObjectMapper();
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+
+		ToolRouter toolRouter = new ToolRouter();
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+
+		AgentTurnContextProperties turnProps = new AgentTurnContextProperties();
+		turnProps.setContextWindowTokens(80);
+		turnProps.setReserveTokens(20);
+		turnProps.setKeepRecentTokens(10);
+
+		AgentStreamingService service = newServiceWithCompaction(
+			openAiClient,
+			minimaxClient,
+			toolRouter,
+			om,
+			contextManager,
+			persistent,
+			4,
+			ctxProps,
+			tokenCounter,
+			turnProps
+		);
+
+		List<LlmStreamEvent> events = service.stream(
+			LlmProvider.OPENAI,
+			"s1",
+			"问题-" + repeat("超长", 40),
+			false,
+			LlmToolChoiceMode.NONE
+		).collectList().block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		LlmStreamEvent errorEvent = events.stream().filter(event -> "error".equals(event.getType())).findFirst().orElse(null);
+		Assertions.assertNotNull(errorEvent);
+		Assertions.assertEquals("context_window_exceeded", errorEvent.getContent());
+		Mockito.verify(openAiClient.chat().completions(), Mockito.never()).createStreaming(Mockito.any(ChatCompletionCreateParams.class));
+
+		List<ChatMessage> sessionContext = contextManager.getContext("anonymous::s1");
+		Assertions.assertEquals(1, sessionContext.size());
+		Assertions.assertEquals("SYSTEM", sessionContext.get(0).getType().name());
+	}
+
 	private AgentStreamingService newService(
 		OpenAIClient openAiClient,
 		OpenAIClient minimaxClient,
@@ -374,6 +495,59 @@ class AgentFaultInjectionIntegrationTest {
 			new LocalExecutionContextRecorder(),
 			agentProps,
 			validator
+		);
+	}
+
+	private AgentStreamingService newServiceWithCompaction(
+		OpenAIClient openAiClient,
+		OpenAIClient minimaxClient,
+		ToolRouter toolRouter,
+		ObjectMapper om,
+		InMemorySessionContextManager contextManager,
+		PersistentMessageStore persistent,
+		int maxIterations,
+		SessionContextProperties ctxProps,
+		TokenCounter tokenCounter,
+		AgentTurnContextProperties turnProps
+	) {
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(maxIterations);
+		agentProps.setToolTimeoutSeconds(5);
+
+		ToolArgumentValidator validator = new ToolArgumentValidator();
+
+		return new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			toolRouter,
+			om,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			null,
+			new LocalExecutionContextRecorder(),
+			agentProps,
+			validator,
+			null,
+			null,
+			null,
+			new SessionContextProjector(),
+			new SessionContextPreflightCompactor(
+				contextManager,
+				new SessionContextBudgetEvaluator(ctxProps, tokenCounter),
+				null
+			),
+			new TurnContextAutoCompactor(turnProps, tokenCounter)
 		);
 	}
 
@@ -575,6 +749,46 @@ class AgentFaultInjectionIntegrationTest {
 			}
 			sb.append("最后一句话。");
 			return Mono.just(ToolResult.ok(sb.toString()));
+		}
+	}
+
+	private static final class SequencedLargeResultTool implements Tool {
+		private final String name;
+		private final ObjectMapper objectMapper;
+		private final List<String> outputs;
+		private int cursor = 0;
+
+		private SequencedLargeResultTool(String name, ObjectMapper objectMapper, String... outputs) {
+			this.name = name;
+			this.objectMapper = objectMapper;
+			this.outputs = List.of(outputs);
+		}
+
+		@Override
+		public String name() {
+			return name;
+		}
+
+		@Override
+		public String description() {
+			return "Returns large staged outputs.";
+		}
+
+		@Override
+		public JsonNode parametersSchema() {
+			ObjectNode root = objectMapper.createObjectNode();
+			root.put("type", "object");
+			root.putObject("properties").putObject("q").put("type", "string");
+			root.putArray("required").add("q");
+			return root;
+		}
+
+		@Override
+		public Mono<ToolResult> execute(JsonNode arguments, ToolExecutionContext context) {
+			int index = Math.min(cursor, outputs.size() - 1);
+			String output = outputs.get(index);
+			cursor++;
+			return Mono.just(ToolResult.ok(output));
 		}
 	}
 }

@@ -34,13 +34,21 @@ public class TurnExecutionContext {
 	}
 
 	public List<ChatMessage> getMessagesForModel() {
-		List<ChatMessage> out = new ArrayList<>(historicalMessages.size() + turnMessages.size());
-		out.addAll(historicalMessages);
-		out.addAll(turnMessages);
-		return out;
+		return getRawMessagesForDebug();
+	}
+
+	public List<ChatMessage> getHistoricalMessages() {
+		return new ArrayList<>(historicalMessages);
 	}
 
 	public List<ChatMessage> getTurnMessages() {
 		return new ArrayList<>(turnMessages);
+	}
+
+	public List<ChatMessage> getRawMessagesForDebug() {
+		List<ChatMessage> out = new ArrayList<>(historicalMessages.size() + turnMessages.size());
+		out.addAll(historicalMessages);
+		out.addAll(turnMessages);
+		return out;
 	}
 }

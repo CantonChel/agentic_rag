@@ -13,7 +13,9 @@ public class SessionContextProjector {
 		if (singleTurn || turnExecutionContext == null || finishReason == null || finishReason.trim().isEmpty()) {
 			return Collections.emptyList();
 		}
-		if (!"stop".equals(finishReason) && !"max_iterations_fallback".equals(finishReason)) {
+		if (!"stop".equals(finishReason)
+			&& !"max_iterations_fallback".equals(finishReason)
+			&& !"context_window_fallback".equals(finishReason)) {
 			return Collections.emptyList();
 		}
 

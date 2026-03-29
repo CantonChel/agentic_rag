@@ -9,7 +9,10 @@ import com.agenticrag.app.chat.context.ContextManager;
 import com.agenticrag.app.chat.context.SessionContextAppendOptions;
 import com.agenticrag.app.chat.context.SessionContextPreflightCompactor;
 import com.agenticrag.app.chat.context.SessionContextProjector;
+import com.agenticrag.app.chat.context.TurnContextAutoCompactResult;
+import com.agenticrag.app.chat.context.TurnContextAutoCompactor;
 import com.agenticrag.app.chat.context.TurnExecutionContext;
+import com.agenticrag.app.chat.context.TurnContextWindowExceededException;
 import com.agenticrag.app.chat.message.AssistantMessage;
 import com.agenticrag.app.chat.message.ChatMessage;
 import com.agenticrag.app.chat.message.SystemMessage;
@@ -103,6 +106,7 @@ public class AgentStreamingService {
 	private final BenchmarkTurnExecutionSummaryService benchmarkTurnExecutionSummaryService;
 	private final SessionContextProjector sessionContextProjector;
 	private final SessionContextPreflightCompactor sessionContextPreflightCompactor;
+	private final TurnContextAutoCompactor turnContextAutoCompactor;
 	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+\\.?|Step\\s*\\d+\\.?|\\d+\\.)\\s+)");
 	private static final String THINK_OPEN = "<think>";
 	private static final String THINK_CLOSE = "</think>";
@@ -113,6 +117,9 @@ public class AgentStreamingService {
 		"系统警告：你已达到最大思考步数。请立即停止调用新工具，基于目前已有的观察结果，向用户输出最终总结回复。"
 			+ "严禁输出任何工具调用、函数调用、XML 标签、<minimax:tool_call>、<invoke> 或参数片段。"
 			+ "如果证据仍然不足，请直接明确说明当前已检索到的信息不足以支持确定答案。";
+	private static final String CONTEXT_OVERFLOW_FINALIZATION_WARNING =
+		"系统警告：当前上下文已接近窗口上限。禁止继续调用新工具。请仅基于现有观察结果直接输出最终答案，"
+			+ "严禁输出任何工具调用、函数调用、XML 标签、<minimax:tool_call>、<invoke> 或参数片段。";
 	private static final String FINAL_ITERATION_DEFAULT_ANSWER =
 		"根据当前已检索到的内容，我暂时无法给出确定答案。";
 
@@ -148,7 +155,8 @@ public class AgentStreamingService {
 			null,
 			null,
 			new SessionContextProjector(),
-			new SessionContextPreflightCompactor(contextManager)
+			new SessionContextPreflightCompactor(contextManager),
+			new TurnContextAutoCompactor()
 		);
 	}
 
@@ -185,7 +193,51 @@ public class AgentStreamingService {
 			null,
 			benchmarkTurnExecutionSummaryService,
 			new SessionContextProjector(),
-			new SessionContextPreflightCompactor(contextManager)
+			new SessionContextPreflightCompactor(contextManager),
+			new TurnContextAutoCompactor()
+		);
+	}
+
+	public AgentStreamingService(
+		OpenAIClient openAiClient,
+		OpenAIClient minimaxClient,
+		OpenAiClientProperties openAiProperties,
+		MinimaxClientProperties minimaxProperties,
+		ToolRouter toolRouter,
+		ObjectMapper objectMapper,
+		SystemPromptManager systemPromptManager,
+		ContextManager contextManager,
+		PersistentMessageStore persistentMessageStore,
+		SessionReplayStore sessionReplayStore,
+		com.agenticrag.app.chat.context.LocalExecutionContextRecorder localExecutionContextRecorder,
+		AgentProperties agentProperties,
+		ToolArgumentValidator toolArgumentValidator,
+		SessionManager sessionManager,
+		MemoryFlushService memoryFlushService,
+		BenchmarkTurnExecutionSummaryService benchmarkTurnExecutionSummaryService,
+		SessionContextProjector sessionContextProjector,
+		SessionContextPreflightCompactor sessionContextPreflightCompactor
+	) {
+		this(
+			openAiClient,
+			minimaxClient,
+			openAiProperties,
+			minimaxProperties,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistentMessageStore,
+			sessionReplayStore,
+			localExecutionContextRecorder,
+			agentProperties,
+			toolArgumentValidator,
+			sessionManager,
+			memoryFlushService,
+			benchmarkTurnExecutionSummaryService,
+			sessionContextProjector,
+			sessionContextPreflightCompactor,
+			new TurnContextAutoCompactor()
 		);
 	}
 
@@ -208,7 +260,8 @@ public class AgentStreamingService {
 		MemoryFlushService memoryFlushService,
 		BenchmarkTurnExecutionSummaryService benchmarkTurnExecutionSummaryService,
 		SessionContextProjector sessionContextProjector,
-		SessionContextPreflightCompactor sessionContextPreflightCompactor
+		SessionContextPreflightCompactor sessionContextPreflightCompactor,
+		TurnContextAutoCompactor turnContextAutoCompactor
 	) {
 		this.openAiClient = openAiClient;
 		this.minimaxClient = minimaxClient;
@@ -231,6 +284,9 @@ public class AgentStreamingService {
 		this.sessionContextPreflightCompactor = sessionContextPreflightCompactor != null
 			? sessionContextPreflightCompactor
 			: new SessionContextPreflightCompactor(contextManager);
+		this.turnContextAutoCompactor = turnContextAutoCompactor != null
+			? turnContextAutoCompactor
+			: new TurnContextAutoCompactor();
 	}
 
 	public Flux<LlmStreamEvent> stream(
@@ -454,15 +510,47 @@ public class AgentStreamingService {
 						iteration++;
 						final int iterationFinal = iteration;
 						turnRoundIdRef.set(iterationFinal);
+						TurnContextAutoCompactResult compactResult;
+						try {
+							compactResult = turnContextAutoCompactor.compactForNextModelCall(turnExecutionContext);
+						} catch (TurnContextWindowExceededException e) {
+							String err = e.getMessage();
+							turnErrorMessageRef.set(err);
+							log.warn(
+								"event=agent_turn_context_window_exceeded traceId={} provider={} userId={} sessionId={} iteration={} minimalTokens={} contextWindowTokens={}",
+								effectiveTraceId,
+								provider,
+								uid,
+								sid,
+								iterationFinal,
+								e.getMinimalTokenCount(),
+								e.getContextWindowTokens()
+							);
+							emit.accept(LlmStreamEvent.error(
+								err,
+								turnId,
+								nextSequence.getAsLong(),
+								System.currentTimeMillis(),
+								iterationFinal
+							));
+							turnFinishReasonRef.set("context_window_exceeded");
+							emitTurnEnd.accept("context_window_exceeded", iterationFinal);
+							finished = true;
+							break;
+						}
 						boolean isFinalIteration = iteration >= maxIterations;
-						String iterationSystemPrompt = isFinalIteration
-							? appendFinalIterationWarning(systemPrompt)
-							: systemPrompt;
+						boolean forceContextWindowFinalization = compactResult.isForcedFinalResponse();
+						boolean shouldForceFinalResponse = isFinalIteration || forceContextWindowFinalization;
+						String iterationSystemPrompt = buildIterationSystemPrompt(
+							systemPrompt,
+							isFinalIteration,
+							forceContextWindowFinalization
+						);
 
 						localExecutionContextRecorder.record(
 							scopedSid,
 							iterationSystemPrompt,
-							turnExecutionContext.getMessagesForModel(),
+							compactResult.getMessagesForModel(),
 							iteration
 						);
 
@@ -474,13 +562,13 @@ public class AgentStreamingService {
 						}
 
 						List<com.openai.models.chat.completions.ChatCompletionMessageParam> messageParams = adapter.toMessageParams(
-							turnExecutionContext.getMessagesForModel()
+							compactResult.getMessagesForModel()
 						);
 						for (com.openai.models.chat.completions.ChatCompletionMessageParam mp : messageParams) {
 							paramsBuilder.addMessage(mp);
 						}
 
-						boolean allowTools = includeTools && !isFinalIteration;
+						boolean allowTools = includeTools && !shouldForceFinalResponse;
 						if (allowTools) {
 							paramsBuilder.tools(buildChatCompletionTools(toolRouter.getToolDefinitions(allowedToolNames)));
 							paramsBuilder.toolChoice(toToolChoice(toolChoiceMode));
@@ -525,7 +613,7 @@ public class AgentStreamingService {
 												content,
 												answerPart -> {
 													assistantContent.append(answerPart);
-													if (isFinalIteration) {
+													if (shouldForceFinalResponse) {
 														return;
 													}
 														emit.accept(LlmStreamEvent.delta(
@@ -587,7 +675,7 @@ public class AgentStreamingService {
 
 						List<LlmToolCall> toolCalls = toolCallAccumulator.buildToolCalls();
 						String assistantFinal = assistantContent.toString().trim();
-						if (isFinalIteration) {
+						if (shouldForceFinalResponse) {
 							assistantFinal = normalizeFinalIterationAnswer(assistantFinal);
 							if (!assistantFinal.isEmpty()) {
 								emit.accept(LlmStreamEvent.delta(
@@ -608,17 +696,20 @@ public class AgentStreamingService {
 							persistentMessageStore.append(scopedSid, am);
 						}
 
-						if (isFinalIteration) {
+						if (shouldForceFinalResponse) {
+							String finalizationReason = forceContextWindowFinalization
+								? "context_window_fallback"
+								: "max_iterations_fallback";
 							emit.accept(LlmStreamEvent.done(
-								"max_iterations_fallback",
+								finalizationReason,
 								null,
 								turnId,
 								nextSequence.getAsLong(),
 								System.currentTimeMillis(),
 								iterationFinal
 							));
-							turnFinishReasonRef.set("max_iterations_fallback");
-							emitTurnEnd.accept("max_iterations_fallback", iterationFinal);
+							turnFinishReasonRef.set(finalizationReason);
+							emitTurnEnd.accept(finalizationReason, iterationFinal);
 							finished = true;
 							break;
 						}
@@ -951,6 +1042,29 @@ public class AgentStreamingService {
 			return FINAL_ITERATION_WARNING;
 		}
 		return base + "\n\n" + FINAL_ITERATION_WARNING;
+	}
+
+	private String appendContextOverflowFinalizationWarning(String systemPrompt) {
+		String base = systemPrompt == null ? "" : systemPrompt.trim();
+		if (base.isEmpty()) {
+			return CONTEXT_OVERFLOW_FINALIZATION_WARNING;
+		}
+		return base + "\n\n" + CONTEXT_OVERFLOW_FINALIZATION_WARNING;
+	}
+
+	private String buildIterationSystemPrompt(
+		String systemPrompt,
+		boolean finalIteration,
+		boolean contextWindowFinalization
+	) {
+		String prompt = systemPrompt;
+		if (contextWindowFinalization) {
+			prompt = appendContextOverflowFinalizationWarning(prompt);
+		}
+		if (finalIteration) {
+			prompt = appendFinalIterationWarning(prompt);
+		}
+		return prompt;
 	}
 
 	private String normalizeFinalIterationAnswer(String assistantFinal) {
