@@ -230,6 +230,8 @@ class AgentFaultInjectionIntegrationTest {
 		}
 		Assertions.assertTrue(hasUser);
 		Assertions.assertTrue(hasAssistant);
+		Assertions.assertTrue(msgs.stream().noneMatch(m -> m != null && "TOOL_CALL".equals(m.getType().name())));
+		Assertions.assertTrue(msgs.stream().noneMatch(m -> m != null && "TOOL_RESULT".equals(m.getType().name())));
 	}
 
 	private AgentStreamingService newService(

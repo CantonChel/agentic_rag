@@ -945,7 +945,7 @@ class AgentStreamingServiceTest {
 	}
 
 	@Test
-	void memoryDisabledSkipsPreCompactionFlushButKeepsSessionContextTrajectory() {
+	void memoryDisabledSkipsPreCompactionFlushAndProjectsCleanSessionContext() {
 		ObjectMapper objectMapper = new ObjectMapper();
 
 		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
@@ -1009,12 +1009,107 @@ class AgentStreamingServiceTest {
 		Mockito.verify(memoryFlushService, Mockito.never())
 			.flushPreCompaction(Mockito.anyString(), Mockito.anyList());
 
+		LocalExecutionContextRecorder.LocalExecutionContextSnapshot snapshot = recorder.getLatest("anonymous::s1");
+		Assertions.assertNotNull(snapshot);
+		Assertions.assertEquals(ChatMessageType.SYSTEM, snapshot.getMessages().get(0).getType());
+		Assertions.assertTrue(snapshot.getMessages().stream().anyMatch(msg -> msg.getType() == ChatMessageType.TOOL_CALL));
+		Assertions.assertTrue(snapshot.getMessages().stream().anyMatch(msg -> msg.getType() == ChatMessageType.TOOL_RESULT));
+
 		List<ChatMessage> sessionContext = contextManager.getContext("anonymous::s1");
 		Assertions.assertEquals(ChatMessageType.SYSTEM, sessionContext.get(0).getType());
 		Assertions.assertTrue(sessionContext.stream().anyMatch(msg -> msg.getType() == ChatMessageType.USER));
-		Assertions.assertTrue(sessionContext.stream().anyMatch(msg -> msg.getType() == ChatMessageType.TOOL_CALL));
-		Assertions.assertTrue(sessionContext.stream().anyMatch(msg -> msg.getType() == ChatMessageType.TOOL_RESULT));
 		Assertions.assertTrue(sessionContext.stream().anyMatch(msg -> msg.getType() == ChatMessageType.ASSISTANT));
+		Assertions.assertTrue(sessionContext.stream().noneMatch(msg -> msg.getType() == ChatMessageType.TOOL_CALL));
+		Assertions.assertTrue(sessionContext.stream().noneMatch(msg -> msg.getType() == ChatMessageType.TOOL_RESULT));
+	}
+
+	@Test
+	void secondTurnReadsProjectedSessionMessagesWithoutToolTrajectory() {
+		ObjectMapper objectMapper = new ObjectMapper();
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		StreamResponse<ChatCompletionChunk> r1 = new FakeStreamResponse(Stream.of(toolCallsChunk()));
+		StreamResponse<ChatCompletionChunk> r2 = new FakeStreamResponse(Stream.of(textChunk("42")));
+		StreamResponse<ChatCompletionChunk> r3 = new FakeStreamResponse(Stream.of(textChunk("next answer")));
+		Mockito.when(openAiClient.chat().completions().createStreaming(Mockito.any(ChatCompletionCreateParams.class)))
+			.thenReturn(r1, r2, r3);
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		ToolRouter toolRouter = new ToolRouter();
+		toolRouter.register(new CalculatorTool(objectMapper));
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
+		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
+
+		AgentProperties agentProps = new AgentProperties();
+		agentProps.setMaxIterations(4);
+		agentProps.setToolTimeoutSeconds(5);
+
+		AgentStreamingService service = new AgentStreamingService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			toolRouter,
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistent,
+			recorder,
+			agentProps,
+			new ToolArgumentValidator()
+		);
+
+		List<LlmStreamEvent> firstTurn = service.stream(
+			LlmProvider.OPENAI,
+			"anonymous",
+			"s1",
+			"first question",
+			true,
+			LlmToolChoiceMode.AUTO,
+			null,
+			new AgentExecutionControl(null, null, AgentKbScope.AUTO, AgentEvalMode.DEFAULT, AgentThinkingProfile.DEFAULT, true)
+		).collectList().block(Duration.ofSeconds(5));
+		Assertions.assertNotNull(firstTurn);
+
+		List<ChatMessage> sessionContextAfterFirstTurn = contextManager.getContext("anonymous::s1");
+		Assertions.assertTrue(sessionContextAfterFirstTurn.stream().noneMatch(msg -> msg.getType() == ChatMessageType.TOOL_CALL));
+		Assertions.assertTrue(sessionContextAfterFirstTurn.stream().noneMatch(msg -> msg.getType() == ChatMessageType.TOOL_RESULT));
+
+		List<LlmStreamEvent> secondTurn = service.stream(
+			LlmProvider.OPENAI,
+			"anonymous",
+			"s1",
+			"follow up",
+			false,
+			LlmToolChoiceMode.NONE,
+			null,
+			new AgentExecutionControl(null, null, AgentKbScope.AUTO, AgentEvalMode.DEFAULT, AgentThinkingProfile.DEFAULT, true)
+		).collectList().block(Duration.ofSeconds(5));
+		Assertions.assertNotNull(secondTurn);
+
+		LocalExecutionContextRecorder.LocalExecutionContextSnapshot snapshot = recorder.getLatest("anonymous::s1");
+		Assertions.assertNotNull(snapshot);
+		Assertions.assertEquals(ChatMessageType.SYSTEM, snapshot.getMessages().get(0).getType());
+		Assertions.assertTrue(snapshot.getMessages().stream().noneMatch(msg -> msg.getType() == ChatMessageType.TOOL_CALL));
+		Assertions.assertTrue(snapshot.getMessages().stream().noneMatch(msg -> msg.getType() == ChatMessageType.TOOL_RESULT));
+		long userCount = snapshot.getMessages().stream().filter(msg -> msg.getType() == ChatMessageType.USER).count();
+		long assistantCount = snapshot.getMessages().stream().filter(msg -> msg.getType() == ChatMessageType.ASSISTANT).count();
+		Assertions.assertEquals(2, userCount);
+		Assertions.assertEquals(1, assistantCount);
 	}
 
 	@Test
