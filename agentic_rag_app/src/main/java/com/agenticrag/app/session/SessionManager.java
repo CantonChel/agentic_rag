@@ -3,7 +3,7 @@ package com.agenticrag.app.session;
 import com.agenticrag.app.chat.context.ContextManager;
 import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.chat.store.SessionReplayStore;
-import com.agenticrag.app.memory.MemoryFlushService;
+import com.agenticrag.app.memory.MemoryLifecycleOrchestrator;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Map;
@@ -17,7 +17,7 @@ public class SessionManager {
 	private final ContextManager contextManager;
 	private final PersistentMessageStore persistentMessageStore;
 	private final SessionReplayStore sessionReplayStore;
-	private final MemoryFlushService memoryFlushService;
+	private final MemoryLifecycleOrchestrator memoryLifecycleOrchestrator;
 	private final Map<String, ChatSession> sessions = new ConcurrentHashMap<>();
 
 	public SessionManager(ContextManager contextManager, PersistentMessageStore persistentMessageStore) {
@@ -27,9 +27,9 @@ public class SessionManager {
 	public SessionManager(
 		ContextManager contextManager,
 		PersistentMessageStore persistentMessageStore,
-		MemoryFlushService memoryFlushService
+		MemoryLifecycleOrchestrator memoryLifecycleOrchestrator
 	) {
-		this(contextManager, persistentMessageStore, null, memoryFlushService);
+		this(contextManager, persistentMessageStore, null, memoryLifecycleOrchestrator);
 	}
 
 	@Autowired
@@ -37,12 +37,12 @@ public class SessionManager {
 		ContextManager contextManager,
 		PersistentMessageStore persistentMessageStore,
 		SessionReplayStore sessionReplayStore,
-		MemoryFlushService memoryFlushService
+		MemoryLifecycleOrchestrator memoryLifecycleOrchestrator
 	) {
 		this.contextManager = contextManager;
 		this.persistentMessageStore = persistentMessageStore;
 		this.sessionReplayStore = sessionReplayStore;
-		this.memoryFlushService = memoryFlushService;
+		this.memoryLifecycleOrchestrator = memoryLifecycleOrchestrator;
 	}
 
 	public ChatSession create(String userId) {
@@ -58,11 +58,13 @@ public class SessionManager {
 
 	public void delete(String userId, String sessionId) {
 		String key = SessionScope.scopedSessionId(userId, sessionId);
-		if (memoryFlushService != null) {
-			memoryFlushService.flushOnSessionReset(
+		if (memoryLifecycleOrchestrator != null) {
+			memoryLifecycleOrchestrator.archiveSession(
 				key,
+				"session_delete",
 				contextManager.getContext(key),
-				persistentMessageStore.list(key)
+				persistentMessageStore.list(key),
+				true
 			);
 		}
 		sessions.remove(key);

@@ -11,7 +11,8 @@ class MemorySearchToolRegistrationTest {
 	private ToolRouter toolRouter;
 
 	@Test
-	void registersMemorySearchTool() {
+	void registersMemoryRecallTools() {
 		Assertions.assertTrue(toolRouter.getTool("memory_search").isPresent());
+		Assertions.assertTrue(toolRouter.getTool("memory_get").isPresent());
 	}
 }

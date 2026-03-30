@@ -18,4 +18,22 @@ class MemoryPromptContributorTest {
 
 		Assertions.assertEquals("", output);
 	}
+
+	@Test
+	void rendersSearchThenGetPolicyWhenBothToolsAreVisible() {
+		MemoryPromptContributor contributor = new MemoryPromptContributor();
+
+		String output = contributor.contribute(
+			new SystemPromptContext(
+				LlmProvider.OPENAI,
+				true,
+				SystemPromptMode.AGENT,
+				true,
+				Set.of("memory_search", "memory_get")
+			)
+		);
+
+		Assertions.assertTrue(output.contains("run memory_search"));
+		Assertions.assertTrue(output.contains("use memory_get"));
+	}
 }

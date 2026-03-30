@@ -3,7 +3,7 @@ package com.agenticrag.app.session;
 import com.agenticrag.app.chat.context.ContextManager;
 import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.chat.store.SessionReplayStore;
-import com.agenticrag.app.memory.MemoryFlushService;
+import com.agenticrag.app.memory.MemoryLifecycleOrchestrator;
 import java.util.Collection;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -41,18 +41,20 @@ class SessionManagerIsolationTest {
 	}
 
 	@Test
-	void deleteTriggersSessionResetFlush() {
+	void deleteTriggersSessionArchiveBeforeCleanup() {
 		ContextManager contextManager = Mockito.mock(ContextManager.class);
 		PersistentMessageStore persistentMessageStore = Mockito.mock(PersistentMessageStore.class);
-		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
-		SessionManager sessionManager = new SessionManager(contextManager, persistentMessageStore, memoryFlushService);
+		MemoryLifecycleOrchestrator memoryLifecycleOrchestrator = Mockito.mock(MemoryLifecycleOrchestrator.class);
+		SessionManager sessionManager = new SessionManager(contextManager, persistentMessageStore, memoryLifecycleOrchestrator);
 
 		sessionManager.delete("u1", "s1");
 
-		Mockito.verify(memoryFlushService).flushOnSessionReset(
+		Mockito.verify(memoryLifecycleOrchestrator).archiveSession(
 			Mockito.eq("u1::s1"),
+			Mockito.eq("session_delete"),
 			Mockito.any(),
-			Mockito.any()
+			Mockito.any(),
+			Mockito.eq(true)
 		);
 	}
 

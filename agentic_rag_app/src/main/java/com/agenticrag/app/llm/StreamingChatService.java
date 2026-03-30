@@ -11,7 +11,7 @@ import com.agenticrag.app.chat.message.ThinkingMessage;
 import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.chat.store.SessionReplayStore;
 import com.agenticrag.app.chat.message.SystemMessage;
-import com.agenticrag.app.memory.MemoryFlushService;
+import com.agenticrag.app.memory.MemoryLifecycleOrchestrator;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
 import com.agenticrag.app.prompt.SystemPromptMode;
@@ -65,7 +65,7 @@ public class StreamingChatService {
 	private final PersistentMessageStore persistentMessageStore;
 	private final SessionReplayStore sessionReplayStore;
 	private final SessionManager sessionManager;
-	private final MemoryFlushService memoryFlushService;
+	private final MemoryLifecycleOrchestrator memoryLifecycleOrchestrator;
 	private static final Pattern STEP_PATTERN = Pattern.compile("(?m)^(\\s*(步骤\\s*\\d+\\.?|Step\\s*\\d+\\.?|\\d+\\.)\\s+)");
 	private static final String THINK_OPEN = "<think>";
 	private static final String THINK_CLOSE = "</think>";
@@ -110,7 +110,7 @@ public class StreamingChatService {
 		PersistentMessageStore persistentMessageStore,
 		SessionReplayStore sessionReplayStore,
 		SessionManager sessionManager,
-		MemoryFlushService memoryFlushService
+		MemoryLifecycleOrchestrator memoryLifecycleOrchestrator
 	) {
 		this.openAiClient = openAiClient;
 		this.minimaxClient = minimaxClient;
@@ -124,7 +124,7 @@ public class StreamingChatService {
 		this.persistentMessageStore = persistentMessageStore;
 		this.sessionReplayStore = sessionReplayStore;
 		this.sessionManager = sessionManager;
-		this.memoryFlushService = memoryFlushService;
+		this.memoryLifecycleOrchestrator = memoryLifecycleOrchestrator;
 	}
 
 	public Flux<LlmStreamEvent> stream(LlmProvider provider, String prompt, boolean includeTools) {
@@ -190,12 +190,13 @@ public class StreamingChatService {
 				java.util.function.Consumer<LlmStreamEvent> emit = event -> emitStreamEvent(sink, scopedSid, event);
 
 				if (isSessionSwitchCommand(prompt)) {
-					if (memoryFlushService != null) {
-						memoryFlushService.flushOnSessionSwitchCommand(
+					if (memoryLifecycleOrchestrator != null) {
+						memoryLifecycleOrchestrator.archiveSession(
 							scopedSid,
 							normalizeSwitchReason(prompt),
 							contextManager.getContext(scopedSid),
-							persistentMessageStore.list(scopedSid)
+							persistentMessageStore.list(scopedSid),
+							true
 						);
 					}
 					String newSessionId = createNextSessionId(uid);

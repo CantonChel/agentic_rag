@@ -153,6 +153,13 @@
         margin-bottom: 6px;
       }
 
+      .form-help {
+        margin-top: 6px;
+        font-size: 11px;
+        line-height: 1.5;
+        color: #9ca3af;
+      }
+
       .form-control {
         width: 100%;
         padding: 8px 12px;
@@ -736,6 +743,14 @@
                 <option value="false">关闭</option>
               </select>
             </div>
+            <div class="form-group">
+              <label>长期记忆</label>
+              <select id="memoryEnabled" class="form-control">
+                <option value="true" selected>开启</option>
+                <option value="false">关闭</option>
+              </select>
+              <div class="form-help">仅 Agent 模式生效。关闭后仍保留多轮会话连续性，但不触发长期记忆读写。</div>
+            </div>
           </div>
 
           <div class="config-section">
@@ -796,6 +811,7 @@
       const providerSel = document.getElementById('provider');
       const modeSel = document.getElementById('mode');
       const toolsSel = document.getElementById('toolsEnabled');
+      const memoryEnabledSel = document.getElementById('memoryEnabled');
       const userIdInput = document.getElementById('userId');
       const sessionIdInput = document.getElementById('sessionId');
       const historySessionSel = document.getElementById('historySession');
@@ -1066,8 +1082,9 @@
         }
       }
 
-      async function refreshMemoryFiles(autoOpen = false) {
+      async function refreshMemoryFiles(autoOpen = false, preferredId = '') {
         if (!memoryFileSelect || !memoryMeta || !memoryContent) return;
+        const previous = (preferredId || memoryFileSelect.value || '').trim();
         memoryMeta.textContent = '正在加载记忆文件...';
         memoryContent.textContent = '';
         memoryFileSelect.innerHTML = '';
@@ -1080,14 +1097,19 @@
             memoryMeta.textContent = '暂无记忆文档';
             return;
           }
+          const ids = [];
           for (const file of data) {
             const opt = document.createElement('option');
             opt.value = file.id || '';
             const kind = file.kind || 'memory';
             opt.textContent = (file.path || file.id || 'unknown') + ' [' + kind + ']';
             memoryFileSelect.appendChild(opt);
+            if (opt.value) ids.push(opt.value);
           }
-          memoryMeta.textContent = '已加载 ' + data.length + ' 个记忆文档';
+          if (ids.length > 0) {
+            memoryFileSelect.value = ids.includes(previous) ? previous : ids[0];
+          }
+          memoryMeta.textContent = '已为用户 ' + currentUserId() + ' 加载 ' + data.length + ' 个记忆文档';
           if (autoOpen) {
             await openMemoryFile();
           }
@@ -1646,6 +1668,9 @@
         }
         if (data.type === 'turn_end') {
           handleTurnEndEvent(data);
+          if (modeSel.value === 'agent') {
+            refreshMemoryFiles(false).catch(() => {});
+          }
           return;
         }
         if (data.type === 'tool_start') {
@@ -1669,6 +1694,7 @@
             sessionIdInput.value = data.sessionId;
             updateSessionStatus('会话已切换');
           }
+          refreshMemoryFiles(false).catch(() => {});
           return;
         }
         if (data.type === 'error') {
@@ -1676,6 +1702,12 @@
           handleContentEvent({ content: '\n[错误] ' + message });
           return;
         }
+      }
+
+      function syncMemoryControlState() {
+        const agentMode = modeSel.value === 'agent';
+        memoryEnabledSel.disabled = !agentMode;
+        memoryEnabledSel.title = agentMode ? '' : '仅 Agent 模式支持长期记忆';
       }
 
       async function sendPrompt() {
@@ -1698,6 +1730,7 @@
         const provider = providerSel.value;
         const mode = modeSel.value;
         const toolsEnabled = toolsSel.value === 'true';
+        const memoryEnabled = memoryEnabledSel.value === 'true';
         const streamPath = mode === 'llm'
           ? `/api/llm/${encodeURIComponent(provider)}/stream`
           : `/api/agent/${encodeURIComponent(provider)}/stream`;
@@ -1708,6 +1741,9 @@
           tools: String(toolsEnabled),
           toolChoice: 'AUTO'
         });
+        if (mode === 'agent') {
+          query.set('memoryEnabled', String(memoryEnabled));
+        }
         const url = apiUrl(streamPath + '?' + query.toString());
 
         try {
@@ -1789,10 +1825,17 @@
 
       newSessionBtn.addEventListener('click', createSession);
       loadSessionBtn.addEventListener('click', loadSessionHistory);
+      modeSel.addEventListener('change', syncMemoryControlState);
       historySessionSel.addEventListener('change', loadSessionHistory);
       refreshSessionsBtn.addEventListener('click', () => refreshSessions(true));
       refreshMemoryBtn.addEventListener('click', () => refreshMemoryFiles(false));
       openMemoryBtn.addEventListener('click', openMemoryFile);
+      if (userIdInput) {
+        userIdInput.addEventListener('change', async () => {
+          await refreshSessions(true);
+          await refreshMemoryFiles(false);
+        });
+      }
 
       debugBtn.addEventListener('click', () => {
         alert(
@@ -1800,12 +1843,14 @@
           'Provider: ' + providerSel.value + '\n' +
           'Mode: ' + modeSel.value + '\n' +
           'Tools: ' + toolsSel.value + '\n' +
+          'Memory: ' + (modeSel.value === 'agent' ? memoryEnabledSel.value : '仅 Agent 模式可用') + '\n' +
           'User ID: ' + currentUserId() + '\n' +
           'Session ID: ' + sessionIdInput.value
         );
       });
 
       (async function init() {
+        syncMemoryControlState();
         await refreshSessions(true);
         if (!(sessionIdInput.value || '').trim()) {
           await createSession();

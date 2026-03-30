@@ -20,6 +20,7 @@ class RegisteredToolsPromptContributorTest {
 		ObjectMapper objectMapper = new ObjectMapper();
 		toolRouter.register(new StubTool("calculator", objectMapper));
 		toolRouter.register(new StubTool("memory_search", objectMapper));
+		toolRouter.register(new StubTool("memory_get", objectMapper));
 
 		RegisteredToolsPromptContributor contributor = new RegisteredToolsPromptContributor(toolRouter, objectMapper);
 		String output = contributor.contribute(
@@ -28,6 +29,7 @@ class RegisteredToolsPromptContributorTest {
 
 		Assertions.assertTrue(output.contains("calculator"));
 		Assertions.assertFalse(output.contains("memory_search"));
+		Assertions.assertFalse(output.contains("memory_get"));
 	}
 
 	private static final class StubTool implements Tool {
