@@ -14,7 +14,7 @@ import com.agenticrag.app.config.OpenAiClientProperties;
 import com.agenticrag.app.llm.LlmProvider;
 import com.agenticrag.app.llm.LlmStreamEvent;
 import com.agenticrag.app.llm.LlmToolChoiceMode;
-import com.agenticrag.app.memory.MemoryFlushService;
+import com.agenticrag.app.memory.DailyDurableFlushService;
 import com.agenticrag.app.prompt.SystemPromptManager;
 import com.agenticrag.app.rag.splitter.TokenCounter;
 import com.agenticrag.app.tool.Tool;
@@ -258,8 +258,8 @@ class AgentFaultInjectionIntegrationTest {
 		ctxProps.setPreflightReserveTokens(180);
 		ctxProps.setKeepLastMessages(20);
 		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
-		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
-		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter, memoryFlushService);
+		DailyDurableFlushService dailyDurableFlushService = Mockito.mock(DailyDurableFlushService.class);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
 		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
 		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
 
@@ -292,13 +292,13 @@ class AgentFaultInjectionIntegrationTest {
 			agentProps,
 			validator,
 			null,
-			memoryFlushService,
+			null,
 			null,
 			new SessionContextProjector(),
 			new SessionContextPreflightCompactor(
 				contextManager,
 				new SessionContextBudgetEvaluator(ctxProps, tokenCounter),
-				memoryFlushService
+				dailyDurableFlushService
 			)
 		);
 
@@ -334,8 +334,8 @@ class AgentFaultInjectionIntegrationTest {
 		Assertions.assertTrue(snapshot.getMessages().stream().anyMatch(msg -> messageContent(msg).startsWith("answer-2-")));
 		Assertions.assertTrue(snapshot.getMessages().stream().noneMatch(msg -> messageContent(msg).startsWith("question-1-")));
 		Assertions.assertTrue(snapshot.getMessages().stream().noneMatch(msg -> messageContent(msg).startsWith("answer-1-")));
-		Mockito.verify(memoryFlushService, Mockito.times(1))
-			.flushPreCompaction(Mockito.eq("anonymous::s1"), Mockito.anyList());
+		Mockito.verify(dailyDurableFlushService, Mockito.times(1))
+			.flush(Mockito.eq("anonymous::s1"), Mockito.anyList());
 	}
 
 	@Test

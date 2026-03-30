@@ -29,7 +29,7 @@ import com.agenticrag.app.llm.LlmStreamEvent;
 import com.agenticrag.app.llm.LlmToolCall;
 import com.agenticrag.app.llm.LlmToolChoiceMode;
 import com.agenticrag.app.llm.MinimaxReasoningSupport;
-import com.agenticrag.app.memory.MemoryFlushService;
+import com.agenticrag.app.memory.MemoryLifecycleOrchestrator;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
 import com.agenticrag.app.prompt.SystemPromptMode;
@@ -102,7 +102,7 @@ public class AgentStreamingService {
 	private final AgentProperties agentProperties;
 	private final ToolArgumentValidator toolArgumentValidator;
 	private final SessionManager sessionManager;
-	private final MemoryFlushService memoryFlushService;
+	private final MemoryLifecycleOrchestrator memoryLifecycleOrchestrator;
 	private final BenchmarkTurnExecutionSummaryService benchmarkTurnExecutionSummaryService;
 	private final SessionContextProjector sessionContextProjector;
 	private final SessionContextPreflightCompactor sessionContextPreflightCompactor;
@@ -213,7 +213,7 @@ public class AgentStreamingService {
 		AgentProperties agentProperties,
 		ToolArgumentValidator toolArgumentValidator,
 		SessionManager sessionManager,
-		MemoryFlushService memoryFlushService,
+		MemoryLifecycleOrchestrator memoryLifecycleOrchestrator,
 		BenchmarkTurnExecutionSummaryService benchmarkTurnExecutionSummaryService,
 		SessionContextProjector sessionContextProjector,
 		SessionContextPreflightCompactor sessionContextPreflightCompactor
@@ -233,7 +233,7 @@ public class AgentStreamingService {
 			agentProperties,
 			toolArgumentValidator,
 			sessionManager,
-			memoryFlushService,
+			memoryLifecycleOrchestrator,
 			benchmarkTurnExecutionSummaryService,
 			sessionContextProjector,
 			sessionContextPreflightCompactor,
@@ -257,7 +257,7 @@ public class AgentStreamingService {
 		AgentProperties agentProperties,
 		ToolArgumentValidator toolArgumentValidator,
 		SessionManager sessionManager,
-		MemoryFlushService memoryFlushService,
+		MemoryLifecycleOrchestrator memoryLifecycleOrchestrator,
 		BenchmarkTurnExecutionSummaryService benchmarkTurnExecutionSummaryService,
 		SessionContextProjector sessionContextProjector,
 		SessionContextPreflightCompactor sessionContextPreflightCompactor,
@@ -278,7 +278,7 @@ public class AgentStreamingService {
 		this.agentProperties = agentProperties;
 		this.toolArgumentValidator = toolArgumentValidator;
 		this.sessionManager = sessionManager;
-		this.memoryFlushService = memoryFlushService;
+		this.memoryLifecycleOrchestrator = memoryLifecycleOrchestrator;
 		this.benchmarkTurnExecutionSummaryService = benchmarkTurnExecutionSummaryService;
 		this.sessionContextProjector = sessionContextProjector != null ? sessionContextProjector : new SessionContextProjector();
 		this.sessionContextPreflightCompactor = sessionContextPreflightCompactor != null
@@ -454,19 +454,20 @@ public class AgentStreamingService {
 
 					if (isSessionSwitchCommand(prompt)) {
 						log.info(
-							"event=agent_session_switch traceId={} provider={} userId={} sessionId={} command={}",
+						"event=agent_session_switch traceId={} provider={} userId={} sessionId={} command={}",
 							effectiveTraceId,
 							provider,
 							uid,
 							sid,
 							normalizeSwitchReason(prompt)
 						);
-						if (control.isMemoryEnabled() && memoryFlushService != null) {
-							memoryFlushService.flushOnSessionSwitchCommand(
+						if (memoryLifecycleOrchestrator != null) {
+							memoryLifecycleOrchestrator.archiveSession(
 								scopedSid,
 								normalizeSwitchReason(prompt),
 								contextManager.getContext(scopedSid),
-								persistentMessageStore.list(scopedSid)
+								persistentMessageStore.list(scopedSid),
+								control.isMemoryEnabled()
 							);
 						}
 						String newSessionId = createNextSessionId(uid);
@@ -1525,7 +1526,7 @@ public class AgentStreamingService {
 				continue;
 			}
 			String toolName = tool.name().trim();
-			if (!memoryEnabled && "memory_search".equals(toolName)) {
+			if (!memoryEnabled && ("memory_search".equals(toolName) || "memory_get".equals(toolName))) {
 				continue;
 			}
 			allowed.add(toolName);

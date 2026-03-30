@@ -3,14 +3,12 @@ package com.agenticrag.app.chat.context;
 import com.agenticrag.app.chat.message.ChatMessage;
 import com.agenticrag.app.chat.message.ChatMessageType;
 import com.agenticrag.app.chat.message.SystemMessage;
-import com.agenticrag.app.memory.MemoryFlushService;
 import com.agenticrag.app.rag.splitter.TokenCounter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -21,15 +19,6 @@ public class InMemorySessionContextManager implements ContextManager {
 	private final Map<String, List<ChatMessage>> contextsBySessionId = new ConcurrentHashMap<>();
 
 	public InMemorySessionContextManager(SessionContextProperties props, TokenCounter tokenCounter) {
-		this(props, tokenCounter, null);
-	}
-
-	@Autowired
-	public InMemorySessionContextManager(
-		SessionContextProperties props,
-		TokenCounter tokenCounter,
-		MemoryFlushService ignoredMemoryFlushService
-	) {
 		this.props = props;
 		this.budgetEvaluator = new SessionContextBudgetEvaluator(props, tokenCounter);
 	}

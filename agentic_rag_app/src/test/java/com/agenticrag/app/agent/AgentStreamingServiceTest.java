@@ -29,7 +29,7 @@ import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
 import com.agenticrag.app.prompt.SystemPromptMode;
 import com.agenticrag.app.rag.splitter.TokenCounter;
-import com.agenticrag.app.memory.MemoryFlushService;
+import com.agenticrag.app.memory.DailyDurableFlushService;
 import com.agenticrag.app.tool.Tool;
 import com.agenticrag.app.tool.ToolArgumentValidator;
 import com.agenticrag.app.tool.ToolExecutionContext;
@@ -895,6 +895,7 @@ class AgentStreamingServiceTest {
 
 		ToolRouter toolRouter = new ToolRouter();
 		toolRouter.register(new StubExecutionTool("memory_search", objectMapper, executed));
+		toolRouter.register(new StubExecutionTool("memory_get", objectMapper, executed));
 
 		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
 		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
@@ -948,6 +949,7 @@ class AgentStreamingServiceTest {
 		SystemPromptContext promptContext = contextCaptor.getValue();
 		Assertions.assertFalse(promptContext.isMemoryEnabled());
 		Assertions.assertFalse(promptContext.getAllowedToolNames().contains("memory_search"));
+		Assertions.assertFalse(promptContext.getAllowedToolNames().contains("memory_get"));
 	}
 
 	@Test
@@ -976,8 +978,8 @@ class AgentStreamingServiceTest {
 		ctxProps.setMaxTokens(20);
 		ctxProps.setKeepLastMessages(10);
 		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
-		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
-		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter, memoryFlushService);
+		DailyDurableFlushService dailyDurableFlushService = Mockito.mock(DailyDurableFlushService.class);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
 		PersistentMessageStore persistent = Mockito.mock(PersistentMessageStore.class);
 		LocalExecutionContextRecorder recorder = new LocalExecutionContextRecorder();
 
@@ -1012,8 +1014,8 @@ class AgentStreamingServiceTest {
 		).collectList().block(Duration.ofSeconds(5));
 
 		Assertions.assertNotNull(events);
-		Mockito.verify(memoryFlushService, Mockito.never())
-			.flushPreCompaction(Mockito.anyString(), Mockito.anyList());
+		Mockito.verify(dailyDurableFlushService, Mockito.never())
+			.flush(Mockito.anyString(), Mockito.anyList());
 
 		LocalExecutionContextRecorder.LocalExecutionContextSnapshot snapshot = recorder.getLatest("anonymous::s1");
 		Assertions.assertNotNull(snapshot);
@@ -1135,8 +1137,8 @@ class AgentStreamingServiceTest {
 		ctxProps.setPreflightReserveTokens(180);
 		ctxProps.setKeepLastMessages(20);
 		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
-		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
-		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter, memoryFlushService);
+		DailyDurableFlushService dailyDurableFlushService = Mockito.mock(DailyDurableFlushService.class);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
 		contextManager.ensureSystemPrompt("anonymous::s1", "system");
 		contextManager.addMessage("anonymous::s1", new UserMessage("old-1-user-" + repeat("a", 100)));
 		contextManager.addMessage("anonymous::s1", new AssistantMessage("old-1-assistant-" + repeat("a", 100)));
@@ -1162,7 +1164,7 @@ class AgentStreamingServiceTest {
 			new ToolArgumentValidator(),
 			ctxProps,
 			tokenCounter,
-			memoryFlushService
+			dailyDurableFlushService
 		);
 
 		List<LlmStreamEvent> events = service.stream(
@@ -1185,8 +1187,8 @@ class AgentStreamingServiceTest {
 		Assertions.assertTrue(snapshot.getMessages().stream().noneMatch(msg -> messageContent(msg).startsWith("old-1-user-")));
 		Assertions.assertTrue(snapshot.getMessages().stream().noneMatch(msg -> messageContent(msg).startsWith("old-1-assistant-")));
 		Assertions.assertTrue(snapshot.getMessages().stream().anyMatch(msg -> "current question".equals(messageContent(msg))));
-		Mockito.verify(memoryFlushService, Mockito.times(1))
-			.flushPreCompaction(Mockito.eq("anonymous::s1"), Mockito.anyList());
+		Mockito.verify(dailyDurableFlushService, Mockito.times(1))
+			.flush(Mockito.eq("anonymous::s1"), Mockito.anyList());
 	}
 
 	@Test
@@ -1206,8 +1208,8 @@ class AgentStreamingServiceTest {
 		ctxProps.setPreflightReserveTokens(180);
 		ctxProps.setKeepLastMessages(20);
 		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
-		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
-		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter, memoryFlushService);
+		DailyDurableFlushService dailyDurableFlushService = Mockito.mock(DailyDurableFlushService.class);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
 		contextManager.ensureSystemPrompt("anonymous::s1", "system");
 		contextManager.addMessage("anonymous::s1", new UserMessage("old-1-user-" + repeat("a", 100)));
 		contextManager.addMessage("anonymous::s1", new AssistantMessage("old-1-assistant-" + repeat("a", 100)));
@@ -1233,7 +1235,7 @@ class AgentStreamingServiceTest {
 			new ToolArgumentValidator(),
 			ctxProps,
 			tokenCounter,
-			memoryFlushService
+			dailyDurableFlushService
 		);
 
 		List<LlmStreamEvent> events = service.stream(
@@ -1252,8 +1254,8 @@ class AgentStreamingServiceTest {
 		Assertions.assertNotNull(snapshot);
 		Assertions.assertTrue(snapshot.getMessages().stream().anyMatch(msg -> messageContent(msg).startsWith("keep-user-")));
 		Assertions.assertTrue(snapshot.getMessages().stream().noneMatch(msg -> messageContent(msg).startsWith("old-1-user-")));
-		Mockito.verify(memoryFlushService, Mockito.never())
-			.flushPreCompaction(Mockito.anyString(), Mockito.anyList());
+		Mockito.verify(dailyDurableFlushService, Mockito.never())
+			.flush(Mockito.anyString(), Mockito.anyList());
 	}
 
 	@Test
@@ -1273,8 +1275,8 @@ class AgentStreamingServiceTest {
 		ctxProps.setPreflightReserveTokens(180);
 		ctxProps.setKeepLastMessages(20);
 		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
-		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
-		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter, memoryFlushService);
+		DailyDurableFlushService dailyDurableFlushService = Mockito.mock(DailyDurableFlushService.class);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
 		contextManager.ensureSystemPrompt("anonymous::s1", "system");
 		contextManager.addMessage("anonymous::s1", new UserMessage("old-1-user-" + repeat("a", 100)));
 		contextManager.addMessage("anonymous::s1", new AssistantMessage("old-1-assistant-" + repeat("a", 100)));
@@ -1300,7 +1302,7 @@ class AgentStreamingServiceTest {
 			new ToolArgumentValidator(),
 			ctxProps,
 			tokenCounter,
-			memoryFlushService
+			dailyDurableFlushService
 		);
 
 		List<LlmStreamEvent> events = service.stream(
@@ -1322,8 +1324,8 @@ class AgentStreamingServiceTest {
 		Assertions.assertEquals(1, userCount);
 		Assertions.assertEquals(0, assistantCount);
 		Assertions.assertTrue(snapshot.getMessages().stream().noneMatch(msg -> messageContent(msg).startsWith("keep-user-")));
-		Mockito.verify(memoryFlushService, Mockito.never())
-			.flushPreCompaction(Mockito.anyString(), Mockito.anyList());
+		Mockito.verify(dailyDurableFlushService, Mockito.never())
+			.flush(Mockito.anyString(), Mockito.anyList());
 	}
 
 	@Test
@@ -1930,7 +1932,7 @@ class AgentStreamingServiceTest {
 		ToolArgumentValidator validator,
 		SessionContextProperties ctxProps,
 		TokenCounter tokenCounter,
-		MemoryFlushService memoryFlushService
+		DailyDurableFlushService dailyDurableFlushService
 	) {
 		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
 		openAiProps.setModel("gpt-test");
@@ -1951,13 +1953,13 @@ class AgentStreamingServiceTest {
 			agentProperties,
 			validator,
 			null,
-			memoryFlushService,
+			null,
 			null,
 			new SessionContextProjector(),
 			new SessionContextPreflightCompactor(
 				contextManager,
 				new SessionContextBudgetEvaluator(ctxProps, tokenCounter),
-				memoryFlushService
+				dailyDurableFlushService
 			),
 			new TurnContextAutoCompactor()
 		);
@@ -1976,7 +1978,7 @@ class AgentStreamingServiceTest {
 		ToolArgumentValidator validator,
 		SessionContextProperties ctxProps,
 		TokenCounter tokenCounter,
-		MemoryFlushService memoryFlushService,
+		DailyDurableFlushService dailyDurableFlushService,
 		AgentTurnContextProperties turnProps
 	) {
 		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
@@ -1998,13 +2000,13 @@ class AgentStreamingServiceTest {
 			agentProperties,
 			validator,
 			null,
-			memoryFlushService,
+			null,
 			null,
 			new SessionContextProjector(),
 			new SessionContextPreflightCompactor(
 				contextManager,
 				new SessionContextBudgetEvaluator(ctxProps, tokenCounter),
-				memoryFlushService
+				dailyDurableFlushService
 			),
 			new TurnContextAutoCompactor(turnProps, tokenCounter)
 		);

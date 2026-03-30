@@ -5,6 +5,7 @@ import com.agenticrag.app.chat.context.SessionContextProperties;
 import com.agenticrag.app.chat.store.PersistentMessageStore;
 import com.agenticrag.app.config.MinimaxClientProperties;
 import com.agenticrag.app.config.OpenAiClientProperties;
+import com.agenticrag.app.memory.MemoryLifecycleOrchestrator;
 import com.agenticrag.app.prompt.SystemPromptContext;
 import com.agenticrag.app.prompt.SystemPromptManager;
 import com.agenticrag.app.prompt.SystemPromptMode;
@@ -73,6 +74,59 @@ class StreamingChatServiceTest {
 		SystemPromptContext promptContext = contextCaptor.getValue();
 		Assertions.assertEquals(SystemPromptMode.LLM, promptContext.getMode());
 		Assertions.assertFalse(promptContext.isIncludeTools());
+	}
+
+	@Test
+	void sessionSwitchUsesArchiveOrchestratorInsteadOfLegacyFlush() {
+		ObjectMapper objectMapper = new ObjectMapper();
+
+		OpenAIClient openAiClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+		OpenAIClient minimaxClient = Mockito.mock(OpenAIClient.class, Answers.RETURNS_DEEP_STUBS);
+
+		OpenAiClientProperties openAiProps = new OpenAiClientProperties();
+		openAiProps.setModel("gpt-test");
+		MinimaxClientProperties minimaxProps = new MinimaxClientProperties();
+		minimaxProps.setModel("minimax-test");
+
+		SystemPromptManager systemPromptManager = Mockito.mock(SystemPromptManager.class);
+		Mockito.when(systemPromptManager.build(Mockito.any())).thenReturn("system");
+
+		SessionContextProperties ctxProps = new SessionContextProperties();
+		ctxProps.setMaxTokens(100000);
+		ctxProps.setKeepLastMessages(100);
+		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(ctxProps, tokenCounter);
+		contextManager.ensureSystemPrompt("u1::s1", "system");
+		PersistentMessageStore persistentMessageStore = Mockito.mock(PersistentMessageStore.class);
+		MemoryLifecycleOrchestrator orchestrator = Mockito.mock(MemoryLifecycleOrchestrator.class);
+
+		StreamingChatService service = new StreamingChatService(
+			openAiClient,
+			minimaxClient,
+			openAiProps,
+			minimaxProps,
+			new ToolRouter(),
+			objectMapper,
+			systemPromptManager,
+			contextManager,
+			persistentMessageStore,
+			null,
+			null,
+			orchestrator
+		);
+
+		List<LlmStreamEvent> events = service.stream(LlmProvider.OPENAI, "u1", "s1", "/new", false, LlmToolChoiceMode.NONE)
+			.collectList()
+			.block(Duration.ofSeconds(5));
+
+		Assertions.assertNotNull(events);
+		Mockito.verify(orchestrator).archiveSession(
+			Mockito.eq("u1::s1"),
+			Mockito.anyString(),
+			Mockito.anyList(),
+			Mockito.anyList(),
+			Mockito.eq(true)
+		);
 	}
 
 	private static ChatCompletionChunk textChunk(String text) {

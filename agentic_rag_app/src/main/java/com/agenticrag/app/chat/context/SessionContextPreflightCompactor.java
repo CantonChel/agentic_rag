@@ -3,7 +3,7 @@ package com.agenticrag.app.chat.context;
 import com.agenticrag.app.chat.message.ChatMessage;
 import com.agenticrag.app.chat.message.ChatMessageType;
 import com.agenticrag.app.chat.message.SystemMessage;
-import com.agenticrag.app.memory.MemoryFlushService;
+import com.agenticrag.app.memory.DailyDurableFlushService;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedList;
@@ -15,7 +15,7 @@ import org.springframework.stereotype.Service;
 public class SessionContextPreflightCompactor {
 	private final ContextManager contextManager;
 	private final SessionContextBudgetEvaluator budgetEvaluator;
-	private final MemoryFlushService memoryFlushService;
+	private final DailyDurableFlushService dailyDurableFlushService;
 
 	public SessionContextPreflightCompactor(ContextManager contextManager) {
 		this(contextManager, null, null);
@@ -24,11 +24,11 @@ public class SessionContextPreflightCompactor {
 	public SessionContextPreflightCompactor(
 		ContextManager contextManager,
 		SessionContextBudgetEvaluator budgetEvaluator,
-		MemoryFlushService memoryFlushService
+		DailyDurableFlushService dailyDurableFlushService
 	) {
 		this.contextManager = contextManager;
 		this.budgetEvaluator = budgetEvaluator;
-		this.memoryFlushService = memoryFlushService;
+		this.dailyDurableFlushService = dailyDurableFlushService;
 	}
 
 	@Autowired
@@ -36,9 +36,9 @@ public class SessionContextPreflightCompactor {
 		ContextManager contextManager,
 		SessionContextProperties props,
 		com.agenticrag.app.rag.splitter.TokenCounter tokenCounter,
-		MemoryFlushService memoryFlushService
+		DailyDurableFlushService dailyDurableFlushService
 	) {
-		this(contextManager, new SessionContextBudgetEvaluator(props, tokenCounter), memoryFlushService);
+		this(contextManager, new SessionContextBudgetEvaluator(props, tokenCounter), dailyDurableFlushService);
 	}
 
 	public List<ChatMessage> prepareForTurn(String sessionId, SessionContextAppendOptions options) {
@@ -53,8 +53,8 @@ public class SessionContextPreflightCompactor {
 		SessionContextAppendOptions effectiveOptions = options != null
 			? options
 			: SessionContextAppendOptions.defaults();
-		if (memoryFlushService != null && effectiveOptions.isAllowPreCompactionFlush()) {
-			memoryFlushService.flushPreCompaction(sessionId, currentContext);
+		if (dailyDurableFlushService != null && effectiveOptions.isAllowPreCompactionFlush()) {
+			dailyDurableFlushService.flush(sessionId, currentContext);
 		}
 
 		List<ChatMessage> compacted = compact(currentContext, sessionId);

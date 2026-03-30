@@ -7,22 +7,16 @@ public class MemoryProperties {
 	private boolean enabled = true;
 	private String workspaceRoot = "..";
 	private String userMemoryBaseDir = "memory/users";
-	private boolean includeTranscripts = false;
-	private int transcriptMaxMessagesPerSession = 30;
 	private boolean flushEnabled = true;
-	private boolean preCompactionFlushEnabled = true;
-	private boolean sessionResetFlushEnabled = true;
-	private int flushRecentMessages = 12;
 	private String flushProvider = "minimax";
 	private String flushModel = "";
 	private int flushMaxCompletionTokens = 700;
 	private int flushInputMaxChars = 6000;
-	private int sessionSnapshotRecentMessages = 15;
 	private int slugMaxLength = 64;
 	private int maxChunkChars = 800;
-	private int chunkOverlapChars = 80;
 	private int topKCandidates = 20;
 	private int topK = 5;
+	private String embeddingCacheDir = "memory/.cache/embeddings";
 
 	public boolean isEnabled() {
 		return enabled;
@@ -48,52 +42,12 @@ public class MemoryProperties {
 		this.userMemoryBaseDir = userMemoryBaseDir;
 	}
 
-	public boolean isIncludeTranscripts() {
-		return includeTranscripts;
-	}
-
-	public void setIncludeTranscripts(boolean includeTranscripts) {
-		this.includeTranscripts = includeTranscripts;
-	}
-
-	public int getTranscriptMaxMessagesPerSession() {
-		return transcriptMaxMessagesPerSession;
-	}
-
-	public void setTranscriptMaxMessagesPerSession(int transcriptMaxMessagesPerSession) {
-		this.transcriptMaxMessagesPerSession = transcriptMaxMessagesPerSession;
-	}
-
 	public boolean isFlushEnabled() {
 		return flushEnabled;
 	}
 
 	public void setFlushEnabled(boolean flushEnabled) {
 		this.flushEnabled = flushEnabled;
-	}
-
-	public boolean isPreCompactionFlushEnabled() {
-		return preCompactionFlushEnabled;
-	}
-
-	public void setPreCompactionFlushEnabled(boolean preCompactionFlushEnabled) {
-		this.preCompactionFlushEnabled = preCompactionFlushEnabled;
-	}
-
-	public boolean isSessionResetFlushEnabled() {
-		return sessionResetFlushEnabled;
-	}
-
-	public void setSessionResetFlushEnabled(boolean sessionResetFlushEnabled) {
-		this.sessionResetFlushEnabled = sessionResetFlushEnabled;
-	}
-
-	public int getFlushRecentMessages() {
-		return flushRecentMessages;
-	}
-
-	public void setFlushRecentMessages(int flushRecentMessages) {
-		this.flushRecentMessages = flushRecentMessages;
 	}
 
 	public String getFlushProvider() {
@@ -128,14 +82,6 @@ public class MemoryProperties {
 		this.flushInputMaxChars = flushInputMaxChars;
 	}
 
-	public int getSessionSnapshotRecentMessages() {
-		return sessionSnapshotRecentMessages;
-	}
-
-	public void setSessionSnapshotRecentMessages(int sessionSnapshotRecentMessages) {
-		this.sessionSnapshotRecentMessages = sessionSnapshotRecentMessages;
-	}
-
 	public int getSlugMaxLength() {
 		return slugMaxLength;
 	}
@@ -152,14 +98,6 @@ public class MemoryProperties {
 		this.maxChunkChars = maxChunkChars;
 	}
 
-	public int getChunkOverlapChars() {
-		return chunkOverlapChars;
-	}
-
-	public void setChunkOverlapChars(int chunkOverlapChars) {
-		this.chunkOverlapChars = chunkOverlapChars;
-	}
-
 	public int getTopKCandidates() {
 		return topKCandidates;
 	}
@@ -174,5 +112,13 @@ public class MemoryProperties {
 
 	public void setTopK(int topK) {
 		this.topK = topK;
+	}
+
+	public String getEmbeddingCacheDir() {
+		return embeddingCacheDir;
+	}
+
+	public void setEmbeddingCacheDir(String embeddingCacheDir) {
+		this.embeddingCacheDir = embeddingCacheDir;
 	}
 }

@@ -1,8 +1,7 @@
 package com.agenticrag.app.tool.impl;
 
 import com.agenticrag.app.memory.MemoryRecallService;
-import com.agenticrag.app.rag.context.ContextAssembler;
-import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.memory.MemorySearchHit;
 import com.agenticrag.app.tool.Tool;
 import com.agenticrag.app.tool.ToolExecutionContext;
 import com.agenticrag.app.tool.ToolResult;
@@ -10,6 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.List;
+import java.util.Locale;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -18,16 +18,13 @@ import reactor.core.scheduler.Schedulers;
 public class MemorySearchTool implements Tool {
 	private final ObjectMapper objectMapper;
 	private final MemoryRecallService memoryRecallService;
-	private final ContextAssembler contextAssembler;
 
 	public MemorySearchTool(
 		ObjectMapper objectMapper,
-		MemoryRecallService memoryRecallService,
-		ContextAssembler contextAssembler
+		MemoryRecallService memoryRecallService
 	) {
 		this.objectMapper = objectMapper;
 		this.memoryRecallService = memoryRecallService;
-		this.contextAssembler = contextAssembler;
 	}
 
 	@Override
@@ -37,7 +34,7 @@ public class MemorySearchTool implements Tool {
 
 	@Override
 	public String description() {
-		return "Search workspace memory for user history, prior decisions, constraints, and reminders. Query will search global MEMORY.md plus current user's memory and session transcripts. Use this before answering questions about past interactions.";
+		return "Search markdown-backed memory for candidate history, decisions, preferences, constraints, and reminders. Use memory_get after this to read exact lines from the returned path and line range.";
 	}
 
 	@Override
@@ -66,11 +63,37 @@ public class MemorySearchTool implements Tool {
 				topK = arguments.get("topK").asInt(5);
 			}
 
-			List<TextChunk> recalled = memoryRecallService.search(context.getUserId(), query, topK);
-			if (recalled == null || recalled.isEmpty()) {
-				return ToolResult.ok("<context>\n</context>\n");
+			List<MemorySearchHit> hits = memoryRecallService.search(context.getUserId(), query, topK);
+			if (hits == null || hits.isEmpty()) {
+				return ToolResult.ok("<memory_search_results>\n</memory_search_results>\n");
 			}
-			return ToolResult.ok(contextAssembler.assemble(recalled));
+			return ToolResult.ok(formatHits(hits));
 		}).subscribeOn(Schedulers.boundedElastic());
+	}
+
+	private String formatHits(List<MemorySearchHit> hits) {
+		StringBuilder out = new StringBuilder();
+		out.append("<memory_search_results>\n");
+		int index = 1;
+		for (MemorySearchHit hit : hits) {
+			if (hit == null) {
+				continue;
+			}
+			out.append("[result ").append(index).append("]\n");
+			out.append("path: ").append(safe(hit.getPath())).append("\n");
+			out.append("kind: ").append(safe(hit.getKind())).append("\n");
+			out.append("blockId: ").append(safe(hit.getBlockId())).append("\n");
+			out.append("lines: ").append(hit.getLineStart()).append("-").append(hit.getLineEnd()).append("\n");
+			out.append("score: ").append(String.format(Locale.ROOT, "%.4f", hit.getScore())).append("\n");
+			out.append("snippet:\n");
+			out.append(safe(hit.getSnippet())).append("\n\n");
+			index++;
+		}
+		out.append("</memory_search_results>\n");
+		return out.toString();
+	}
+
+	private String safe(String value) {
+		return value == null ? "" : value;
 	}
 }

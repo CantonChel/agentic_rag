@@ -4,7 +4,7 @@ import com.agenticrag.app.chat.message.ChatMessage;
 import com.agenticrag.app.chat.message.ChatMessageType;
 import com.agenticrag.app.chat.message.AssistantMessage;
 import com.agenticrag.app.chat.message.UserMessage;
-import com.agenticrag.app.memory.MemoryFlushService;
+import com.agenticrag.app.memory.DailyDurableFlushService;
 import com.agenticrag.app.rag.splitter.TokenCounter;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,19 +27,19 @@ class SessionContextPreflightCompactorTest {
 		contextManager.addMessage(sid, new AssistantMessage(repeat("a", 80)));
 
 		List<String> before = toSequence(contextManager.getContext(sid));
-		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
+		DailyDurableFlushService dailyDurableFlushService = Mockito.mock(DailyDurableFlushService.class);
 		SessionContextPreflightCompactor compactor = new SessionContextPreflightCompactor(
 			contextManager,
 			new SessionContextBudgetEvaluator(props, tokenCounter),
-			memoryFlushService
+			dailyDurableFlushService
 		);
 
 		List<ChatMessage> prepared = compactor.prepareForTurn(sid, SessionContextAppendOptions.defaults());
 
 		Assertions.assertEquals(before, toSequence(prepared));
 		Assertions.assertEquals(before, toSequence(contextManager.getContext(sid)));
-		Mockito.verify(memoryFlushService, Mockito.never())
-			.flushPreCompaction(Mockito.anyString(), Mockito.anyList());
+		Mockito.verify(dailyDurableFlushService, Mockito.never())
+			.flush(Mockito.anyString(), Mockito.anyList());
 	}
 
 	@Test
@@ -57,11 +57,11 @@ class SessionContextPreflightCompactorTest {
 		contextManager.addMessage(sid, new UserMessage("u2-" + repeat("y", 108)));
 		contextManager.addMessage(sid, new AssistantMessage("a2-" + repeat("y", 108)));
 
-		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
+		DailyDurableFlushService dailyDurableFlushService = Mockito.mock(DailyDurableFlushService.class);
 		SessionContextPreflightCompactor compactor = new SessionContextPreflightCompactor(
 			contextManager,
 			new SessionContextBudgetEvaluator(props, tokenCounter),
-			memoryFlushService
+			dailyDurableFlushService
 		);
 
 		List<ChatMessage> prepared = compactor.prepareForTurn(sid, SessionContextAppendOptions.defaults());
@@ -73,8 +73,8 @@ class SessionContextPreflightCompactorTest {
 		Assertions.assertTrue(prepared.stream().noneMatch(message -> contentOf(message).startsWith("u1-")));
 		Assertions.assertTrue(prepared.stream().noneMatch(message -> contentOf(message).startsWith("a1-")));
 		Assertions.assertEquals(toSequence(prepared), toSequence(contextManager.getContext(sid)));
-		Mockito.verify(memoryFlushService, Mockito.times(1))
-			.flushPreCompaction(Mockito.eq(sid), Mockito.anyList());
+		Mockito.verify(dailyDurableFlushService, Mockito.times(1))
+			.flush(Mockito.eq(sid), Mockito.anyList());
 	}
 
 	@Test
@@ -93,11 +93,11 @@ class SessionContextPreflightCompactorTest {
 		contextManager.addMessage(sid, new UserMessage("u2-" + repeat("文", 39)));
 		contextManager.addMessage(sid, new AssistantMessage("a2-" + repeat("文", 39)));
 
-		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
+		DailyDurableFlushService dailyDurableFlushService = Mockito.mock(DailyDurableFlushService.class);
 		SessionContextPreflightCompactor compactor = new SessionContextPreflightCompactor(
 			contextManager,
 			new SessionContextBudgetEvaluator(props, tokenCounter),
-			memoryFlushService
+			dailyDurableFlushService
 		);
 
 		List<ChatMessage> prepared = compactor.prepareForTurn(sid, SessionContextAppendOptions.defaults());
@@ -105,8 +105,8 @@ class SessionContextPreflightCompactorTest {
 		Assertions.assertEquals(3, prepared.size());
 		Assertions.assertTrue(prepared.stream().anyMatch(message -> contentOf(message).startsWith("u2-")));
 		Assertions.assertTrue(prepared.stream().noneMatch(message -> contentOf(message).startsWith("u1-")));
-		Mockito.verify(memoryFlushService, Mockito.times(1))
-			.flushPreCompaction(Mockito.eq(sid), Mockito.anyList());
+		Mockito.verify(dailyDurableFlushService, Mockito.times(1))
+			.flush(Mockito.eq(sid), Mockito.anyList());
 	}
 
 	@Test
@@ -124,11 +124,11 @@ class SessionContextPreflightCompactorTest {
 		contextManager.addMessage(sid, new UserMessage("u2-" + repeat("y", 108)));
 		contextManager.addMessage(sid, new AssistantMessage("a2-" + repeat("y", 108)));
 
-		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
+		DailyDurableFlushService dailyDurableFlushService = Mockito.mock(DailyDurableFlushService.class);
 		SessionContextPreflightCompactor compactor = new SessionContextPreflightCompactor(
 			contextManager,
 			new SessionContextBudgetEvaluator(props, tokenCounter),
-			memoryFlushService
+			dailyDurableFlushService
 		);
 
 		List<ChatMessage> prepared = compactor.prepareForTurn(
@@ -139,8 +139,8 @@ class SessionContextPreflightCompactorTest {
 		Assertions.assertEquals(3, prepared.size());
 		Assertions.assertTrue(prepared.stream().anyMatch(message -> contentOf(message).startsWith("u2-")));
 		Assertions.assertTrue(prepared.stream().noneMatch(message -> contentOf(message).startsWith("u1-")));
-		Mockito.verify(memoryFlushService, Mockito.never())
-			.flushPreCompaction(Mockito.anyString(), Mockito.anyList());
+		Mockito.verify(dailyDurableFlushService, Mockito.never())
+			.flush(Mockito.anyString(), Mockito.anyList());
 	}
 
 	@Test
@@ -158,12 +158,12 @@ class SessionContextPreflightCompactorTest {
 		contextManager.addMessage(sid, new UserMessage("u2-" + repeat("y", 218)));
 		contextManager.addMessage(sid, new AssistantMessage("a2-" + repeat("y", 218)));
 
-		MemoryFlushService memoryFlushService = Mockito.mock(MemoryFlushService.class);
+		DailyDurableFlushService dailyDurableFlushService = Mockito.mock(DailyDurableFlushService.class);
 		SessionContextBudgetEvaluator budgetEvaluator = new SessionContextBudgetEvaluator(props, tokenCounter);
 		SessionContextPreflightCompactor compactor = new SessionContextPreflightCompactor(
 			contextManager,
 			budgetEvaluator,
-			memoryFlushService
+			dailyDurableFlushService
 		);
 
 		List<ChatMessage> prepared = compactor.prepareForTurn(sid, SessionContextAppendOptions.defaults());
@@ -173,8 +173,8 @@ class SessionContextPreflightCompactorTest {
 		Assertions.assertTrue(prepared.stream().anyMatch(message -> contentOf(message).startsWith("a2-")));
 		Assertions.assertTrue(prepared.stream().noneMatch(message -> contentOf(message).startsWith("u1-")));
 		Assertions.assertTrue(budgetEvaluator.evaluatePreflight(prepared).isExceeded());
-		Mockito.verify(memoryFlushService, Mockito.times(1))
-			.flushPreCompaction(Mockito.eq(sid), Mockito.anyList());
+		Mockito.verify(dailyDurableFlushService, Mockito.times(1))
+			.flush(Mockito.eq(sid), Mockito.anyList());
 	}
 
 	private static String contentOf(ChatMessage message) {

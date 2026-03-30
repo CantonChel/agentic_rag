@@ -1,164 +1,160 @@
 package com.agenticrag.app.memory;
 
-import com.agenticrag.app.chat.store.PersistentMessageStore;
-import com.agenticrag.app.chat.store.StoredMessageEntity;
 import com.agenticrag.app.rag.embedding.EmbeddingModel;
-import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.embedding.OpenAiEmbeddingProperties;
+import com.agenticrag.app.rag.embedding.RagEmbeddingProperties;
+import com.agenticrag.app.rag.embedding.SiliconFlowEmbeddingProperties;
 import com.agenticrag.app.rag.store.CosineSimilarity;
-import com.agenticrag.app.session.SessionScope;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import org.springframework.stereotype.Service;
 
 @Service
 public class MemoryRecallService {
 	private final MemoryProperties properties;
 	private final EmbeddingModel embeddingModel;
-	private final PersistentMessageStore persistentMessageStore;
-	private final Map<String, CachedDocument> cacheByFilePath = new java.util.concurrent.ConcurrentHashMap<>();
+	private final MemoryFileService memoryFileService;
+	private final MemoryBlockParser memoryBlockParser;
+	private final RagEmbeddingProperties ragEmbeddingProperties;
+	private final OpenAiEmbeddingProperties openAiEmbeddingProperties;
+	private final SiliconFlowEmbeddingProperties siliconFlowEmbeddingProperties;
+	private final ObjectMapper objectMapper;
+	private final Map<String, CachedDocument> cacheByFilePath = new ConcurrentHashMap<>();
 
-	/**
-	 * 构造记忆召回服务，注入配置、向量模型和消息存储。
-	 */
 	public MemoryRecallService(
 		MemoryProperties properties,
 		EmbeddingModel embeddingModel,
-		PersistentMessageStore persistentMessageStore
+		MemoryFileService memoryFileService,
+		MemoryBlockParser memoryBlockParser,
+		RagEmbeddingProperties ragEmbeddingProperties,
+		OpenAiEmbeddingProperties openAiEmbeddingProperties,
+		SiliconFlowEmbeddingProperties siliconFlowEmbeddingProperties,
+		ObjectMapper objectMapper
 	) {
 		this.properties = properties;
 		this.embeddingModel = embeddingModel;
-		this.persistentMessageStore = persistentMessageStore;
+		this.memoryFileService = memoryFileService;
+		this.memoryBlockParser = memoryBlockParser;
+		this.ragEmbeddingProperties = ragEmbeddingProperties;
+		this.openAiEmbeddingProperties = openAiEmbeddingProperties;
+		this.siliconFlowEmbeddingProperties = siliconFlowEmbeddingProperties;
+		this.objectMapper = objectMapper;
 	}
 
-	/**
-	 * 对指定用户执行记忆检索，融合文件记忆与会话记忆并返回 TopK 片段。
-	 */
-	public List<TextChunk> search(String userId, String query, Integer requestedTopK) {
+	public List<MemorySearchHit> search(String userId, String query, Integer requestedTopK) {
 		if (!properties.isEnabled()) {
 			return new ArrayList<>();
 		}
-		if (query == null || query.trim().isEmpty()) {
+		String normalizedQuery = query == null ? "" : query.trim();
+		if (normalizedQuery.isEmpty()) {
 			return new ArrayList<>();
 		}
-		String uid = SessionScope.normalizeUserId(userId);
 
 		List<CandidateChunk> candidates = new ArrayList<>();
-		candidates.addAll(loadFileCandidates(uid));
-		candidates.addAll(loadTranscriptCandidates(uid));
+		for (Path file : memoryFileService.discoverMemoryFiles(userId, true)) {
+			candidates.addAll(loadOrRefreshFileChunks(userId, file));
+		}
 		if (candidates.isEmpty()) {
 			return new ArrayList<>();
 		}
 
-		// 对查询文本做一次向量化，用于后续和每个候选块做余弦相似度。
-		List<Double> queryEmbedding = embedOne(query.trim());
-		// 逐个候选块计算融合分数（向量分 + 关键词分）。
+		List<Double> queryEmbedding = embedOne(normalizedQuery);
 		for (CandidateChunk candidate : candidates) {
-			// 关键词命中分，刻画“字面相关性”。
-			double lexical = lexicalScore(query, candidate.text);
-			// 默认向量分为 0，只有向量齐全时才计算。
+			double lexical = lexicalScore(normalizedQuery, candidate.text);
 			double vector = 0.0;
-			// 查询向量和候选向量都存在时，计算余弦相似度。
 			if (queryEmbedding != null && candidate.embedding != null) {
-				// 计算语义相似度分数。
 				vector = CosineSimilarity.cosine(queryEmbedding, candidate.embedding);
 			}
-			// 融合打分：有查询向量时用 0.68*语义 + 0.32*字面，否则仅用字面分。
-			double base = queryEmbedding != null ? (0.68 * vector + 0.32 * lexical) : lexical;
-			candidate.score = base + candidate.sourceBoost;
+			candidate.score = queryEmbedding != null && candidate.embedding != null
+				? (0.68 * vector + 0.32 * lexical)
+				: lexical;
 		}
 
-		// 决定最终返回条数：优先用请求参数，其次配置默认值。
 		int topK = requestedTopK != null && requestedTopK > 0 ? requestedTopK : properties.getTopK();
-		// 决定排序后的候选截断上限，避免后续流式处理过多数据。
 		int topCandidates = properties.getTopKCandidates() > 0 ? properties.getTopKCandidates() : 20;
-		// 用于去重，避免同来源同文本重复返回。
-		Set<String> seen = new HashSet<>();
-		// 按融合分从高到低排序后，按候选上限、去重和最终 topK 依次截断并输出 TextChunk。
+		Set<String> seen = new LinkedHashSet<>();
 		return candidates.stream()
-			// 先按 score 降序排序，高分优先。
 			.sorted(Comparator.comparingDouble((CandidateChunk c) -> c.score).reversed())
-			// 第一层截断：只保留前 topCandidates 个高分候选。
 			.limit(topCandidates)
-			// 去重：source + text 作为唯一键，只保留第一次出现。
-			.filter(c -> seen.add(c.source + "|" + c.text))
-			// 第二层截断：返回给调用方的最终 TopK。
+			.filter(candidate -> seen.add(candidate.path + "|" + candidate.blockId + "|" + candidate.lineStart + "|" + candidate.lineEnd))
 			.limit(topK > 0 ? topK : 5)
-			// 转成统一对外结构 TextChunk。
-			.map(this::toTextChunk)
-			// 收集成列表返回。
+			.map(candidate -> new MemorySearchHit(
+				candidate.path,
+				candidate.kind,
+				candidate.blockId,
+				candidate.lineStart,
+				candidate.lineEnd,
+				candidate.score,
+				candidate.text
+			))
 			.collect(Collectors.toList());
 	}
 
-	/**
-	 * 将内部候选块转换为统一的 TextChunk 输出结构。
-	 */
-	private TextChunk toTextChunk(CandidateChunk candidate) {
-		Map<String, Object> metadata = new HashMap<>();
-		metadata.put("source", candidate.source);
-		return new TextChunk(
-			candidate.source + "#" + candidate.index,
-			candidate.source,
-			candidate.text,
-			candidate.embedding,
-			metadata
+	public MemoryReadResult get(String userId, String path, Integer lineStart, Integer lineEnd) {
+		Path file = memoryFileService.resolveReadablePath(userId, path);
+		if (file == null) {
+			return null;
+		}
+		int start = lineStart != null ? lineStart.intValue() : 1;
+		int end = lineEnd != null ? lineEnd.intValue() : start;
+		if (start < 1 || end < start) {
+			return null;
+		}
+		List<String> lines;
+		try {
+			lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+		} catch (IOException e) {
+			return null;
+		}
+		if (lines.isEmpty() || start > lines.size()) {
+			return null;
+		}
+		int boundedEnd = Math.min(end, lines.size());
+		StringBuilder content = new StringBuilder();
+		for (int i = start; i <= boundedEnd; i++) {
+			if (content.length() > 0) {
+				content.append('\n');
+			}
+			content.append(lines.get(i - 1));
+		}
+
+		String kind = memoryFileService.kindOf(userId, file);
+		String blockId = null;
+		for (ParsedMemoryBlock block : memoryBlockParser.parse(userId, file)) {
+			if (start >= block.getStartLine() && boundedEnd <= block.getEndLine()) {
+				blockId = block.getMetadata() != null ? block.getMetadata().getBlockId() : null;
+				kind = block.getKind();
+				break;
+			}
+		}
+		return new MemoryReadResult(
+			memoryFileService.relPath(file),
+			kind,
+			blockId,
+			start,
+			boundedEnd,
+			content.toString()
 		);
 	}
 
-	/**
-	 * 读取并汇总用户可见的 Markdown 文件候选块。
-	 */
-	private List<CandidateChunk> loadFileCandidates(String userId) {
-		List<Path> files = discoverMemoryFiles(userId);
-		List<CandidateChunk> out = new ArrayList<>();
-		for (Path file : files) {
-			out.addAll(loadOrRefreshFileChunks(file));
-		}
-		return out;
-	}
-
-	/**
-	 * 发现可参与检索的文件集合：全局 MEMORY.md + 用户私有 memory 目录。
-	 */
-	private List<Path> discoverMemoryFiles(String userId) {
-		Path root = workspaceRoot();
-		List<Path> files = new ArrayList<>();
-		Path memoryFile = root.resolve("MEMORY.md");
-		if (Files.exists(memoryFile) && Files.isRegularFile(memoryFile)) {
-			files.add(memoryFile);
-		}
-
-		Path userMemoryDir = root.resolve(properties.getUserMemoryBaseDir()).resolve(userId);
-		if (Files.exists(userMemoryDir) && Files.isDirectory(userMemoryDir)) {
-			try (Stream<Path> walk = Files.walk(userMemoryDir)) {
-				walk.filter(Files::isRegularFile)
-					.filter(p -> p.getFileName().toString().toLowerCase().endsWith(".md"))
-					.sorted()
-					.forEach(files::add);
-			} catch (IOException ignored) {
-				// ignore broken memory path
-			}
-		}
-		return files;
-	}
-
-	/**
-	 * 按文件内容增量加载候选块；命中缓存时直接复用，未命中时重分块并重算向量。
-	 */
-	private List<CandidateChunk> loadOrRefreshFileChunks(Path file) {
+	private List<CandidateChunk> loadOrRefreshFileChunks(String userId, Path file) {
 		String abs = file.toAbsolutePath().normalize().toString();
 		String content;
 		try {
@@ -175,119 +171,104 @@ public class MemoryRecallService {
 			return cloneCandidates(cached.chunks);
 		}
 
-		List<String> parts = splitIntoChunks(content);
-		List<List<Double>> vectors = embedBatch(parts);
+		List<ChunkSeed> seeds = new ArrayList<>();
+		for (ParsedMemoryBlock block : memoryBlockParser.parseContent(userId, file, content)) {
+			seeds.addAll(splitBlockIntoChunks(block));
+		}
+		if (seeds.isEmpty()) {
+			cacheByFilePath.put(abs, new CachedDocument(hash, new ArrayList<>()));
+			return new ArrayList<>();
+		}
+
+		Map<String, List<Double>> embeddingsByChunkHash = loadEmbeddings(seeds);
 		List<CandidateChunk> chunks = new ArrayList<>();
-		String rel = relPath(file);
-		for (int i = 0; i < parts.size(); i++) {
-			chunks.add(new CandidateChunk(i, rel + "#chunk-" + (i + 1), parts.get(i), vectorAt(vectors, i), 0.05));
+		for (ChunkSeed seed : seeds) {
+			chunks.add(new CandidateChunk(
+				seed.path,
+				seed.kind,
+				seed.blockId,
+				seed.lineStart,
+				seed.lineEnd,
+				seed.text,
+				embeddingsByChunkHash.get(seed.chunkHash)
+			));
 		}
 		cacheByFilePath.put(abs, new CachedDocument(hash, cloneCandidates(chunks)));
 		return chunks;
 	}
 
-	/**
-	 * 从当前用户的历史会话消息构建候选块，作为 episodic memory 检索来源。
-	 */
-	private List<CandidateChunk> loadTranscriptCandidates(String userId) {
-		if (!properties.isIncludeTranscripts()) {
+	private List<ChunkSeed> splitBlockIntoChunks(ParsedMemoryBlock block) {
+		String content = block.getContent() != null ? block.getContent().trim() : "";
+		if (content.isEmpty()) {
 			return new ArrayList<>();
 		}
-		List<String> scopedSessionIds = persistentMessageStore.listSessionIds().stream()
-			.filter(scoped -> userId.equals(SessionScope.userIdFromScopedSessionId(scoped)))
-			.sorted()
-			.collect(Collectors.toList());
-		if (scopedSessionIds.isEmpty()) {
-			return new ArrayList<>();
-		}
-
-		List<CandidateChunk> out = new ArrayList<>();
-		for (String scopedSessionId : scopedSessionIds) {
-			String rawSessionId = SessionScope.sessionIdFromScopedSessionId(scopedSessionId);
-			List<StoredMessageEntity> messages = persistentMessageStore.list(scopedSessionId);
-			if (messages == null || messages.isEmpty()) {
-				continue;
-			}
-			List<String> transcriptLines = new ArrayList<>();
-			int max = properties.getTranscriptMaxMessagesPerSession() > 0 ? properties.getTranscriptMaxMessagesPerSession() : 30;
-			int start = Math.max(0, messages.size() - max);
-			for (int i = start; i < messages.size(); i++) {
-				StoredMessageEntity message = messages.get(i);
-				if (message == null || message.getType() == null || message.getContent() == null) {
-					continue;
-				}
-				String type = message.getType().trim().toUpperCase();
-				if (!"USER".equals(type) && !"ASSISTANT".equals(type) && !"THINKING".equals(type)) {
-					continue;
-				}
-				String text = message.getContent().trim();
-				if (text.isEmpty()) {
-					continue;
-				}
-				transcriptLines.add(type + ": " + text);
-			}
-			if (transcriptLines.isEmpty()) {
-				continue;
-			}
-
-			String transcript = String.join("\n", transcriptLines);
-			List<String> chunks = splitIntoChunks(transcript);
-			List<List<Double>> vectors = embedBatch(chunks);
-			for (int i = 0; i < chunks.size(); i++) {
-				out.add(new CandidateChunk(
-					i,
-					"session:" + rawSessionId + "#chunk-" + (i + 1),
-					chunks.get(i),
-					vectorAt(vectors, i),
-					-0.05
-				));
-			}
-		}
-		return out;
-	}
-
-	/**
-	 * 按段落优先、超长切片的策略拆分文本块，支持 overlap 保留上下文连续性。
-	 */
-	private List<String> splitIntoChunks(String content) {
 		int maxChars = properties.getMaxChunkChars() > 0 ? properties.getMaxChunkChars() : 800;
-		int overlap = properties.getChunkOverlapChars() > 0 ? properties.getChunkOverlapChars() : 80;
-		List<String> seeds = new ArrayList<>();
-		for (String part : content.split("\\n\\s*\\n")) {
-			String t = part != null ? part.trim() : "";
-			if (!t.isEmpty()) {
-				seeds.add(t);
+		String[] lines = content.split("\\r?\\n", -1);
+		List<ChunkSeed> out = new ArrayList<>();
+		StringBuilder buffer = new StringBuilder();
+		int chunkStartLine = block.getStartLine();
+		int currentLine = block.getStartLine();
+		for (String line : lines) {
+			String candidate = buffer.length() == 0 ? line : buffer + "\n" + line;
+			if (buffer.length() > 0 && candidate.length() > maxChars) {
+				addChunk(out, block, chunkStartLine, currentLine - 1, buffer.toString());
+				buffer.setLength(0);
+				chunkStartLine = currentLine;
 			}
+			if (buffer.length() > 0) {
+				buffer.append('\n');
+			}
+			buffer.append(line);
+			currentLine++;
 		}
-		if (seeds.isEmpty()) {
-			return Collections.singletonList(content.trim());
+		if (buffer.length() > 0) {
+			addChunk(out, block, chunkStartLine, currentLine - 1, buffer.toString());
 		}
+		return out;
+	}
 
-		List<String> out = new ArrayList<>();
-		for (String seed : seeds) {
-			if (seed.length() <= maxChars) {
-				out.add(seed);
-				continue;
+	private void addChunk(List<ChunkSeed> out, ParsedMemoryBlock block, int lineStart, int lineEnd, String text) {
+		String normalized = text == null ? "" : text.trim();
+		if (normalized.isEmpty()) {
+			return;
+		}
+		out.add(new ChunkSeed(
+			block.getRelativePath(),
+			block.getKind(),
+			block.getMetadata() != null ? block.getMetadata().getBlockId() : null,
+			lineStart,
+			lineEnd,
+			normalized,
+			sha256(normalized)
+		));
+	}
+
+	private Map<String, List<Double>> loadEmbeddings(List<ChunkSeed> seeds) {
+		Map<String, List<Double>> out = new LinkedHashMap<>();
+		List<ChunkSeed> missing = new ArrayList<>();
+		for (ChunkSeed seed : seeds) {
+			List<Double> cached = readCachedEmbedding(seed.chunkHash);
+			if (cached != null) {
+				out.put(seed.chunkHash, cached);
+			} else {
+				missing.add(seed);
 			}
-			int start = 0;
-			while (start < seed.length()) {
-				int end = Math.min(seed.length(), start + maxChars);
-				String chunk = seed.substring(start, end).trim();
-				if (!chunk.isEmpty()) {
-					out.add(chunk);
+		}
+		if (!missing.isEmpty()) {
+			List<List<Double>> generated = embedBatch(missing.stream().map(seed -> seed.text).collect(Collectors.toList()));
+			for (int i = 0; i < missing.size(); i++) {
+				List<Double> vector = i < generated.size() ? generated.get(i) : null;
+				if (vector == null) {
+					continue;
 				}
-				if (end >= seed.length()) {
-					break;
-				}
-				start = Math.max(start + 1, end - overlap);
+				ChunkSeed seed = missing.get(i);
+				out.put(seed.chunkHash, vector);
+				writeCachedEmbedding(seed.chunkHash, vector);
 			}
 		}
 		return out;
 	}
 
-	/**
-	 * 对文本列表批量生成向量；发生异常或维度异常时返回空结果以降级。
-	 */
 	private List<List<Double>> embedBatch(List<String> texts) {
 		if (texts == null || texts.isEmpty()) {
 			return new ArrayList<>();
@@ -298,14 +279,11 @@ public class MemoryRecallService {
 				return new ArrayList<>();
 			}
 			return vectors;
-		} catch (Exception ignored) {
+		} catch (Exception e) {
 			return new ArrayList<>();
 		}
 	}
 
-	/**
-	 * 对单条查询文本生成向量；失败时返回 null。
-	 */
 	private List<Double> embedOne(String text) {
 		List<List<Double>> vectors = embedBatch(Collections.singletonList(text));
 		if (vectors.isEmpty()) {
@@ -314,68 +292,73 @@ public class MemoryRecallService {
 		return vectors.get(0);
 	}
 
-	/**
-	 * 安全读取指定下标的向量，越界或空输入时返回 null。
-	 */
-	private List<Double> vectorAt(List<List<Double>> vectors, int idx) {
-		if (vectors == null || idx < 0 || idx >= vectors.size()) {
+	private List<Double> readCachedEmbedding(String chunkHash) {
+		Path file = embeddingCacheFile(chunkHash);
+		if (!Files.exists(file) || !Files.isRegularFile(file)) {
 			return null;
 		}
-		return vectors.get(idx);
+		try {
+			return objectMapper.readValue(file.toFile(), new TypeReference<List<Double>>() {});
+		} catch (Exception e) {
+			return null;
+		}
 	}
 
-	/**
-	 * 计算简单关键词命中分数，用于与向量相似度做融合排序。
-	 */
+	private void writeCachedEmbedding(String chunkHash, List<Double> vector) {
+		if (vector == null || vector.isEmpty()) {
+			return;
+		}
+		Path file = embeddingCacheFile(chunkHash);
+		try {
+			Files.createDirectories(file.getParent());
+			objectMapper.writeValue(file.toFile(), vector);
+		} catch (Exception ignored) {
+			// keep recall flow non-blocking when cache persistence fails
+		}
+	}
+
+	private Path embeddingCacheFile(String chunkHash) {
+		String provider = ragEmbeddingProperties != null && ragEmbeddingProperties.getProvider() != null
+			? ragEmbeddingProperties.getProvider().trim().toLowerCase(Locale.ROOT)
+			: "openai";
+		String model = resolveEmbeddingModel(provider);
+		return memoryFileService.embeddingCacheDir()
+			.resolve(provider)
+			.resolve(sanitizeFileSegment(model))
+			.resolve(chunkHash + ".json");
+	}
+
+	private String resolveEmbeddingModel(String provider) {
+		if ("siliconflow".equals(provider)) {
+			return siliconFlowEmbeddingProperties != null ? siliconFlowEmbeddingProperties.getModel() : "default";
+		}
+		return openAiEmbeddingProperties != null ? openAiEmbeddingProperties.getModel() : "default";
+	}
+
+	private String sanitizeFileSegment(String value) {
+		String text = value == null ? "default" : value.trim();
+		if (text.isEmpty()) {
+			return "default";
+		}
+		return text.replace('/', '_').replace('\\', '_').replace(':', '_');
+	}
+
 	private double lexicalScore(String query, String text) {
-		String q = query == null ? "" : query.trim().toLowerCase();
-		String t = text == null ? "" : text.toLowerCase();
+		String q = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+		String t = text == null ? "" : text.toLowerCase(Locale.ROOT);
 		if (q.isEmpty() || t.isEmpty()) {
 			return 0.0;
 		}
 		String[] terms = q.split("\\s+");
 		int hit = 0;
 		for (String term : terms) {
-			if (term == null || term.isEmpty()) {
-				continue;
-			}
-			if (t.contains(term)) {
+			if (!term.isEmpty() && t.contains(term)) {
 				hit++;
 			}
 		}
-		if (terms.length == 0) {
-			return 0.0;
-		}
-		return (double) hit / (double) terms.length;
+		return terms.length == 0 ? 0.0 : (double) hit / (double) terms.length;
 	}
 
-	/**
-	 * 获取记忆检索使用的工作区根目录。
-	 */
-	private Path workspaceRoot() {
-		String configured = properties.getWorkspaceRoot();
-		if (configured == null || configured.trim().isEmpty()) {
-			return Paths.get("").toAbsolutePath().normalize();
-		}
-		return Paths.get(configured).toAbsolutePath().normalize();
-	}
-
-	/**
-	 * 将绝对路径尽量转换为相对工作区路径，便于展示和去噪。
-	 */
-	private String relPath(Path path) {
-		Path root = workspaceRoot();
-		Path abs = path.toAbsolutePath().normalize();
-		try {
-			return root.relativize(abs).toString().replace('\\', '/');
-		} catch (Exception ignored) {
-			return abs.toString().replace('\\', '/');
-		}
-	}
-
-	/**
-	 * 计算文本 SHA-256，用于文件内容变更判断和缓存失效。
-	 */
 	private String sha256(String text) {
 		try {
 			MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -385,18 +368,23 @@ public class MemoryRecallService {
 				sb.append(String.format("%02x", b));
 			}
 			return sb.toString();
-		} catch (Exception ignored) {
-			return String.valueOf(text.hashCode());
+		} catch (Exception e) {
+			return Integer.toHexString(text != null ? text.hashCode() : 0);
 		}
 	}
 
-	/**
-	 * 深拷贝候选块列表，避免缓存对象被外部修改。
-	 */
 	private List<CandidateChunk> cloneCandidates(List<CandidateChunk> chunks) {
 		List<CandidateChunk> out = new ArrayList<>();
 		for (CandidateChunk chunk : chunks) {
-			out.add(new CandidateChunk(chunk.index, chunk.source, chunk.text, chunk.embedding, chunk.sourceBoost));
+			out.add(new CandidateChunk(
+				chunk.path,
+				chunk.kind,
+				chunk.blockId,
+				chunk.lineStart,
+				chunk.lineEnd,
+				chunk.text,
+				chunk.embedding == null ? null : new ArrayList<>(chunk.embedding)
+			));
 		}
 		return out;
 	}
@@ -405,32 +393,66 @@ public class MemoryRecallService {
 		private final String contentHash;
 		private final List<CandidateChunk> chunks;
 
-		/**
-		 * 保存单个文件的内容指纹和对应候选块缓存。
-		 */
 		private CachedDocument(String contentHash, List<CandidateChunk> chunks) {
 			this.contentHash = contentHash;
 			this.chunks = chunks;
 		}
 	}
 
+	private static class ChunkSeed {
+		private final String path;
+		private final String kind;
+		private final String blockId;
+		private final int lineStart;
+		private final int lineEnd;
+		private final String text;
+		private final String chunkHash;
+
+		private ChunkSeed(
+			String path,
+			String kind,
+			String blockId,
+			int lineStart,
+			int lineEnd,
+			String text,
+			String chunkHash
+		) {
+			this.path = path;
+			this.kind = kind;
+			this.blockId = blockId;
+			this.lineStart = lineStart;
+			this.lineEnd = lineEnd;
+			this.text = text;
+			this.chunkHash = chunkHash;
+		}
+	}
+
 	private static class CandidateChunk {
-		private final int index;
-		private final String source;
+		private final String path;
+		private final String kind;
+		private final String blockId;
+		private final int lineStart;
+		private final int lineEnd;
 		private final String text;
 		private final List<Double> embedding;
-		private final double sourceBoost;
 		private double score;
 
-		/**
-		 * 记忆候选块实体：包含来源、文本、向量与排序分数。
-		 */
-		private CandidateChunk(int index, String source, String text, List<Double> embedding, double sourceBoost) {
-			this.index = index;
-			this.source = source;
+		private CandidateChunk(
+			String path,
+			String kind,
+			String blockId,
+			int lineStart,
+			int lineEnd,
+			String text,
+			List<Double> embedding
+		) {
+			this.path = path;
+			this.kind = kind;
+			this.blockId = blockId;
+			this.lineStart = lineStart;
+			this.lineEnd = lineEnd;
 			this.text = text;
 			this.embedding = embedding;
-			this.sourceBoost = sourceBoost;
 		}
 	}
 }
