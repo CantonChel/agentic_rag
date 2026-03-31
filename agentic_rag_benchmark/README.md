@@ -199,6 +199,22 @@ runner 固定使用：
 - `memoryEnabled=false`
 - `thinkingProfile=HIDE`
 
+## RAGAS Judge 模型配置
+
+RAGAS 评测使用 OpenAI 兼容协议的 Judge LLM，环境变量优先级如下：
+
+- API Key: `RAGAS_JUDGE_API_KEY` -> `DEEPSEEK_API_KEY` -> `MINIMAX_API_KEY`
+- Base URL: `RAGAS_JUDGE_BASE_URL` -> `DEEPSEEK_BASE_URL` -> `MINIMAX_BASE_URL` -> 默认 `https://api.deepseek.com/v1`
+- Model: `RAGAS_JUDGE_MODEL` -> `DEEPSEEK_MODEL` -> `MINIMAX_MODEL` -> 默认 `deepseek-chat`
+
+如果你要固定使用 DeepSeek Chat，最小配置如下：
+
+```bash
+export DEEPSEEK_API_KEY="<your_deepseek_key>"
+export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"
+export DEEPSEEK_MODEL="deepseek-chat"
+```
+
 ## 真实闭环真源
 
 新 runner 不再依赖：

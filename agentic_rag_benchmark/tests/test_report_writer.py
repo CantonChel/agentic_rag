@@ -82,16 +82,51 @@ class ReportWriterTest(unittest.TestCase):
 
             report_json = json.loads(artifacts.benchmark_report_json_path.read_text(encoding="utf-8"))
             self.assertEqual(report_json["summary"]["success_count"], 1)
+            self.assertEqual(report_json["summary"]["execution_success_count"], 1)
+            self.assertEqual(report_json["summary"]["execution_success_rate"], 100.0)
+            self.assertEqual(
+                report_json["summary"]["success_definition"],
+                "Sample has no runner error, has a turn_id, and produced a non-empty final_answer.",
+            )
             self.assertEqual(report_json["summary"]["retrieval_hit_overview"]["context_output_chunk_count"], 1)
+            self.assertEqual(report_json["summary"]["retrieval_hit_overview"]["samples_with_context_output"], 1)
+            self.assertEqual(report_json["summary"]["retrieval_hit_overview"]["samples_without_context_output"], 0)
             self.assertEqual(len(report_json["samples"]), 1)
 
             report_markdown = artifacts.benchmark_report_markdown_path.read_text(encoding="utf-8")
             self.assertIn("## 运行摘要", report_markdown)
-            self.assertIn("## 总体成功率", report_markdown)
+            self.assertIn("## 执行成功率", report_markdown)
+            self.assertIn("runner 成功完成该样本，不代表答案正确率", report_markdown)
             self.assertIn("## 平均耗时", report_markdown)
             self.assertIn("## finish reason 分布", report_markdown)
             self.assertIn("## 失败样本列表", report_markdown)
             self.assertIn("## 检索命中概览", report_markdown)
+
+    def test_write_benchmark_outputs_tracks_samples_without_context_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            package_dir = root / "packages" / "api_docs" / "base_v1"
+            package_dir.mkdir(parents=True)
+            self._write_package(package_dir)
+            request = RunBenchmarkRequest(
+                package_dir=package_dir,
+                base_url="http://127.0.0.1:8081",
+                provider="openai",
+                build_id="build_123",
+                user_id="bench-user",
+                session_prefix="bench",
+                timeout_seconds=180,
+                output_root=root / "outputs",
+            )
+
+            report = run_benchmark(request, client=FakeBenchmarkAppClient(retrieval_payload=[]))
+            artifacts = write_benchmark_outputs(report)
+            report_json = json.loads(artifacts.benchmark_report_json_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(report_json["summary"]["retrieval_hit_overview"]["samples_with_context_output"], 0)
+            self.assertEqual(report_json["summary"]["retrieval_hit_overview"]["samples_without_context_output"], 1)
+            report_markdown = artifacts.benchmark_report_markdown_path.read_text(encoding="utf-8")
+            self.assertIn("samples_without_context_output: `1` / `1`", report_markdown)
 
     def _write_package(self, package_dir: Path) -> None:
         manifest = {
