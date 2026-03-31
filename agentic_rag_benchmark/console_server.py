@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import inspect
 import json
 import math
 import os
@@ -354,8 +355,10 @@ def create_app(config: ConsoleConfig | None = None) -> FastAPI:
                 job_id=job["jobId"],
             )
         except Exception as exc:
+            await close_uploaded_files(files)
             job_store.fail_job(job["jobId"], error=str(exc), stage="uploading")
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await close_uploaded_files(files)
 
         start_background_job(
             target=run_build_package_job,
@@ -667,6 +670,16 @@ def progress_callback_for_stage(job_store: JobStore, job_id: str, stage: str) ->
         )
 
     return callback
+
+
+async def close_uploaded_files(files: List[Any]) -> None:
+    for upload in files:
+        close = getattr(upload, "close", None)
+        if not callable(close):
+            continue
+        result = close()
+        if inspect.isawaitable(result):
+            await result
 
 
 def run_build_package_job(

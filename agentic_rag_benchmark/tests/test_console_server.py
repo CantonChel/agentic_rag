@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -202,6 +203,47 @@ class ConsoleServerTest(unittest.TestCase):
             self.assertEqual(inspect_response.status_code, 200)
             self.assertEqual(packages_response.json()["packages"][0]["projectKey"], "api_docs")
             self.assertEqual(inspect_response.json()["sampleCount"], 3)
+
+    def test_build_upload_endpoint_creates_job_and_stages_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            benchmark_root = root / "benchmark_root"
+            work_root = root / "work_root"
+            (benchmark_root / "console_static").mkdir(parents=True, exist_ok=True)
+            (benchmark_root / "console_static" / "benchmark.html").write_text("<html>ok</html>", encoding="utf-8")
+            config = ConsoleConfig(
+                host="127.0.0.1",
+                port=8092,
+                app_base_url="http://127.0.0.1:8081",
+                docreader_base_url="http://127.0.0.1:8090",
+                benchmark_root=benchmark_root,
+                work_root=work_root,
+            )
+            client = TestClient(create_app(config))
+
+            with patch("agentic_rag_benchmark.console_server.start_background_job") as mocked_background_job:
+                response = client.post(
+                    "/api/packages/build-upload",
+                    data={
+                        "projectKey": "api_docs",
+                        "suiteVersion": "base_v1",
+                        "relative_paths": "docs/reference.md",
+                    },
+                    files=[
+                        (
+                            "files",
+                            ("reference.md", b"# heading\ncontent\n", "text/markdown"),
+                        )
+                    ],
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertIn("jobId", payload)
+            mocked_background_job.assert_called_once()
+            upload_path = work_root / "uploads" / payload["jobId"] / "docs" / "reference.md"
+            self.assertTrue(upload_path.exists())
+            self.assertIn("content", upload_path.read_text(encoding="utf-8"))
 
     def _write_package(self, benchmark_root: Path, project_key: str, suite_version: str) -> Path:
         evidence_units = [
