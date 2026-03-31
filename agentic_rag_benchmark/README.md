@@ -215,6 +215,9 @@ export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"
 export DEEPSEEK_MODEL="deepseek-chat"
 ```
 
+`python -m agentic_rag_benchmark.cli ...` 和 `python -m agentic_rag_benchmark.console_server`
+会自动向上查找最近的 `.env` 并补齐缺失配置；已经显式导出的非空环境变量不会被覆盖。
+
 ## 真实闭环真源
 
 新 runner 不再依赖：

@@ -14,6 +14,7 @@ from typing import Dict
 from typing import List
 from typing import Tuple
 
+from .env_loader import load_dotenv_defaults
 from .progress import ProgressCallback
 from .progress import emit_progress
 from .runner import RunBenchmarkReport
@@ -152,6 +153,7 @@ def run_ragas_evaluation(
     except ImportError as exc:
         raise RuntimeError("RAGAS dependencies missing. Install benchmark requirements first.") from exc
 
+    load_dotenv_defaults(Path(__file__).resolve())
     judge_api_key = read_first_non_empty_env("RAGAS_JUDGE_API_KEY", "DEEPSEEK_API_KEY", "MINIMAX_API_KEY")
     judge_base_url = read_first_non_empty_env(
         "RAGAS_JUDGE_BASE_URL",

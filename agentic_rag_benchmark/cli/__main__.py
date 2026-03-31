@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 
+from agentic_rag_benchmark.env_loader import load_dotenv_defaults
 from agentic_rag_benchmark.pipeline import build_benchmark_package
 from agentic_rag_benchmark.ragas_runner import evaluate_ragas_for_report
 from agentic_rag_benchmark.report_writer import write_benchmark_outputs
@@ -79,6 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv_defaults(Path(__file__).resolve())
     parser = build_parser()
     args = parser.parse_args(argv)
 

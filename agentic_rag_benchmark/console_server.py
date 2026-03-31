@@ -30,6 +30,7 @@ from fastapi import HTTPException
 from fastapi import Request
 from fastapi.responses import FileResponse
 
+from .env_loader import load_dotenv_defaults
 from .package_spec import STANDARD_PACKAGE_FILES
 from .pipeline import build_benchmark_package
 from .progress import ProgressEvent
@@ -118,6 +119,7 @@ class ConsoleConfig:
         benchmark_root = Path(
             os.getenv("BENCHMARK_CONSOLE_PACKAGE_ROOT", str(Path(__file__).resolve().parent))
         ).expanduser()
+        load_dotenv_defaults(benchmark_root)
         work_root = Path(os.getenv("BENCHMARK_CONSOLE_WORK_ROOT", str(DEFAULT_WORK_ROOT))).expanduser()
         preview_limit = read_non_negative_int_env("BENCHMARK_CONSOLE_PACKAGE_PREVIEW_LIMIT", DEFAULT_PACKAGE_PREVIEW_LIMIT)
         port = read_non_negative_int_env("BENCHMARK_CONSOLE_PORT", DEFAULT_CONSOLE_PORT)
