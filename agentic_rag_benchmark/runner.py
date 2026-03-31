@@ -13,6 +13,8 @@ from typing import Dict
 from typing import List
 from uuid import uuid4
 
+from .progress import ProgressCallback
+from .progress import emit_progress
 from .contracts import BenchmarkSample
 from .contracts import EvidenceReference
 from .runner_io import LoadedBenchmarkPackage
@@ -109,7 +111,11 @@ class RunBenchmarkReport:
         }
 
 
-def run_benchmark(request: RunBenchmarkRequest, client: Any | None = None) -> RunBenchmarkReport:
+def run_benchmark(
+    request: RunBenchmarkRequest,
+    client: Any | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> RunBenchmarkReport:
     """Prepare one benchmark run from a portable package."""
 
     loaded = load_benchmark_input(package_dir=request.package_dir, legacy_dataset=request.legacy_dataset)
@@ -119,7 +125,34 @@ def run_benchmark(request: RunBenchmarkRequest, client: Any | None = None) -> Ru
         timeout_seconds=request.timeout_seconds,
         verify_ssl=request.verify_ssl,
     )
-    sample_results = [execute_sample(sample, request, client) for sample in loaded.benchmark_samples]
+    total_samples = len(loaded.benchmark_samples)
+    emit_progress(
+        progress_callback,
+        stage="running_samples",
+        completed=0,
+        total=total_samples,
+        message=f"Running {total_samples} benchmark samples",
+    )
+    sample_results = []
+    for index, sample in enumerate(loaded.benchmark_samples, start=1):
+        emit_progress(
+            progress_callback,
+            stage="running_samples",
+            completed=index - 1,
+            total=total_samples,
+            message=f"Running sample {sample.sample_id}",
+            details={"sample_id": sample.sample_id},
+        )
+        result = execute_sample(sample, request, client)
+        sample_results.append(result)
+        emit_progress(
+            progress_callback,
+            stage="running_samples",
+            completed=index,
+            total=total_samples,
+            message=f"Completed sample {sample.sample_id}",
+            details={"sample_id": sample.sample_id, "error": result.error or ""},
+        )
     completed_at = utcnow_iso()
     return build_report(request, loaded, started_at, completed_at, sample_results)
 

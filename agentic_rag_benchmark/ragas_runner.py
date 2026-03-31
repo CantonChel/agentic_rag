@@ -14,6 +14,9 @@ from typing import Dict
 from typing import List
 from typing import Tuple
 
+from .env_loader import load_dotenv_defaults
+from .progress import ProgressCallback
+from .progress import emit_progress
 from .runner import RunBenchmarkReport
 from .runner import RunBenchmarkSampleResult
 
@@ -42,6 +45,7 @@ def evaluate_ragas_for_report(
     report: RunBenchmarkReport,
     output_dir: Path,
     evaluator: Callable[[List[Dict[str, Any]]], Tuple[Dict[str, Any], List[Dict[str, Any]]]] | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> RagasArtifacts:
     """Evaluate collected benchmark results with RAGAS."""
 
@@ -52,7 +56,17 @@ def evaluate_ragas_for_report(
     evaluator = evaluator or run_ragas_evaluation
 
     try:
-        summary, per_sample_rows = evaluator(rows)
+        emit_progress(
+            progress_callback,
+            stage="evaluating_ragas",
+            completed=0,
+            total=1,
+            message=f"Preparing RAGAS evaluation for {len(rows)} rows",
+        )
+        if evaluator is run_ragas_evaluation:
+            summary, per_sample_rows = evaluator(rows, progress_callback=progress_callback)
+        else:
+            summary, per_sample_rows = evaluator(rows)
     except Exception as exc:
         payload = {
             "message": str(exc),
@@ -69,6 +83,13 @@ def evaluate_ragas_for_report(
     sanitized_rows = sanitize_per_sample_rows(per_sample_rows)
     write_json(summary_path, summary)
     write_csv_rows(per_sample_csv_path, sanitized_rows)
+    emit_progress(
+        progress_callback,
+        stage="evaluating_ragas",
+        completed=1,
+        total=1,
+        message="RAGAS evaluation completed",
+    )
     return RagasArtifacts(
         summary_path=summary_path,
         per_sample_csv_path=per_sample_csv_path,
@@ -112,7 +133,10 @@ def extract_context_output_contexts(sample: RunBenchmarkSampleResult) -> List[st
     return contexts or [""]
 
 
-def run_ragas_evaluation(rows: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+def run_ragas_evaluation(
+    rows: List[Dict[str, Any]],
+    progress_callback: ProgressCallback | None = None,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """Run real RAGAS evaluation against prepared rows."""
 
     if not rows:
@@ -129,6 +153,7 @@ def run_ragas_evaluation(rows: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], Li
     except ImportError as exc:
         raise RuntimeError("RAGAS dependencies missing. Install benchmark requirements first.") from exc
 
+    load_dotenv_defaults(Path(__file__).resolve())
     judge_api_key = read_first_non_empty_env("RAGAS_JUDGE_API_KEY", "DEEPSEEK_API_KEY", "MINIMAX_API_KEY")
     judge_base_url = read_first_non_empty_env(
         "RAGAS_JUDGE_BASE_URL",
@@ -180,7 +205,23 @@ def run_ragas_evaluation(rows: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], Li
     metric_row_stats: Dict[str, Dict[str, int]] = {}
     metric_row_diagnostics: Dict[str, List[Dict[str, str]]] = {}
 
-    for spec in metric_specs:
+    total_metrics = len(metric_specs)
+    emit_progress(
+        progress_callback,
+        stage="evaluating_ragas",
+        completed=0,
+        total=total_metrics,
+        message=f"Evaluating {total_metrics} RAGAS metrics",
+    )
+    for index, spec in enumerate(metric_specs, start=1):
+        emit_progress(
+            progress_callback,
+            stage="evaluating_ragas",
+            completed=index - 1,
+            total=total_metrics,
+            message=f"Evaluating metric {spec.name}",
+            details={"metric": spec.name},
+        )
         eligible_rows = [dict(row) for row in rows if spec.row_filter(row)]
         eligible_count = len(eligible_rows)
         if not eligible_rows:
@@ -188,6 +229,14 @@ def run_ragas_evaluation(rows: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], Li
             metric_row_stats[spec.name] = build_metric_row_stats(eligible_count, 0, 0)
             metric_row_diagnostics[spec.name] = []
             warnings.append(f"{spec.name} skipped: no eligible rows available.")
+            emit_progress(
+                progress_callback,
+                stage="evaluating_ragas",
+                completed=index,
+                total=total_metrics,
+                message=f"Skipped metric {spec.name}: no eligible rows",
+                details={"metric": spec.name},
+            )
             continue
 
         evaluation = score_metric_rows(
@@ -209,6 +258,14 @@ def run_ragas_evaluation(rows: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], Li
             failure_message = evaluation.failure_message or "Metric produced no finite scores."
             metrics_failed.append({"metric": spec.name, "message": failure_message})
             warnings.append(f"{spec.name} produced no finite scores across {eligible_count} eligible rows.")
+            emit_progress(
+                progress_callback,
+                stage="evaluating_ragas",
+                completed=index,
+                total=total_metrics,
+                message=f"Metric {spec.name} produced no finite scores",
+                details={"metric": spec.name},
+            )
             continue
         metrics_completed.append(spec.name)
         if evaluation.recovered_row_count > 0:
@@ -219,6 +276,14 @@ def run_ragas_evaluation(rows: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], Li
             warnings.append(
                 f"{spec.name} returned {empty_or_nan_count} empty or non-finite scores across {eligible_count} eligible rows."
             )
+        emit_progress(
+            progress_callback,
+            stage="evaluating_ragas",
+            completed=index,
+            total=total_metrics,
+            message=f"Completed metric {spec.name}",
+            details={"metric": spec.name},
+        )
 
     if not metrics_completed:
         joined = "; ".join(f"{item['metric']}: {item['message']}" for item in metrics_failed) or "No metrics completed successfully."
