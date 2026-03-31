@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from agentic_rag_benchmark.console_server import ConsoleConfig
 from agentic_rag_benchmark.console_server import JobStore
+from agentic_rag_benchmark.console_server import list_run_history
 from agentic_rag_benchmark.console_server import create_app
 from agentic_rag_benchmark.console_server import inspect_package_dir
 from agentic_rag_benchmark.console_server import list_package_records
@@ -48,6 +49,48 @@ class ConsoleServerTest(unittest.TestCase):
             self.assertEqual(reloaded_job["progress"]["total"], 10)
             self.assertEqual(reloaded_job["progress"]["percent"], 30.0)
             self.assertEqual(reloaded_job["logs"][-1]["message"], "Running sample 3")
+
+    def test_list_run_history_returns_latest_completed_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            jobs_dir = Path(tmp_dir) / "jobs"
+            store = JobStore(jobs_dir)
+            older = store.create_job("run_benchmark", "running_samples", {"provider": "minimax"}, status="running")
+            store.complete_job(
+                older["jobId"],
+                result={
+                    "projectKey": "api_docs",
+                    "suiteVersion": "base_v1",
+                    "sampleCount": 10,
+                    "buildId": "build_old",
+                    "provider": "minimax",
+                    "summary": {"execution_success_count": 10, "execution_success_rate": 100.0},
+                    "ragasSummary": {"scores": {"faithfulness": 0.82}, "metrics_completed": ["faithfulness"]},
+                },
+                artifacts={"outputDir": "/tmp/benchmark-console/outputs/old"},
+            )
+            newer = store.create_job("run_benchmark", "running_samples", {"provider": "deepseek"}, status="running")
+            store.complete_job(
+                newer["jobId"],
+                result={
+                    "projectKey": "apifox_docs",
+                    "suiteVersion": "smoke_10",
+                    "sampleCount": 10,
+                    "buildId": "build_new",
+                    "provider": "deepseek",
+                    "summary": {"execution_success_count": 9, "execution_success_rate": 90.0},
+                    "ragasSummary": {"scores": {"faithfulness": 0.91}, "metrics_completed": ["faithfulness"]},
+                },
+                artifacts={"outputDir": "/tmp/benchmark-console/outputs/new"},
+            )
+
+            history = list_run_history(store)
+
+            self.assertEqual(len(history), 2)
+            self.assertEqual(history[0]["buildId"], "build_new")
+            self.assertEqual(history[0]["projectKey"], "apifox_docs")
+            self.assertEqual(history[0]["executionSuccessRate"], 90.0)
+            self.assertEqual(history[0]["ragasScores"]["faithfulness"], 0.91)
+            self.assertTrue(history[0]["reportAvailable"])
 
     def test_list_and_inspect_package_records_expose_manifest_and_previews(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -203,6 +246,47 @@ class ConsoleServerTest(unittest.TestCase):
             self.assertEqual(inspect_response.status_code, 200)
             self.assertEqual(packages_response.json()["packages"][0]["projectKey"], "api_docs")
             self.assertEqual(inspect_response.json()["sampleCount"], 3)
+
+    def test_runs_endpoint_returns_historical_run_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            benchmark_root = root / "benchmark_root"
+            work_root = root / "work_root"
+            (benchmark_root / "console_static").mkdir(parents=True, exist_ok=True)
+            (benchmark_root / "console_static" / "benchmark.html").write_text("<html>ok</html>", encoding="utf-8")
+            config = ConsoleConfig(
+                host="127.0.0.1",
+                port=8092,
+                app_base_url="http://127.0.0.1:8081",
+                docreader_base_url="http://127.0.0.1:8090",
+                benchmark_root=benchmark_root,
+                work_root=work_root,
+            )
+            store = JobStore(config.jobs_dir)
+            job = store.create_job("run_benchmark", "running_samples", {"provider": "minimax"}, status="running")
+            store.complete_job(
+                job["jobId"],
+                result={
+                    "projectKey": "api_docs",
+                    "suiteVersion": "base_v1",
+                    "sampleCount": 5,
+                    "buildId": "build_123",
+                    "provider": "minimax",
+                    "summary": {"execution_success_count": 5, "execution_success_rate": 100.0},
+                    "ragasSummary": {"scores": {"faithfulness": 0.88}, "metrics_completed": ["faithfulness"]},
+                },
+                artifacts={"outputDir": "/tmp/benchmark-console/outputs/job1"},
+            )
+
+            client = TestClient(create_app(config))
+            response = client.get("/api/runs")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(len(payload["runs"]), 1)
+            self.assertEqual(payload["runs"][0]["buildId"], "build_123")
+            self.assertEqual(payload["runs"][0]["sampleCount"], 5)
+            self.assertEqual(payload["runs"][0]["ragasScores"]["faithfulness"], 0.88)
 
     def test_build_upload_endpoint_creates_job_and_stages_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

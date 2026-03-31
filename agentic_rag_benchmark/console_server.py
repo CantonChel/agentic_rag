@@ -172,6 +172,17 @@ class JobStore:
         with self._lock:
             return self._read_job(job_id)
 
+    def list_jobs(self, job_type: str | None = None) -> List[Dict[str, Any]]:
+        with self._lock:
+            jobs = []
+            for path in sorted(self.jobs_dir.glob("*.json")):
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if job_type and str(payload.get("jobType") or "").strip() != job_type:
+                    continue
+                jobs.append((path.stat().st_mtime_ns, payload))
+        jobs.sort(key=lambda item: (item[0], item[1].get("updatedAt") or "", item[1].get("createdAt") or ""), reverse=True)
+        return [payload for _, payload in jobs]
+
     def set_stage(
         self,
         job_id: str,
@@ -483,6 +494,10 @@ def create_app(config: ConsoleConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=500, detail="Run job is missing outputDir artifact")
         output_dir = Path(output_dir_text).expanduser().resolve()
         return load_run_report(output_dir)
+
+    @app.get("/api/runs")
+    async def list_runs_endpoint() -> Dict[str, Any]:
+        return {"runs": list_run_history(job_store)}
 
     return app
 
@@ -1010,6 +1025,60 @@ def load_run_report(output_dir: Path) -> Dict[str, Any]:
             "ragasErrorPath": str(ragas_error_path) if ragas_error_path.exists() else None,
             "ragasPerSampleCsvPath": str(ragas_csv_path) if ragas_csv_path.exists() else None,
         },
+    }
+
+
+def list_run_history(job_store: JobStore) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    for job in job_store.list_jobs(job_type="run_benchmark"):
+        records.append(build_run_history_record(job))
+    return records
+
+
+def build_run_history_record(job: Dict[str, Any]) -> Dict[str, Any]:
+    result = dict(job.get("result") or {})
+    artifacts = dict(job.get("artifacts") or {})
+    input_payload = dict(job.get("input") or {})
+    summary = dict(result.get("summary") or {})
+    ragas_summary = dict(result.get("ragasSummary") or {})
+    output_dir = str(artifacts.get("outputDir") or "").strip()
+
+    if not summary and output_dir:
+        try:
+            loaded_report = load_run_report(Path(output_dir))
+            summary = dict(loaded_report.get("summary") or {})
+            ragas_summary = dict(loaded_report.get("ragasSummary") or {})
+        except Exception:
+            pass
+
+    metrics_completed = ragas_summary.get("metrics_completed") or []
+    metrics_failed = ragas_summary.get("metrics_failed") or []
+
+    return {
+        "jobId": job.get("jobId"),
+        "status": job.get("status"),
+        "stage": job.get("stage"),
+        "createdAt": job.get("createdAt"),
+        "updatedAt": job.get("updatedAt"),
+        "provider": result.get("provider") or input_payload.get("provider") or "",
+        "buildId": result.get("buildId") or input_payload.get("buildId") or "",
+        "projectKey": result.get("projectKey") or "",
+        "suiteVersion": result.get("suiteVersion") or "",
+        "sampleCount": result.get("sampleCount") or input_payload.get("sampleCount") or 0,
+        "selectedPackagePath": result.get("selectedPackagePath") or input_payload.get("packagePath") or "",
+        "executionSuccessCount": summary.get("execution_success_count"),
+        "executionSuccessRate": summary.get("execution_success_rate"),
+        "ragasScores": dict(ragas_summary.get("scores") or {}),
+        "metricsCompleted": list(metrics_completed),
+        "metricsFailed": [
+            item.get("metric") if isinstance(item, dict) else str(item)
+            for item in metrics_failed
+            if (isinstance(item, dict) and item.get("metric")) or str(item).strip()
+        ],
+        "warningCount": len(ragas_summary.get("warnings") or []),
+        "reportAvailable": bool(job.get("status") == "completed" and output_dir),
+        "outputDir": output_dir or None,
+        "error": job.get("error"),
     }
 
 

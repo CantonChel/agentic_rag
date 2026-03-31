@@ -260,6 +260,12 @@
         line-height: 1.5;
       }
 
+      .subtle {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
       .kv {
         display: grid;
         grid-template-columns: 180px 1fr;
@@ -287,6 +293,84 @@
 
       .log-box {
         min-height: 220px;
+      }
+
+      .preview-box {
+        margin-top: 12px;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.6);
+        padding: 14px;
+      }
+
+      .preview-tabs {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+
+      .preview-tabs button {
+        width: auto;
+        min-width: 108px;
+        background: rgba(29, 42, 56, 0.08);
+        color: var(--ink);
+      }
+
+      .preview-tabs button.active {
+        background: linear-gradient(135deg, #b24c2a, #d06f35);
+        color: white;
+      }
+
+      .stack-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .stack-item {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 12px;
+        background: var(--panel-strong);
+      }
+
+      .stack-item h4 {
+        margin: 0 0 6px;
+        font-size: 14px;
+      }
+
+      .stack-item p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .snippet {
+        display: block;
+        margin-top: 8px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: rgba(29, 42, 56, 0.05);
+        color: var(--ink);
+        font-family: "SFMono-Regular", "Menlo", monospace;
+        font-size: 12px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+      }
+
+      .table-wrap {
+        overflow: auto;
+      }
+
+      details {
+        margin-top: 12px;
+      }
+
+      details summary {
+        cursor: pointer;
+        color: var(--muted);
+        font-weight: 700;
       }
 
       table {
@@ -438,9 +522,19 @@
               </div>
             </div>
             <div id="packageSummary" class="empty">还没有加载 package。</div>
-            <div style="margin-top: 14px">
-              <label>Manifest / Preview</label>
-              <pre id="packagePreview">等待加载...</pre>
+            <div class="preview-box">
+              <label>Quick Preview</label>
+              <div class="preview-tabs">
+                <button id="packagePreviewManifestBtn" class="secondary active" type="button">Manifest</button>
+                <button id="packagePreviewSamplesBtn" class="secondary" type="button">Samples</button>
+                <button id="packagePreviewEvidenceBtn" class="secondary" type="button">Evidence</button>
+                <button id="packagePreviewValidationBtn" class="secondary" type="button">Validation</button>
+              </div>
+              <div id="packagePreview" class="empty">等待加载...</div>
+              <details>
+                <summary>查看原始 JSON 预览</summary>
+                <pre id="packageRawPreview">等待加载...</pre>
+              </details>
             </div>
           </div>
         </section>
@@ -505,6 +599,20 @@
             <span class="status-chip" id="reportChip">No report</span>
           </header>
           <div class="body">
+            <div class="row">
+              <div class="field">
+                <label for="reportHistorySelect">历史分析报告</label>
+                <select id="reportHistorySelect"></select>
+              </div>
+              <div class="field">
+                <label>&nbsp;</label>
+                <div class="actions">
+                  <button id="loadHistoryReportBtn" class="secondary" type="button">打开历史报告</button>
+                  <button id="refreshHistoryBtn" class="secondary" type="button">刷新历史列表</button>
+                </div>
+              </div>
+            </div>
+            <div id="reportHistoryPreview" class="empty">还没有历史分析报告。</div>
             <div id="reportSummary" class="empty">跑完 benchmark 之后，这里会显示概览、RAGAS 指标和样本明细。</div>
             <div id="reportSamples" style="margin-top: 16px"></div>
           </div>
@@ -519,6 +627,9 @@
         packages: [],
         builds: [],
         lastReportJobId: null,
+        runHistory: [],
+        currentPackageInspection: null,
+        packagePreviewMode: "manifest",
       };
 
       function $(id) {
@@ -561,6 +672,12 @@
         $("jobTitle").textContent = message;
       }
 
+      function truncateText(value, maxLength = 220) {
+        const text = String(value ?? "").trim();
+        if (text.length <= maxLength) return text;
+        return `${text.slice(0, maxLength)}...`;
+      }
+
       async function refreshPackages() {
         const payload = await requestJson("/api/packages");
         state.packages = payload.packages || [];
@@ -571,7 +688,9 @@
         if (!state.packages.length) {
           select.innerHTML = `<option value="">暂无 package</option>`;
           $("packageSummary").innerHTML = `<div class="empty">仓库内还没有标准 package。</div>`;
-          $("packagePreview").textContent = "等待加载...";
+          state.currentPackageInspection = null;
+          $("packagePreview").innerHTML = `<div class="empty">等待加载...</div>`;
+          $("packageRawPreview").textContent = "等待加载...";
           return;
         }
         state.packages.forEach((pkg) => {
@@ -591,6 +710,7 @@
         const packagePath = $("packageSelect").value;
         if (!packagePath) return;
         const payload = await requestJson(`/api/packages/inspect?packagePath=${encodeURIComponent(packagePath)}`);
+        state.currentPackageInspection = payload;
         $("packageSummary").innerHTML = `
           <div class="stats">
             <div class="stat"><div class="label">Samples</div><div class="value">${escapeHtml(payload.sampleCount)}</div></div>
@@ -605,7 +725,7 @@
             <div>Validation</div><div>${payload.validation.ok ? "OK" : "FAILED"}</div>
           </div>
         `;
-        $("packagePreview").textContent = JSON.stringify(
+        $("packageRawPreview").textContent = JSON.stringify(
           {
             manifest: payload.manifest,
             files: payload.files,
@@ -616,8 +736,112 @@
           null,
           2
         );
+        renderPackagePreview(state.packagePreviewMode);
         $("sampleCountInput").value = Math.min(payload.sampleCount || 1, Number($("sampleCountInput").value || 10));
         $("sampleCountInput").max = payload.sampleCount || 1;
+      }
+
+      function setPackagePreviewMode(mode) {
+        state.packagePreviewMode = mode;
+        [
+          ["manifest", "packagePreviewManifestBtn"],
+          ["samples", "packagePreviewSamplesBtn"],
+          ["evidence", "packagePreviewEvidenceBtn"],
+          ["validation", "packagePreviewValidationBtn"],
+        ].forEach(([candidateMode, buttonId]) => {
+          $(buttonId).className = candidateMode === mode ? "secondary active" : "secondary";
+        });
+        renderPackagePreview(mode);
+      }
+
+      function renderPackagePreview(mode) {
+        const payload = state.currentPackageInspection;
+        if (!payload) {
+          $("packagePreview").innerHTML = `<div class="empty">等待加载...</div>`;
+          return;
+        }
+
+        if (mode === "manifest") {
+          const rows = Object.entries(payload.files || {})
+            .map(
+              ([key, file]) => `
+                <tr>
+                  <td>${escapeHtml(key)}</td>
+                  <td>${escapeHtml(file.name)}</td>
+                  <td>${escapeHtml(file.sizeBytes)}</td>
+                </tr>
+              `
+            )
+            .join("");
+          $("packagePreview").innerHTML = `
+            <div class="kv">
+              <div>Project Key</div><div>${escapeHtml(payload.manifest.project_key)}</div>
+              <div>Suite Version</div><div>${escapeHtml(payload.manifest.suite_version)}</div>
+              <div>Generator Version</div><div>${escapeHtml(payload.manifest.generator_version)}</div>
+              <div>Created At</div><div>${escapeHtml(payload.manifest.created_at)}</div>
+            </div>
+            <div class="table-wrap" style="margin-top: 12px">
+              <table>
+                <thead>
+                  <tr><th>File</th><th>Name</th><th>Bytes</th></tr>
+                </thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
+          `;
+          return;
+        }
+
+        if (mode === "samples") {
+          const items = (payload.samplePreview || [])
+            .map(
+              (sample) => `
+                <div class="stack-item">
+                  <h4>${escapeHtml(sample.sample_id)} · ${escapeHtml(sample.question)}</h4>
+                  <p>Difficulty: ${escapeHtml(sample.difficulty)} · Evidence refs: ${escapeHtml((sample.gold_evidence_refs || []).length)}</p>
+                  <span class="snippet">${escapeHtml(truncateText(sample.ground_truth, 180))}</span>
+                </div>
+              `
+            )
+            .join("");
+          $("packagePreview").innerHTML = items
+            ? `<div class="stack-list">${items}</div><div class="subtle">只显示前 ${escapeHtml((payload.samplePreview || []).length)} 条样本预览。</div>`
+            : `<div class="empty">没有样本预览。</div>`;
+          return;
+        }
+
+        if (mode === "evidence") {
+          const items = (payload.evidencePreview || [])
+            .map(
+              (item) => `
+                <div class="stack-item">
+                  <h4>${escapeHtml(item.doc_path)} · ${escapeHtml(item.section_title || item.section_key)}</h4>
+                  <p>Evidence ID: ${escapeHtml(item.evidence_id)}</p>
+                  <span class="snippet">${escapeHtml(truncateText(item.canonical_text, 220))}</span>
+                </div>
+              `
+            )
+            .join("");
+          $("packagePreview").innerHTML = items
+            ? `<div class="stack-list">${items}</div><div class="subtle">只显示前 ${escapeHtml((payload.evidencePreview || []).length)} 条证据预览。</div>`
+            : `<div class="empty">没有证据预览。</div>`;
+          return;
+        }
+
+        const messages = (payload.validation?.messages || [])
+          .map(
+            (message) => `
+              <div class="stack-item">
+                <h4>${escapeHtml(message.level.toUpperCase())}</h4>
+                <p>${escapeHtml(message.message)}</p>
+              </div>
+            `
+          )
+          .join("");
+        $("packagePreview").innerHTML = `
+          <div class="status-chip ${payload.validation?.ok ? "ok" : "fail"}">${payload.validation?.ok ? "Validation OK" : "Validation Failed"}</div>
+          <div class="stack-list" style="margin-top: 12px">${messages || `<div class="empty">没有校验消息。</div>`}</div>
+        `;
       }
 
       async function refreshBuilds() {
@@ -643,6 +867,86 @@
           select.value = state.builds[0].buildId;
         }
         renderBuildPreview();
+      }
+
+      async function refreshRunHistory(preferredJobId = null) {
+        const payload = await requestJson("/api/runs");
+        state.runHistory = payload.runs || [];
+        renderRunHistory(preferredJobId);
+      }
+
+      function renderRunHistory(preferredJobId = null) {
+        const select = $("reportHistorySelect");
+        const completedRuns = state.runHistory.filter((run) => run.reportAvailable);
+        const selectedBefore = select.value;
+        select.innerHTML = "";
+        if (!completedRuns.length) {
+          select.innerHTML = `<option value="">暂无可打开的历史报告</option>`;
+        } else {
+          completedRuns.forEach((run) => {
+            const option = document.createElement("option");
+            option.value = run.jobId;
+            option.textContent = `${run.createdAt || "-"} / ${run.projectKey || "unknown"} / ${run.sampleCount || 0} samples`;
+            if ((preferredJobId && preferredJobId === run.jobId) || (!preferredJobId && selectedBefore === run.jobId)) {
+              option.selected = true;
+            }
+            select.appendChild(option);
+          });
+          if (!select.value && completedRuns[0]) {
+            select.value = completedRuns[0].jobId;
+          }
+        }
+
+        if (!state.runHistory.length) {
+          $("reportHistoryPreview").innerHTML = `<div class="empty">还没有历史分析报告。</div>`;
+          return;
+        }
+        const rows = state.runHistory
+          .slice(0, 10)
+          .map((run) => {
+            const isSelected = select.value && select.value === run.jobId;
+            const ragasScores = run.ragasScores || {};
+            return `
+              <tr ${isSelected ? 'style="background: rgba(178, 76, 42, 0.08)"' : ""}>
+                <td>${escapeHtml(run.createdAt || "-")}</td>
+                <td>${escapeHtml(run.projectKey || "-")}</td>
+                <td>${escapeHtml(run.buildId || "-")}</td>
+                <td>${escapeHtml(run.sampleCount || 0)}</td>
+                <td>${escapeHtml(run.executionSuccessRate ?? "-")}</td>
+                <td>${escapeHtml(ragasScores.faithfulness ?? "-")}</td>
+                <td>${escapeHtml(run.status || "-")}</td>
+              </tr>
+            `;
+          })
+          .join("");
+        $("reportHistoryPreview").innerHTML = `
+          <div class="subtle">最近 10 次 benchmark run，已完成且带报告的记录可从上方下拉框重新打开。</div>
+          <div class="table-wrap" style="margin-top: 10px">
+            <table>
+              <thead>
+                <tr>
+                  <th>Created</th>
+                  <th>Project</th>
+                  <th>Build</th>
+                  <th>Samples</th>
+                  <th>Exec Rate</th>
+                  <th>Faithfulness</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      async function loadSelectedHistoryReport() {
+        const jobId = $("reportHistorySelect").value;
+        if (!jobId) {
+          alert("当前没有可打开的历史报告");
+          return;
+        }
+        await loadRunReport(jobId);
       }
 
       function renderBuildPreview() {
@@ -770,6 +1074,7 @@
             }
             if (job.status === "completed" && job.jobType === "run_benchmark") {
               await loadRunReport(job.jobId);
+              await refreshRunHistory(job.jobId);
             }
           }
         } catch (error) {
@@ -801,6 +1106,9 @@
       async function loadRunReport(jobId) {
         const report = await requestJson(`/api/runs/${encodeURIComponent(jobId)}/report`);
         state.lastReportJobId = jobId;
+        if ($("reportHistorySelect").value !== jobId) {
+          $("reportHistorySelect").value = jobId;
+        }
         renderRunReport(report);
       }
 
@@ -883,15 +1191,24 @@
       $("buildPackageBtn").addEventListener("click", () => buildPackageFromUpload().catch((error) => alert(error.message)));
       $("refreshPackagesBtn").addEventListener("click", () => refreshPackages().catch((error) => alert(error.message)));
       $("packageSelect").addEventListener("change", () => inspectSelectedPackage().catch((error) => alert(error.message)));
+      $("packagePreviewManifestBtn").addEventListener("click", () => setPackagePreviewMode("manifest"));
+      $("packagePreviewSamplesBtn").addEventListener("click", () => setPackagePreviewMode("samples"));
+      $("packagePreviewEvidenceBtn").addEventListener("click", () => setPackagePreviewMode("evidence"));
+      $("packagePreviewValidationBtn").addEventListener("click", () => setPackagePreviewMode("validation"));
       $("refreshBuildsBtn").addEventListener("click", () => refreshBuilds().catch((error) => alert(error.message)));
       $("importBuildBtn").addEventListener("click", () => importSelectedPackage().catch((error) => alert(error.message)));
       $("runBenchmarkBtn").addEventListener("click", () => runBenchmark().catch((error) => alert(error.message)));
+      $("loadHistoryReportBtn").addEventListener("click", () => loadSelectedHistoryReport().catch((error) => alert(error.message)));
+      $("refreshHistoryBtn").addEventListener("click", () => refreshRunHistory(state.lastReportJobId).catch((error) => alert(error.message)));
 
       refreshPackages().catch((error) => {
         $("packageSummary").innerHTML = `<div class="empty">加载 package 失败: ${escapeHtml(error.message)}</div>`;
       });
       refreshBuilds().catch((error) => {
         $("buildPreview").innerHTML = `<div class="empty">加载 build 失败: ${escapeHtml(error.message)}</div>`;
+      });
+      refreshRunHistory().catch((error) => {
+        $("reportHistoryPreview").innerHTML = `<div class="empty">加载历史报告失败: ${escapeHtml(error.message)}</div>`;
       });
     </script>
   </body>
