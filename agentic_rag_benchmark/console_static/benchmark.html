@@ -1,0 +1,898 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Benchmark Console</title>
+    <style>
+      :root {
+        --bg: #f4efe6;
+        --panel: rgba(255, 251, 245, 0.92);
+        --panel-strong: #fffdf9;
+        --ink: #1d2a38;
+        --muted: #57616f;
+        --accent: #b24c2a;
+        --accent-soft: rgba(178, 76, 42, 0.14);
+        --line: rgba(29, 42, 56, 0.12);
+        --ok: #1d7d5f;
+        --warn: #b66a17;
+        --fail: #c03b2b;
+        --shadow: 0 24px 60px rgba(40, 35, 28, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(178, 76, 42, 0.16), transparent 34%),
+          radial-gradient(circle at top right, rgba(29, 125, 95, 0.16), transparent 24%),
+          linear-gradient(180deg, #efe3d2 0%, var(--bg) 28%, #f7f3eb 100%);
+        font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", sans-serif;
+      }
+
+      .shell {
+        width: min(1440px, calc(100vw - 40px));
+        margin: 28px auto 40px;
+      }
+
+      .hero {
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: linear-gradient(135deg, rgba(255, 250, 243, 0.98), rgba(246, 239, 227, 0.9));
+        box-shadow: var(--shadow);
+      }
+
+      .hero h1 {
+        margin: 0 0 10px;
+        font-size: clamp(28px, 5vw, 46px);
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+      }
+
+      .hero p {
+        margin: 0;
+        max-width: 920px;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.65;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        gap: 18px;
+        margin-top: 18px;
+      }
+
+      .panel {
+        grid-column: span 12;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(10px);
+        overflow: hidden;
+      }
+
+      .panel.wide {
+        grid-column: span 7;
+      }
+
+      .panel.narrow {
+        grid-column: span 5;
+      }
+
+      .panel header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 18px 22px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .panel h2 {
+        margin: 0;
+        font-size: 18px;
+        letter-spacing: 0.01em;
+      }
+
+      .panel .body {
+        padding: 20px 22px 24px;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        gap: 14px;
+        margin-bottom: 14px;
+      }
+
+      .field {
+        grid-column: span 6;
+      }
+
+      .field.full {
+        grid-column: span 12;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      input,
+      select,
+      button,
+      textarea {
+        width: 100%;
+        border-radius: 14px;
+        border: 1px solid rgba(29, 42, 56, 0.18);
+        background: rgba(255, 255, 255, 0.74);
+        color: var(--ink);
+        padding: 12px 14px;
+        font: inherit;
+      }
+
+      input[type="file"] {
+        padding: 10px 12px;
+      }
+
+      button {
+        cursor: pointer;
+        border: none;
+        background: linear-gradient(135deg, #b24c2a, #d06f35);
+        color: white;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+      }
+
+      button.secondary {
+        background: rgba(29, 42, 56, 0.08);
+        color: var(--ink);
+      }
+
+      button.ghost {
+        background: rgba(178, 76, 42, 0.1);
+        color: var(--accent);
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 10px 24px rgba(178, 76, 42, 0.18);
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .actions button {
+        width: auto;
+        min-width: 140px;
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 6px;
+      }
+
+      .stat {
+        padding: 14px;
+        border-radius: 18px;
+        background: var(--panel-strong);
+        border: 1px solid var(--line);
+      }
+
+      .stat .label {
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .stat .value {
+        margin-top: 8px;
+        font-size: 24px;
+        font-weight: 800;
+      }
+
+      .status-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        width: auto;
+        border-radius: 999px;
+        padding: 8px 12px;
+        font-size: 12px;
+        font-weight: 700;
+        background: rgba(29, 42, 56, 0.08);
+      }
+
+      .status-chip.ok {
+        color: var(--ok);
+        background: rgba(29, 125, 95, 0.14);
+      }
+
+      .status-chip.warn {
+        color: var(--warn);
+        background: rgba(182, 106, 23, 0.14);
+      }
+
+      .status-chip.fail {
+        color: var(--fail);
+        background: rgba(192, 59, 43, 0.14);
+      }
+
+      .progress-track {
+        width: 100%;
+        height: 14px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: rgba(29, 42, 56, 0.08);
+        border: 1px solid rgba(29, 42, 56, 0.08);
+      }
+
+      .progress-bar {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #1d7d5f, #b24c2a);
+        transition: width 180ms ease;
+      }
+
+      .hint {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .kv {
+        display: grid;
+        grid-template-columns: 180px 1fr;
+        gap: 8px 12px;
+        margin-top: 12px;
+      }
+
+      .kv div:nth-child(odd) {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      pre,
+      .log-box {
+        margin: 0;
+        border-radius: 18px;
+        padding: 16px;
+        background: #17212b;
+        color: #edf4fb;
+        overflow: auto;
+        font-family: "SFMono-Regular", "Menlo", monospace;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .log-box {
+        min-height: 220px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+
+      th,
+      td {
+        padding: 10px 8px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+        text-align: left;
+      }
+
+      th {
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .pill-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .pill {
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .empty {
+        padding: 18px;
+        border-radius: 16px;
+        background: rgba(29, 42, 56, 0.05);
+        color: var(--muted);
+      }
+
+      .section-note {
+        margin-bottom: 14px;
+        padding: 14px 16px;
+        border-left: 3px solid var(--accent);
+        border-radius: 0 14px 14px 0;
+        background: rgba(178, 76, 42, 0.08);
+        color: var(--ink);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+
+      @media (max-width: 1100px) {
+        .panel.wide,
+        .panel.narrow {
+          grid-column: span 12;
+        }
+
+        .stats {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 720px) {
+        .shell {
+          width: min(100vw - 20px, 1440px);
+          margin-top: 12px;
+        }
+
+        .hero,
+        .panel .body,
+        .panel header {
+          padding-left: 16px;
+          padding-right: 16px;
+        }
+
+        .field,
+        .field.full {
+          grid-column: span 12;
+        }
+
+        .stats {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <section class="hero">
+        <h1>Independent Benchmark Console</h1>
+        <p>
+          这个控制台直接挂在 <code>agentic_rag_benchmark</code> 上运行，只依赖
+          <code>agentic_rag_app</code> 和 <code>docreader_service</code> 在线。
+          你可以从文件或文件夹生成标准包、查看包内容、导入 build、随机抽样执行 smoke，并在同一页查看进度和最终报告。
+        </p>
+      </section>
+
+      <div class="grid">
+        <section class="panel wide">
+          <header>
+            <h2>1. 文档上传与构包</h2>
+            <span class="status-chip" id="buildUploadHint">支持单文件 / 多文件 / 文件夹</span>
+          </header>
+          <div class="body">
+            <div class="section-note">
+              选择“文件”时可以传单个或多个文件；选择“文件夹”时会保留相对路径。构建完成后，正式 package 会写入仓库内
+              <code>agentic_rag_benchmark/packages/</code>。
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="projectKey">Project Key</label>
+                <input id="projectKey" value="api_docs" />
+              </div>
+              <div class="field">
+                <label for="suiteVersion">Suite Version</label>
+                <input id="suiteVersion" value="base_v1" />
+              </div>
+              <div class="field full">
+                <label for="fileInput">选择文件（单个或多个）</label>
+                <input id="fileInput" type="file" multiple />
+              </div>
+              <div class="field full">
+                <label for="folderInput">选择文件夹</label>
+                <input id="folderInput" type="file" webkitdirectory directory multiple />
+              </div>
+            </div>
+            <div class="actions">
+              <button id="buildPackageBtn" type="button">生成标准包</button>
+              <button id="refreshPackagesBtn" class="secondary" type="button">刷新包列表</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel narrow">
+          <header>
+            <h2>2. Package 列表与详情</h2>
+            <span class="status-chip" id="packageCountChip">0 packages</span>
+          </header>
+          <div class="body">
+            <div class="row">
+              <div class="field full">
+                <label for="packageSelect">选择 Package</label>
+                <select id="packageSelect"></select>
+              </div>
+            </div>
+            <div id="packageSummary" class="empty">还没有加载 package。</div>
+            <div style="margin-top: 14px">
+              <label>Manifest / Preview</label>
+              <pre id="packagePreview">等待加载...</pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel wide">
+          <header>
+            <h2>3. Build 选择与抽样运行</h2>
+            <span class="status-chip" id="buildCountChip">0 builds</span>
+          </header>
+          <div class="body">
+            <div class="row">
+              <div class="field full">
+                <label for="buildSelect">选择 Build</label>
+                <select id="buildSelect"></select>
+              </div>
+              <div class="field">
+                <label for="providerInput">Provider</label>
+                <input id="providerInput" value="minimax" />
+              </div>
+              <div class="field">
+                <label for="sampleCountInput">随机抽样条数</label>
+                <input id="sampleCountInput" type="number" min="1" value="10" />
+              </div>
+            </div>
+            <div class="actions">
+              <button id="importBuildBtn" class="ghost" type="button">导入当前 Package 为 Build</button>
+              <button id="refreshBuildsBtn" class="secondary" type="button">刷新 Build 列表</button>
+              <button id="runBenchmarkBtn" type="button">启动 Benchmark Run</button>
+            </div>
+            <div style="margin-top: 18px">
+              <label>Build 列表预览</label>
+              <div id="buildPreview" class="empty">还没有加载 build。</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel narrow">
+          <header>
+            <h2>4. 进度与报告</h2>
+            <span class="status-chip" id="jobStatusChip">Idle</span>
+          </header>
+          <div class="body">
+            <div class="hint" id="jobTitle">当前没有活跃任务。</div>
+            <div style="margin: 14px 0 10px">
+              <div class="progress-track"><div class="progress-bar" id="jobProgressBar"></div></div>
+            </div>
+            <div class="kv" id="jobMeta">
+              <div>Stage</div><div>-</div>
+              <div>Status</div><div>-</div>
+              <div>Message</div><div>-</div>
+            </div>
+            <div style="margin-top: 16px">
+              <label>Job 日志</label>
+              <div id="jobLogs" class="log-box">等待任务开始...</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <header>
+            <h2>最终报告</h2>
+            <span class="status-chip" id="reportChip">No report</span>
+          </header>
+          <div class="body">
+            <div id="reportSummary" class="empty">跑完 benchmark 之后，这里会显示概览、RAGAS 指标和样本明细。</div>
+            <div id="reportSamples" style="margin-top: 16px"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      const state = {
+        currentJobId: null,
+        pollTimer: null,
+        packages: [],
+        builds: [],
+        lastReportJobId: null,
+      };
+
+      function $(id) {
+        return document.getElementById(id);
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+      }
+
+      function statusClass(status) {
+        const normalized = String(status || "").toLowerCase();
+        if (normalized === "completed" || normalized === "ready" || normalized === "ok") return "status-chip ok";
+        if (normalized === "failed" || normalized === "error") return "status-chip fail";
+        if (normalized === "running" || normalized === "queued") return "status-chip warn";
+        return "status-chip";
+      }
+
+      async function requestJson(url, options = {}) {
+        const response = await fetch(url, {
+          headers: {
+            ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+            ...(options.headers || {}),
+          },
+          ...options,
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const message = payload.detail || payload.message || `Request failed: ${response.status}`;
+          throw new Error(message);
+        }
+        return payload;
+      }
+
+      function setBusyText(message) {
+        $("jobTitle").textContent = message;
+      }
+
+      async function refreshPackages() {
+        const payload = await requestJson("/api/packages");
+        state.packages = payload.packages || [];
+        $("packageCountChip").textContent = `${state.packages.length} packages`;
+        const select = $("packageSelect");
+        const current = select.value;
+        select.innerHTML = "";
+        if (!state.packages.length) {
+          select.innerHTML = `<option value="">暂无 package</option>`;
+          $("packageSummary").innerHTML = `<div class="empty">仓库内还没有标准 package。</div>`;
+          $("packagePreview").textContent = "等待加载...";
+          return;
+        }
+        state.packages.forEach((pkg) => {
+          const option = document.createElement("option");
+          option.value = pkg.packagePath;
+          option.textContent = `${pkg.projectKey || "unknown"} / ${pkg.suiteVersion || "unknown"}`;
+          if (current && current === pkg.packagePath) option.selected = true;
+          select.appendChild(option);
+        });
+        if (!select.value && state.packages[0]) {
+          select.value = state.packages[0].packagePath;
+        }
+        await inspectSelectedPackage();
+      }
+
+      async function inspectSelectedPackage() {
+        const packagePath = $("packageSelect").value;
+        if (!packagePath) return;
+        const payload = await requestJson(`/api/packages/inspect?packagePath=${encodeURIComponent(packagePath)}`);
+        $("packageSummary").innerHTML = `
+          <div class="stats">
+            <div class="stat"><div class="label">Samples</div><div class="value">${escapeHtml(payload.sampleCount)}</div></div>
+            <div class="stat"><div class="label">Evidence</div><div class="value">${escapeHtml(payload.evidenceCount)}</div></div>
+            <div class="stat"><div class="label">Project</div><div class="value">${escapeHtml(payload.manifest.project_key)}</div></div>
+            <div class="stat"><div class="label">Suite</div><div class="value">${escapeHtml(payload.manifest.suite_version)}</div></div>
+          </div>
+          <div class="kv">
+            <div>Package Path</div><div>${escapeHtml(payload.packagePath)}</div>
+            <div>Generator</div><div>${escapeHtml(payload.manifest.generator_version)}</div>
+            <div>Created At</div><div>${escapeHtml(payload.manifest.created_at)}</div>
+            <div>Validation</div><div>${payload.validation.ok ? "OK" : "FAILED"}</div>
+          </div>
+        `;
+        $("packagePreview").textContent = JSON.stringify(
+          {
+            manifest: payload.manifest,
+            files: payload.files,
+            samplePreview: payload.samplePreview,
+            evidencePreview: payload.evidencePreview,
+            validation: payload.validation,
+          },
+          null,
+          2
+        );
+        $("sampleCountInput").value = Math.min(payload.sampleCount || 1, Number($("sampleCountInput").value || 10));
+        $("sampleCountInput").max = payload.sampleCount || 1;
+      }
+
+      async function refreshBuilds() {
+        const payload = await requestJson("/api/builds");
+        state.builds = payload.builds || [];
+        $("buildCountChip").textContent = `${state.builds.length} builds`;
+        const select = $("buildSelect");
+        const current = select.value;
+        select.innerHTML = "";
+        if (!state.builds.length) {
+          select.innerHTML = `<option value="">暂无 build</option>`;
+          $("buildPreview").innerHTML = `<div class="empty">还没有可用 build。</div>`;
+          return;
+        }
+        state.builds.forEach((build) => {
+          const option = document.createElement("option");
+          option.value = build.buildId;
+          option.textContent = `${build.projectKey || "unknown"} / ${build.suiteVersion || "unknown"} / ${build.status || "unknown"}`;
+          if (current && current === build.buildId) option.selected = true;
+          select.appendChild(option);
+        });
+        if (!select.value && state.builds[0]) {
+          select.value = state.builds[0].buildId;
+        }
+        renderBuildPreview();
+      }
+
+      function renderBuildPreview() {
+        if (!state.builds.length) {
+          $("buildPreview").innerHTML = `<div class="empty">还没有可用 build。</div>`;
+          return;
+        }
+        const rows = state.builds
+          .slice(0, 12)
+          .map(
+            (build) => `
+              <tr>
+                <td>${escapeHtml(build.buildId)}</td>
+                <td>${escapeHtml(build.projectKey)}</td>
+                <td>${escapeHtml(build.suiteVersion)}</td>
+                <td>${escapeHtml(build.sampleCount)}</td>
+                <td>${escapeHtml(build.status)}</td>
+              </tr>
+            `
+          )
+          .join("");
+        $("buildPreview").innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>Build ID</th>
+                <th>Project</th>
+                <th>Suite</th>
+                <th>Samples</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        `;
+      }
+
+      async function buildPackageFromUpload() {
+        const projectKey = $("projectKey").value.trim();
+        const suiteVersion = $("suiteVersion").value.trim();
+        const folderFiles = Array.from($("folderInput").files || []);
+        const directFiles = Array.from($("fileInput").files || []);
+        const files = folderFiles.length ? folderFiles : directFiles;
+        if (!projectKey || !suiteVersion) {
+          alert("projectKey 和 suiteVersion 不能为空");
+          return;
+        }
+        if (!files.length) {
+          alert("请先选择文件或文件夹");
+          return;
+        }
+        const formData = new FormData();
+        formData.append("projectKey", projectKey);
+        formData.append("suiteVersion", suiteVersion);
+        files.forEach((file) => {
+          formData.append("files", file, file.name);
+          formData.append("relative_paths", file.webkitRelativePath || file.name);
+        });
+        setBusyText("正在上传并创建构包任务...");
+        const payload = await requestJson("/api/packages/build-upload", { method: "POST", body: formData });
+        startJobPolling(payload.jobId);
+      }
+
+      async function importSelectedPackage() {
+        const packagePath = $("packageSelect").value;
+        if (!packagePath) {
+          alert("请先选择 package");
+          return;
+        }
+        const payload = await requestJson("/api/builds/import", {
+          method: "POST",
+          body: JSON.stringify({ packagePath }),
+        });
+        startJobPolling(payload.jobId);
+      }
+
+      async function runBenchmark() {
+        const packagePath = $("packageSelect").value;
+        const buildId = $("buildSelect").value;
+        const provider = $("providerInput").value.trim();
+        const sampleCount = Number($("sampleCountInput").value || 0);
+        if (!packagePath || !buildId || !provider || !sampleCount) {
+          alert("请先选择 package、build，并填写 provider 与 sampleCount");
+          return;
+        }
+        const payload = await requestJson("/api/runs", {
+          method: "POST",
+          body: JSON.stringify({
+            packagePath,
+            buildId,
+            provider,
+            sampleCount,
+          }),
+        });
+        startJobPolling(payload.jobId);
+      }
+
+      function startJobPolling(jobId) {
+        state.currentJobId = jobId;
+        if (state.pollTimer) {
+          clearInterval(state.pollTimer);
+          state.pollTimer = null;
+        }
+        pollJob();
+        state.pollTimer = setInterval(pollJob, 1800);
+      }
+
+      async function pollJob() {
+        if (!state.currentJobId) return;
+        try {
+          const job = await requestJson(`/api/jobs/${encodeURIComponent(state.currentJobId)}`);
+          renderJob(job);
+          if (job.status === "completed" || job.status === "failed") {
+            if (state.pollTimer) {
+              clearInterval(state.pollTimer);
+              state.pollTimer = null;
+            }
+            if (job.status === "completed" && job.jobType === "build_package") {
+              await refreshPackages();
+            }
+            if (job.status === "completed" && job.jobType === "import_build") {
+              await refreshBuilds();
+              const buildId = job.artifacts?.buildId;
+              if (buildId) $("buildSelect").value = buildId;
+            }
+            if (job.status === "completed" && job.jobType === "run_benchmark") {
+              await loadRunReport(job.jobId);
+            }
+          }
+        } catch (error) {
+          $("jobLogs").textContent = `轮询任务失败: ${error.message}`;
+        }
+      }
+
+      function renderJob(job) {
+        const percent = job.progress?.percent ?? 0;
+        $("jobStatusChip").className = statusClass(job.status);
+        $("jobStatusChip").textContent = `${job.status || "unknown"} / ${job.stage || "-"}`;
+        $("jobTitle").textContent = `Job ${job.jobId} · ${job.jobType}`;
+        $("jobProgressBar").style.width = `${percent}%`;
+        const progressMessage = job.progress?.message || "-";
+        $("jobMeta").innerHTML = `
+          <div>Stage</div><div>${escapeHtml(job.stage)}</div>
+          <div>Status</div><div>${escapeHtml(job.status)}</div>
+          <div>Message</div><div>${escapeHtml(progressMessage)}</div>
+        `;
+        const logs = (job.logs || []).slice(-24).map((entry) => {
+          const time = entry.time || "";
+          const stage = entry.stage || "";
+          const message = entry.message || "";
+          return `[${time}] [${stage}] ${message}`;
+        });
+        $("jobLogs").textContent = logs.length ? logs.join("\n") : "暂无日志";
+      }
+
+      async function loadRunReport(jobId) {
+        const report = await requestJson(`/api/runs/${encodeURIComponent(jobId)}/report`);
+        state.lastReportJobId = jobId;
+        renderRunReport(report);
+      }
+
+      function renderRunReport(report) {
+        $("reportChip").className = "status-chip ok";
+        $("reportChip").textContent = "Report Ready";
+        const summary = report.summary || {};
+        const ragasSummary = report.ragasSummary || {};
+        const warnings = ragasSummary.warnings || [];
+        $("reportSummary").innerHTML = `
+          <div class="stats">
+            <div class="stat"><div class="label">Samples</div><div class="value">${escapeHtml(summary.sample_count ?? "-")}</div></div>
+            <div class="stat"><div class="label">Exec Success</div><div class="value">${escapeHtml(summary.execution_success_count ?? "-")}</div></div>
+            <div class="stat"><div class="label">Exec Rate</div><div class="value">${escapeHtml(summary.execution_success_rate ?? "-")}%</div></div>
+            <div class="stat"><div class="label">Avg Latency</div><div class="value">${escapeHtml(summary.average_latency_ms ?? "-")}</div></div>
+          </div>
+          <div class="stats" style="margin-top: 12px">
+            <div class="stat"><div class="label">Context Output</div><div class="value">${escapeHtml(summary.retrieval_hit_overview?.samples_with_context_output ?? "-")}</div></div>
+            <div class="stat"><div class="label">No Context</div><div class="value">${escapeHtml(summary.retrieval_hit_overview?.samples_without_context_output ?? "-")}</div></div>
+            <div class="stat"><div class="label">Faithfulness</div><div class="value">${escapeHtml(ragasSummary.scores?.faithfulness ?? "-")}</div></div>
+            <div class="stat"><div class="label">Context Precision</div><div class="value">${escapeHtml(ragasSummary.scores?.context_precision ?? "-")}</div></div>
+          </div>
+          <div class="kv">
+            <div>Build ID</div><div>${escapeHtml(report.runMeta?.build_id)}</div>
+            <div>Package</div><div>${escapeHtml(report.runMeta?.package_dir)}</div>
+            <div>Metrics Completed</div><div>${escapeHtml((ragasSummary.metrics_completed || []).join(", "))}</div>
+            <div>Metrics Failed</div><div>${escapeHtml((ragasSummary.metrics_failed || []).map((x) => x.metric).join(", "))}</div>
+          </div>
+          ${
+            warnings.length
+              ? `<div style="margin-top: 16px"><label>RAGAS Warnings</label><div class="pill-list">${warnings
+                  .map((item) => `<span class="pill">${escapeHtml(item)}</span>`)
+                  .join("")}</div></div>`
+              : ""
+          }
+        `;
+
+        if (!report.samples || !report.samples.length) {
+          $("reportSamples").innerHTML = `<div class="empty">没有样本明细。</div>`;
+          return;
+        }
+
+        const rows = report.samples
+          .map((sample) => {
+            const ragasScores = sample.ragasScores || {};
+            return `
+              <tr>
+                <td>${escapeHtml(sample.sampleId)}</td>
+                <td>${escapeHtml(sample.question)}</td>
+                <td>${escapeHtml(sample.finishReason || "-")}</td>
+                <td>${escapeHtml(sample.latencyMs ?? "-")}</td>
+                <td>${escapeHtml(sample.contextOutputChunkCount ?? 0)}</td>
+                <td>${escapeHtml(ragasScores.faithfulness ?? "-")}</td>
+                <td>${escapeHtml(ragasScores.context_precision ?? "-")}</td>
+                <td>${escapeHtml(ragasScores.context_recall ?? "-")}</td>
+              </tr>
+            `;
+          })
+          .join("");
+        $("reportSamples").innerHTML = `
+          <label>样本明细</label>
+          <table>
+            <thead>
+              <tr>
+                <th>Sample ID</th>
+                <th>Question</th>
+                <th>Finish Reason</th>
+                <th>Latency</th>
+                <th>Context Chunks</th>
+                <th>Faithfulness</th>
+                <th>Context Precision</th>
+                <th>Context Recall</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        `;
+      }
+
+      $("buildPackageBtn").addEventListener("click", () => buildPackageFromUpload().catch((error) => alert(error.message)));
+      $("refreshPackagesBtn").addEventListener("click", () => refreshPackages().catch((error) => alert(error.message)));
+      $("packageSelect").addEventListener("change", () => inspectSelectedPackage().catch((error) => alert(error.message)));
+      $("refreshBuildsBtn").addEventListener("click", () => refreshBuilds().catch((error) => alert(error.message)));
+      $("importBuildBtn").addEventListener("click", () => importSelectedPackage().catch((error) => alert(error.message)));
+      $("runBenchmarkBtn").addEventListener("click", () => runBenchmark().catch((error) => alert(error.message)));
+
+      refreshPackages().catch((error) => {
+        $("packageSummary").innerHTML = `<div class="empty">加载 package 失败: ${escapeHtml(error.message)}</div>`;
+      });
+      refreshBuilds().catch((error) => {
+        $("buildPreview").innerHTML = `<div class="empty">加载 build 失败: ${escapeHtml(error.message)}</div>`;
+      });
+    </script>
+  </body>
+</html>
