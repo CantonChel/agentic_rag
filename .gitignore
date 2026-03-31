@@ -32,8 +32,16 @@ agentic项目技术总结/
 **/build/
 
 test-doc/
+memory/
 memory/users/
 .venv/
 venv/
+__pycache__/
+*.pyc
 node_modules/
 **/node_modules/
+
+agentic_rag_benchmark/packages/*
+!agentic_rag_benchmark/packages/.gitkeep
+agentic_rag_benchmark/outputs/*
+!agentic_rag_benchmark/outputs/.gitkeep

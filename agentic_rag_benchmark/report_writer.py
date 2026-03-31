@@ -14,6 +14,9 @@ from .runner import RunBenchmarkReport
 from .runner import RunBenchmarkSampleResult
 
 
+EXECUTION_SUCCESS_DEFINITION = "Sample has no runner error, has a turn_id, and produced a non-empty final_answer."
+
+
 @dataclass(frozen=True)
 class BenchmarkReportArtifacts:
     """Paths produced by one benchmark run."""
@@ -100,16 +103,21 @@ def build_report_summary(sample_results: List[RunBenchmarkSampleResult]) -> Dict
 
     average_latency_ms = round(sum(latency_values) / len(latency_values), 2) if latency_values else None
     success_rate = round((success_count / sample_count) * 100, 2) if sample_count else 0.0
+    samples_without_context_output = sample_count - context_output_sample_count
 
     return {
         "sample_count": sample_count,
         "success_count": success_count,
         "failure_count": sample_count - success_count,
         "success_rate": success_rate,
+        "execution_success_count": success_count,
+        "execution_success_rate": success_rate,
+        "success_definition": EXECUTION_SUCCESS_DEFINITION,
         "average_latency_ms": average_latency_ms,
         "finish_reason_distribution": finish_reason_distribution,
         "retrieval_hit_overview": {
             "samples_with_context_output": context_output_sample_count,
+            "samples_without_context_output": samples_without_context_output,
             "context_output_chunk_count": context_output_chunk_count,
         },
     }
@@ -153,9 +161,11 @@ def build_markdown_report(
         f"- started_at: `{run_meta['started_at']}`",
         f"- completed_at: `{run_meta['completed_at']}`",
         "",
-        "## 总体成功率",
-        f"- success_count: `{summary['success_count']}` / `{summary['sample_count']}`",
-        f"- success_rate: `{summary['success_rate']}%`",
+        "## 执行成功率",
+        f"- execution_success_count: `{summary['execution_success_count']}` / `{summary['sample_count']}`",
+        f"- execution_success_rate: `{summary['execution_success_rate']}%`",
+        f"- success_definition: `{summary['success_definition']}`",
+        "- 注：这里只表示 runner 成功完成该样本，不代表答案正确率。",
         "",
         "## 平均耗时",
         f"- average_latency_ms: `{summary['average_latency_ms']}`",
@@ -194,6 +204,7 @@ def build_markdown_report(
             "",
             "## 检索命中概览",
             f"- samples_with_context_output: `{retrieval_hit_overview['samples_with_context_output']}` / `{len(sample_results)}`",
+            f"- samples_without_context_output: `{retrieval_hit_overview['samples_without_context_output']}` / `{len(sample_results)}`",
             f"- context_output_chunk_count: `{retrieval_hit_overview['context_output_chunk_count']}`",
         ]
     )
