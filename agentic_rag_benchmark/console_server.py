@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import inspect
 import json
 import math
@@ -12,6 +13,7 @@ import threading
 import time
 from dataclasses import asdict
 from dataclasses import dataclass
+from dataclasses import field
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -58,7 +60,7 @@ RAGAS_CSV_BASE_FIELDS = {"sample_id", "question", "answer", "ground_truth", "con
 
 
 def utcnow_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,7 @@ class ConsoleConfig:
     package_preview_limit: int = DEFAULT_PACKAGE_PREVIEW_LIMIT
     build_poll_interval_seconds: float = DEFAULT_BUILD_POLL_INTERVAL_SECONDS
     build_ready_timeout_seconds: int = DEFAULT_BUILD_READY_TIMEOUT_SECONDS
+    history_roots: tuple[Path, ...] = field(default_factory=tuple)
 
     @property
     def packages_dir(self) -> Path:
@@ -97,6 +100,19 @@ class ConsoleConfig:
     def static_html_path(self) -> Path:
         return self.benchmark_root / "console_static" / "benchmark.html"
 
+    @property
+    def report_history_roots(self) -> List[Path]:
+        seen = set()
+        roots: List[Path] = []
+        for candidate in (self.outputs_dir, self.benchmark_root / "outputs", *self.history_roots):
+            resolved = candidate.expanduser().resolve()
+            key = str(resolved)
+            if key in seen:
+                continue
+            seen.add(key)
+            roots.append(resolved)
+        return roots
+
     @classmethod
     def from_env(cls) -> "ConsoleConfig":
         benchmark_root = Path(
@@ -105,6 +121,7 @@ class ConsoleConfig:
         work_root = Path(os.getenv("BENCHMARK_CONSOLE_WORK_ROOT", str(DEFAULT_WORK_ROOT))).expanduser()
         preview_limit = read_non_negative_int_env("BENCHMARK_CONSOLE_PACKAGE_PREVIEW_LIMIT", DEFAULT_PACKAGE_PREVIEW_LIMIT)
         port = read_non_negative_int_env("BENCHMARK_CONSOLE_PORT", DEFAULT_CONSOLE_PORT)
+        history_roots = tuple(parse_path_list_env("BENCHMARK_CONSOLE_HISTORY_ROOTS"))
         return cls(
             host=str(os.getenv("BENCHMARK_CONSOLE_HOST", DEFAULT_CONSOLE_HOST)).strip() or DEFAULT_CONSOLE_HOST,
             port=port or DEFAULT_CONSOLE_PORT,
@@ -124,6 +141,7 @@ class ConsoleConfig:
                 DEFAULT_BUILD_READY_TIMEOUT_SECONDS,
             )
             or DEFAULT_BUILD_READY_TIMEOUT_SECONDS,
+            history_roots=history_roots,
         )
 
 
@@ -481,23 +499,12 @@ def create_app(config: ConsoleConfig | None = None) -> FastAPI:
 
     @app.get("/api/runs/{job_id}/report")
     async def get_run_report_endpoint(job_id: str) -> Dict[str, Any]:
-        try:
-            job = job_store.get_job(job_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=f"Unknown jobId: {job_id}") from exc
-        if job.get("jobType") != "run_benchmark":
-            raise HTTPException(status_code=400, detail="jobId is not a run_benchmark job")
-        if job.get("status") != "completed":
-            raise HTTPException(status_code=409, detail="Run job has not completed")
-        output_dir_text = str((job.get("artifacts") or {}).get("outputDir") or "").strip()
-        if not output_dir_text:
-            raise HTTPException(status_code=500, detail="Run job is missing outputDir artifact")
-        output_dir = Path(output_dir_text).expanduser().resolve()
+        output_dir = resolve_report_output_dir(run_id=job_id, config=config, job_store=job_store)
         return load_run_report(output_dir)
 
     @app.get("/api/runs")
     async def list_runs_endpoint() -> Dict[str, Any]:
-        return {"runs": list_run_history(job_store)}
+        return {"runs": list_run_history(job_store=job_store, config=config)}
 
     return app
 
@@ -520,6 +527,13 @@ def read_non_negative_int_env(name: str, default: int) -> int:
     except ValueError:
         return default
     return value if value >= 0 else default
+
+
+def parse_path_list_env(name: str) -> List[Path]:
+    raw = str(os.getenv(name) or "").strip()
+    if not raw:
+        return []
+    return [Path(part).expanduser() for part in raw.split(os.pathsep) if str(part).strip()]
 
 
 def compute_percent(completed: int | None, total: int | None) -> float | None:
@@ -1028,10 +1042,23 @@ def load_run_report(output_dir: Path) -> Dict[str, Any]:
     }
 
 
-def list_run_history(job_store: JobStore) -> List[Dict[str, Any]]:
+def list_run_history(job_store: JobStore, config: ConsoleConfig) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
+    known_output_dirs = set()
     for job in job_store.list_jobs(job_type="run_benchmark"):
-        records.append(build_run_history_record(job))
+        record = build_run_history_record(job)
+        if record.get("outputDir"):
+            known_output_dirs.add(str(Path(record["outputDir"]).expanduser().resolve()))
+        records.append(record)
+    for output_dir in discover_report_output_dirs(config):
+        resolved = str(output_dir.resolve())
+        if resolved in known_output_dirs:
+            continue
+        try:
+            records.append(build_legacy_run_history_record(output_dir))
+        except Exception:
+            continue
+    records.sort(key=run_history_sort_key, reverse=True)
     return records
 
 
@@ -1056,6 +1083,7 @@ def build_run_history_record(job: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "jobId": job.get("jobId"),
+        "reportSource": "job",
         "status": job.get("status"),
         "stage": job.get("stage"),
         "createdAt": job.get("createdAt"),
@@ -1080,6 +1108,96 @@ def build_run_history_record(job: Dict[str, Any]) -> Dict[str, Any]:
         "outputDir": output_dir or None,
         "error": job.get("error"),
     }
+
+
+def discover_report_output_dirs(config: ConsoleConfig) -> List[Path]:
+    seen = set()
+    output_dirs: List[Path] = []
+    for root in config.report_history_roots:
+        if not root.exists() or not root.is_dir():
+            continue
+        for report_path in sorted(root.glob("**/benchmark_report.json")):
+            output_dir = report_path.parent.resolve()
+            marker = str(output_dir)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            output_dirs.append(output_dir)
+    return output_dirs
+
+
+def build_legacy_run_history_record(output_dir: Path) -> Dict[str, Any]:
+    report = load_run_report(output_dir)
+    run_meta = dict(report.get("runMeta") or {})
+    summary = dict(report.get("summary") or {})
+    ragas_summary = dict(report.get("ragasSummary") or {})
+    completed_at = str(run_meta.get("completed_at") or run_meta.get("started_at") or "").strip()
+    return {
+        "jobId": build_legacy_report_id(output_dir),
+        "reportSource": "legacy_output",
+        "status": "completed",
+        "stage": JOB_STAGE_COMPLETED,
+        "createdAt": completed_at,
+        "updatedAt": completed_at,
+        "provider": run_meta.get("provider") or "",
+        "buildId": run_meta.get("build_id") or "",
+        "projectKey": run_meta.get("project_key") or "",
+        "suiteVersion": run_meta.get("suite_version") or "",
+        "sampleCount": run_meta.get("sample_count") or summary.get("sample_count") or 0,
+        "selectedPackagePath": run_meta.get("package_dir") or "",
+        "executionSuccessCount": summary.get("execution_success_count"),
+        "executionSuccessRate": summary.get("execution_success_rate"),
+        "ragasScores": dict(ragas_summary.get("scores") or {}),
+        "metricsCompleted": list(ragas_summary.get("metrics_completed") or []),
+        "metricsFailed": [
+            item.get("metric") if isinstance(item, dict) else str(item)
+            for item in (ragas_summary.get("metrics_failed") or [])
+            if (isinstance(item, dict) and item.get("metric")) or str(item).strip()
+        ],
+        "warningCount": len(ragas_summary.get("warnings") or []),
+        "reportAvailable": True,
+        "outputDir": str(output_dir),
+        "error": None,
+    }
+
+
+def build_legacy_report_id(output_dir: Path) -> str:
+    digest = hashlib.sha1(str(output_dir.resolve()).encode("utf-8")).hexdigest()[:16]
+    return f"legacy-{digest}"
+
+
+def build_legacy_report_index(config: ConsoleConfig) -> Dict[str, Path]:
+    return {build_legacy_report_id(output_dir): output_dir for output_dir in discover_report_output_dirs(config)}
+
+
+def resolve_report_output_dir(run_id: str, config: ConsoleConfig, job_store: JobStore) -> Path:
+    try:
+        job = job_store.get_job(run_id)
+    except KeyError:
+        job = None
+    if job is not None:
+        if job.get("jobType") != "run_benchmark":
+            raise HTTPException(status_code=400, detail="jobId is not a run_benchmark job")
+        if job.get("status") != "completed":
+            raise HTTPException(status_code=409, detail="Run job has not completed")
+        output_dir_text = str((job.get("artifacts") or {}).get("outputDir") or "").strip()
+        if not output_dir_text:
+            raise HTTPException(status_code=500, detail="Run job is missing outputDir artifact")
+        return Path(output_dir_text).expanduser().resolve()
+
+    legacy_index = build_legacy_report_index(config)
+    output_dir = legacy_index.get(run_id)
+    if output_dir is not None:
+        return output_dir
+    raise HTTPException(status_code=404, detail=f"Unknown run id: {run_id}")
+
+
+def run_history_sort_key(record: Dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(record.get("updatedAt") or record.get("createdAt") or ""),
+        str(record.get("jobId") or ""),
+        str(record.get("outputDir") or ""),
+    )
 
 
 def count_context_output_hits_from_payload(sample_payload: Dict[str, Any]) -> int:
