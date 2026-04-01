@@ -57,4 +57,23 @@ class MemoryGetToolTest {
 		Assertions.assertFalse(result.isSuccess());
 		Assertions.assertTrue(result.getError().contains("not found"));
 	}
+
+	@Test
+	void rejectsInvalidLineRangeBeforeCallingRecallService() {
+		ObjectMapper objectMapper = new ObjectMapper();
+		MemoryRecallService memoryRecallService = Mockito.mock(MemoryRecallService.class);
+
+		MemoryGetTool tool = new MemoryGetTool(objectMapper, memoryRecallService);
+		ObjectNode args = objectMapper.createObjectNode();
+		args.put("path", "memory/users/u1/daily/2026-03-29.md");
+		args.put("lineStart", 5);
+		args.put("lineEnd", 4);
+
+		ToolResult result = tool.execute(args, new ToolExecutionContext("req", "u1", "s1")).block();
+
+		Assertions.assertNotNull(result);
+		Assertions.assertFalse(result.isSuccess());
+		Assertions.assertTrue(result.getError().contains("Invalid path or line range"));
+		Mockito.verifyNoInteractions(memoryRecallService);
+	}
 }

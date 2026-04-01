@@ -130,6 +130,37 @@ class MemorySearchServiceTest {
 		Mockito.verify(indexManager).requestUserScope("u1");
 	}
 
+	@Test
+	void fallsBackToLexicalHitsWhenEmbeddingFails() {
+		MemoryProperties properties = newProperties();
+		MemoryFileService fileService = new MemoryFileService(properties);
+		MemoryIndexScopeService scopeService = new MemoryIndexScopeService(fileService, new ObjectMapper());
+		MemoryIndexSearchRepository repository = Mockito.mock(MemoryIndexSearchRepository.class);
+		MemoryIndexMetaRepository metaRepository = Mockito.mock(MemoryIndexMetaRepository.class);
+		MemoryIndexManager indexManager = Mockito.mock(MemoryIndexManager.class);
+		MemoryIndexSearchService service = new MemoryIndexSearchService(
+			properties,
+			new FailingEmbeddingModel(),
+			profileResolver(),
+			repository,
+			scopeService,
+			metaRepository,
+			indexManager
+		);
+		Mockito.when(metaRepository.findById(Mockito.any())).thenReturn(Optional.of(meta(false, "u1")));
+		Mockito.when(repository.searchLexical(Mockito.anyList(), Mockito.eq("站内通知"), Mockito.anyInt()))
+			.thenReturn(List.of(
+				new MemoryIndexSearchCandidate("memory/users/u1/daily/2026-04-01.md", "daily_durable", "b2", 6, 7, "本地化环境先只保留站内通知", 0.8)
+			));
+
+		List<MemorySearchHit> result = service.search("u1", "站内通知", 5);
+
+		Mockito.verify(repository, Mockito.never()).searchVector(Mockito.anyList(), Mockito.any(), Mockito.anyList(), Mockito.anyInt());
+		Assertions.assertEquals(1, result.size());
+		Assertions.assertEquals("memory/users/u1/daily/2026-04-01.md", result.get(0).getPath());
+		Assertions.assertEquals(0.8, result.get(0).getScore(), 0.0001);
+	}
+
 	private MemoryProperties newProperties() {
 		MemoryProperties props = new MemoryProperties();
 		props.setWorkspaceRoot(tempDir.toString());
@@ -172,6 +203,13 @@ class MemorySearchServiceTest {
 				out.add(List.of(banana, wecom, 0.5));
 			}
 			return out;
+		}
+	}
+
+	private static class FailingEmbeddingModel implements EmbeddingModel {
+		@Override
+		public List<List<Double>> embedTexts(List<String> texts) {
+			throw new IllegalStateException("embedding unavailable");
 		}
 	}
 }

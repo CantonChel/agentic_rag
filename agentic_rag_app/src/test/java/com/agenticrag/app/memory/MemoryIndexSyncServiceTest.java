@@ -150,6 +150,36 @@ class MemoryIndexSyncServiceTest {
 		Assertions.assertEquals(chunkCount, chunkRepository.findByScopeTypeAndScopeId("user", "u3").size());
 	}
 
+	@Test
+	void deletesRemovedFilesFromIndexOnNextSync() throws Exception {
+		Path file = writeUserDaily("u4", "2026-04-01.md", "先只保留站内通知\n");
+		MemoryIndexScope scope = scopeService.userScope("u4");
+
+		syncService.runSync(scope);
+		Assertions.assertFalse(chunkRepository.findByScopeTypeAndScopeId("user", "u4").isEmpty());
+		Assertions.assertFalse(fileRepository.findByScopeTypeAndScopeId("user", "u4").isEmpty());
+
+		Files.deleteIfExists(file);
+		syncService.markDirty(scope, null);
+		syncService.runSync(scope);
+
+		Assertions.assertTrue(chunkRepository.findByScopeTypeAndScopeId("user", "u4").isEmpty());
+		Assertions.assertTrue(fileRepository.findByScopeTypeAndScopeId("user", "u4").isEmpty());
+	}
+
+	@Test
+	void indexesSessionArchiveFilesIntoSearchableScope() throws Exception {
+		writeUserSession("u5", "session-1.md", "这是会话归档\n后续要按空间细分权限\n");
+		MemoryIndexScope scope = scopeService.userScope("u5");
+
+		syncService.runSync(scope);
+
+		Assertions.assertTrue(
+			chunkRepository.findByScopeTypeAndScopeId("user", "u5").stream()
+				.anyMatch(chunk -> "session_archive".equals(chunk.getKind()) && chunk.getPath().contains("/sessions/"))
+		);
+	}
+
 	private MemoryIndexMetaEntity meta(
 		String provider,
 		String model,
@@ -176,6 +206,13 @@ class MemoryIndexSyncServiceTest {
 
 	private Path writeUserDaily(String userId, String fileName, String content) throws IOException {
 		Path file = WORKSPACE_ROOT.resolve("memory/users/" + userId + "/daily/" + fileName);
+		Files.createDirectories(file.getParent());
+		Files.writeString(file, content, StandardCharsets.UTF_8);
+		return file;
+	}
+
+	private Path writeUserSession(String userId, String fileName, String content) throws IOException {
+		Path file = WORKSPACE_ROOT.resolve("memory/users/" + userId + "/sessions/" + fileName);
 		Files.createDirectories(file.getParent());
 		Files.writeString(file, content, StandardCharsets.UTF_8);
 		return file;

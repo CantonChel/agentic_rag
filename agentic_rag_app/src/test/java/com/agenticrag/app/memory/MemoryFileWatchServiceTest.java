@@ -62,6 +62,28 @@ class MemoryFileWatchServiceTest {
 		Mockito.verify(manager, Mockito.atLeastOnce()).markAllKnownScopesDirtyAndRequestSync();
 	}
 
+	@Test
+	void ignoresCacheFilesAndNonMarkdownChanges() throws Exception {
+		MemoryProperties properties = properties();
+		MemoryFileService fileService = new MemoryFileService(properties);
+		MemoryIndexScopeService scopeService = new MemoryIndexScopeService(fileService, new ObjectMapper());
+		MemoryIndexManager manager = Mockito.mock(MemoryIndexManager.class);
+
+		MemoryFileWatchService watcher = new MemoryFileWatchService(properties, fileService, scopeService, manager);
+
+		Path cacheFile = tempDir.resolve("memory/.cache/embeddings/u1.json");
+		Files.createDirectories(cacheFile.getParent());
+		Files.writeString(cacheFile, "{}", StandardCharsets.UTF_8);
+		watcher.processPathEvent(cacheFile, java.nio.file.StandardWatchEventKinds.ENTRY_CREATE);
+
+		Path textFile = tempDir.resolve("memory/users/u1/daily/notes.txt");
+		Files.createDirectories(textFile.getParent());
+		Files.writeString(textFile, "不是 markdown", StandardCharsets.UTF_8);
+		watcher.processPathEvent(textFile, java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY);
+
+		Mockito.verifyNoInteractions(manager);
+	}
+
 	private MemoryProperties properties() {
 		MemoryProperties properties = new MemoryProperties();
 		properties.setWorkspaceRoot(tempDir.toString());
