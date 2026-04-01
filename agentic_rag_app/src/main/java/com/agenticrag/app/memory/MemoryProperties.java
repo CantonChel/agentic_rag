@@ -18,6 +18,7 @@ public class MemoryProperties {
 	private int topKCandidates = 20;
 	private int topK = 5;
 	private String embeddingCacheDir = "memory/.cache/embeddings";
+	private boolean indexStartupSyncEnabled = true;
 
 	public boolean isEnabled() {
 		return enabled;
@@ -129,5 +130,13 @@ public class MemoryProperties {
 
 	public void setEmbeddingCacheDir(String embeddingCacheDir) {
 		this.embeddingCacheDir = embeddingCacheDir;
+	}
+
+	public boolean isIndexStartupSyncEnabled() {
+		return indexStartupSyncEnabled;
+	}
+
+	public void setIndexStartupSyncEnabled(boolean indexStartupSyncEnabled) {
+		this.indexStartupSyncEnabled = indexStartupSyncEnabled;
 	}
 }

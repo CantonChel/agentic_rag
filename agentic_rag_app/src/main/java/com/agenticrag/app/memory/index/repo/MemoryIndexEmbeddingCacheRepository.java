@@ -11,4 +11,10 @@ public interface MemoryIndexEmbeddingCacheRepository extends JpaRepository<Memor
 		String providerKeyFingerprint,
 		String chunkHash
 	);
+
+	Optional<MemoryIndexEmbeddingCacheEntity> findTopByProviderAndModelAndProviderKeyFingerprintOrderByUpdatedAtDesc(
+		String provider,
+		String model,
+		String providerKeyFingerprint
+	);
 }
