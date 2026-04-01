@@ -14,9 +14,13 @@ public class MemoryProperties {
 	private int flushInputMaxChars = 6000;
 	private int slugMaxLength = 64;
 	private int maxChunkChars = 800;
+	private int chunkOverlap = 120;
 	private int topKCandidates = 20;
 	private int topK = 5;
 	private String embeddingCacheDir = "memory/.cache/embeddings";
+	private boolean indexStartupSyncEnabled = true;
+	private boolean watcherEnabled = true;
+	private int watcherDebounceMs = 300;
 
 	public boolean isEnabled() {
 		return enabled;
@@ -98,6 +102,14 @@ public class MemoryProperties {
 		this.maxChunkChars = maxChunkChars;
 	}
 
+	public int getChunkOverlap() {
+		return chunkOverlap;
+	}
+
+	public void setChunkOverlap(int chunkOverlap) {
+		this.chunkOverlap = chunkOverlap;
+	}
+
 	public int getTopKCandidates() {
 		return topKCandidates;
 	}
@@ -120,5 +132,29 @@ public class MemoryProperties {
 
 	public void setEmbeddingCacheDir(String embeddingCacheDir) {
 		this.embeddingCacheDir = embeddingCacheDir;
+	}
+
+	public boolean isIndexStartupSyncEnabled() {
+		return indexStartupSyncEnabled;
+	}
+
+	public void setIndexStartupSyncEnabled(boolean indexStartupSyncEnabled) {
+		this.indexStartupSyncEnabled = indexStartupSyncEnabled;
+	}
+
+	public boolean isWatcherEnabled() {
+		return watcherEnabled;
+	}
+
+	public void setWatcherEnabled(boolean watcherEnabled) {
+		this.watcherEnabled = watcherEnabled;
+	}
+
+	public int getWatcherDebounceMs() {
+		return watcherDebounceMs;
+	}
+
+	public void setWatcherDebounceMs(int watcherDebounceMs) {
+		this.watcherDebounceMs = watcherDebounceMs;
 	}
 }

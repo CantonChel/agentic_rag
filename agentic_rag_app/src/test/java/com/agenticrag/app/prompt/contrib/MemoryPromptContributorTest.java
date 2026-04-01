@@ -36,4 +36,22 @@ class MemoryPromptContributorTest {
 		Assertions.assertTrue(output.contains("run memory_search"));
 		Assertions.assertTrue(output.contains("use memory_get"));
 	}
+
+	@Test
+	void rendersGetOnlyPolicyWhenOnlyMemoryGetIsVisible() {
+		MemoryPromptContributor contributor = new MemoryPromptContributor();
+
+		String output = contributor.contribute(
+			new SystemPromptContext(
+				LlmProvider.OPENAI,
+				true,
+				SystemPromptMode.AGENT,
+				true,
+				Set.of("memory_get")
+			)
+		);
+
+		Assertions.assertTrue(output.contains("run memory_get"));
+		Assertions.assertFalse(output.contains("run memory_search on MEMORY.md + memory/*.md; then"));
+	}
 }

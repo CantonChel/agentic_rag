@@ -25,6 +25,10 @@ public class PostgresIndexInitializer {
 		normalizeLobTextColumn("knowledge", "metadata_json");
 		normalizeLobTextColumn("embedding", "content");
 		normalizeLobTextColumn("embedding", "vector_json");
+		normalizeLobTextColumn("memory_index_meta", "sources_json");
+		normalizeLobTextColumn("memory_index_meta", "last_error");
+		normalizeLobTextColumn("memory_index_chunks", "content");
+		normalizeLobTextColumn("memory_index_embedding_cache", "vector_json");
 		normalizeLobTextColumn("stored_messages", "content");
 		recoverTextifiedLargeObjectRows("chunk", "content");
 		recoverTextifiedLargeObjectRows("chunk", "image_info_json");
@@ -32,12 +36,21 @@ public class PostgresIndexInitializer {
 		recoverTextifiedLargeObjectRows("knowledge", "metadata_json");
 		recoverTextifiedLargeObjectRows("embedding", "content");
 		recoverTextifiedLargeObjectRows("embedding", "vector_json");
+		recoverTextifiedLargeObjectRows("memory_index_meta", "sources_json");
+		recoverTextifiedLargeObjectRows("memory_index_meta", "last_error");
+		recoverTextifiedLargeObjectRows("memory_index_chunks", "content");
+		recoverTextifiedLargeObjectRows("memory_index_embedding_cache", "vector_json");
 		recoverTextifiedLargeObjectRows("stored_messages", "content");
 		executeIgnore("CREATE INDEX IF NOT EXISTS idx_chunk_fts ON chunk USING GIN (to_tsvector('simple', content))");
 		executeIgnore("CREATE INDEX IF NOT EXISTS idx_chunk_content_trgm ON chunk USING GIN (content gin_trgm_ops)");
 		executeIgnore("CREATE INDEX IF NOT EXISTS idx_embedding_vector_l2 ON embedding USING ivfflat ((vector_json::vector))");
+		executeIgnore("CREATE INDEX IF NOT EXISTS idx_memory_index_chunks_fts ON memory_index_chunks USING GIN (to_tsvector('simple', content))");
+		executeIgnore("CREATE INDEX IF NOT EXISTS idx_memory_index_chunks_content_trgm ON memory_index_chunks USING GIN (content gin_trgm_ops)");
+		executeIgnore("CREATE INDEX IF NOT EXISTS idx_memory_index_embedding_cache_vector_l2 ON memory_index_embedding_cache USING ivfflat ((vector_json::vector))");
 		jdbcTemplate.execute("ANALYZE chunk");
 		jdbcTemplate.execute("ANALYZE embedding");
+		executeIgnore("ANALYZE memory_index_chunks");
+		executeIgnore("ANALYZE memory_index_embedding_cache");
 	}
 
 	private void executeIgnore(String sql) {
