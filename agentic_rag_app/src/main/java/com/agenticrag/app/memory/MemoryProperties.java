@@ -19,6 +19,8 @@ public class MemoryProperties {
 	private int topK = 5;
 	private String embeddingCacheDir = "memory/.cache/embeddings";
 	private boolean indexStartupSyncEnabled = true;
+	private boolean watcherEnabled = true;
+	private int watcherDebounceMs = 300;
 
 	public boolean isEnabled() {
 		return enabled;
@@ -138,5 +140,21 @@ public class MemoryProperties {
 
 	public void setIndexStartupSyncEnabled(boolean indexStartupSyncEnabled) {
 		this.indexStartupSyncEnabled = indexStartupSyncEnabled;
+	}
+
+	public boolean isWatcherEnabled() {
+		return watcherEnabled;
+	}
+
+	public void setWatcherEnabled(boolean watcherEnabled) {
+		this.watcherEnabled = watcherEnabled;
+	}
+
+	public int getWatcherDebounceMs() {
+		return watcherDebounceMs;
+	}
+
+	public void setWatcherDebounceMs(int watcherDebounceMs) {
+		this.watcherDebounceMs = watcherDebounceMs;
 	}
 }

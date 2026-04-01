@@ -72,6 +72,35 @@ public class MemoryIndexScopeService {
 		return memoryFileService.discoverMemoryFiles(scope.getId(), false);
 	}
 
+	public MemoryIndexScope resolveScopeForPath(Path path) {
+		if (path == null) {
+			return null;
+		}
+		Path absolute = path.toAbsolutePath().normalize();
+		Path global = memoryFileService.globalMemoryFile().toAbsolutePath().normalize();
+		if (absolute.equals(global)) {
+			return globalScope();
+		}
+		Path usersBase = usersBaseDir().toAbsolutePath().normalize();
+		if (!absolute.startsWith(usersBase)) {
+			return null;
+		}
+		Path relative = usersBase.relativize(absolute);
+		if (relative.getNameCount() < 1) {
+			return null;
+		}
+		return userScope(relative.getName(0).toString());
+	}
+
+	public Path usersBaseDir() {
+		return memoryFileService.userRoot("placeholder").getParent();
+	}
+
+	public Path memoryRootDir() {
+		Path usersBase = usersBaseDir();
+		return usersBase != null ? usersBase.getParent() : null;
+	}
+
 	public String sourcesJson(MemoryIndexScope scope) {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("scopeType", scope.getTypeValue());

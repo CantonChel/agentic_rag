@@ -53,10 +53,7 @@ public class MemoryIndexManager {
 		if (!properties.isEnabled() || !properties.isIndexStartupSyncEnabled()) {
 			return;
 		}
-		markAllKnownScopesDirty();
-		for (MemoryIndexScope scope : collectKnownScopes()) {
-			requestSync(scope);
-		}
+		markAllKnownScopesDirtyAndRequestSync();
 	}
 
 	public void markAllKnownScopesDirty() {
@@ -68,6 +65,13 @@ public class MemoryIndexManager {
 		});
 		for (MemoryIndexScope scope : collectKnownScopes()) {
 			syncService.markDirty(scope, null);
+		}
+	}
+
+	public void markAllKnownScopesDirtyAndRequestSync() {
+		markAllKnownScopesDirty();
+		for (MemoryIndexScope scope : collectKnownScopes()) {
+			requestSync(scope);
 		}
 	}
 
