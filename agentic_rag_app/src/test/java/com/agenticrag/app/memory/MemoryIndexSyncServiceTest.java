@@ -180,6 +180,34 @@ class MemoryIndexSyncServiceTest {
 		);
 	}
 
+	@Test
+	void rerunsSyncForAppendedMemoryBlockWithoutDuplicateChunkFailure() throws Exception {
+		Path file = writeUserDaily(
+			"u6",
+			"2026-04-01.md",
+			durableBlock("block-1", "只对接企业微信\n先不开审批")
+		);
+		MemoryIndexScope scope = scopeService.userScope("u6");
+
+		syncService.runSync(scope);
+		Assertions.assertEquals(1, chunkRepository.findByScopeTypeAndScopeId("user", "u6").size());
+
+		Files.writeString(
+			file,
+			durableBlock("block-1", "只对接企业微信\n先不开审批")
+				+ durableBlock("block-2", "项目代号：青岚-42\n试点范围：华东二区"),
+			StandardCharsets.UTF_8
+		);
+
+		syncService.markDirty(scope, null);
+		Assertions.assertDoesNotThrow(() -> syncService.runSync(scope));
+		Assertions.assertEquals(2, chunkRepository.findByScopeTypeAndScopeId("user", "u6").size());
+		Assertions.assertTrue(
+			chunkRepository.findByScopeTypeAndScopeId("user", "u6").stream()
+				.anyMatch(chunk -> chunk.getContent().contains("青岚-42"))
+		);
+	}
+
 	private MemoryIndexMetaEntity meta(
 		String provider,
 		String model,
@@ -216,6 +244,16 @@ class MemoryIndexSyncServiceTest {
 		Files.createDirectories(file.getParent());
 		Files.writeString(file, content, StandardCharsets.UTF_8);
 		return file;
+	}
+
+	private String durableBlock(String blockId, String body) {
+		return "<!-- MEMORY_BLOCK {\"schema\":\"memory.v1\",\"kind\":\"durable\",\"block_id\":\""
+			+ blockId
+			+ "\",\"user_id\":\"anonymous\",\"trigger\":\"test\",\"dedupe_key\":\""
+			+ blockId
+			+ "\"} -->\n"
+			+ body
+			+ "\n<!-- /MEMORY_BLOCK -->\n\n";
 	}
 
 	private void clearWorkspace() throws IOException {

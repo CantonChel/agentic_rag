@@ -122,6 +122,8 @@ public class MemoryIndexSyncService {
 			if (fullReindex) {
 				chunkRepository.deleteByScopeTypeAndScopeId(scope.getTypeValue(), scope.getId());
 				fileRepository.deleteByScopeTypeAndScopeId(scope.getTypeValue(), scope.getId());
+				chunkRepository.flush();
+				fileRepository.flush();
 				existingFiles.clear();
 			}
 
@@ -134,6 +136,7 @@ public class MemoryIndexSyncService {
 					continue;
 				}
 				chunkRepository.deleteByScopeTypeAndScopeIdAndPath(scope.getTypeValue(), scope.getId(), snapshot.path);
+				chunkRepository.flush();
 				changedFiles.add(snapshot);
 			}
 

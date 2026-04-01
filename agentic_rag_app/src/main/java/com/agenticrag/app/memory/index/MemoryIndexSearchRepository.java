@@ -64,7 +64,7 @@ public class MemoryIndexSearchRepository {
 		List<Object> params = new ArrayList<>();
 		StringBuilder sql = new StringBuilder();
 		sql.append("select c.path, c.kind, c.block_id, c.line_start, c.line_end, c.content, ");
-		sql.append("       ((case when c.content ilike ? escape '\\\\' then 2.0 else 0.0 end) ");
+		sql.append("       ((case when c.content ilike ? escape '\\' then 2.0 else 0.0 end) ");
 		sql.append("      + ts_rank_cd(to_tsvector('simple', c.content), plainto_tsquery('simple', ?)) ");
 		sql.append("      + similarity(c.content, ?)) as retrieval_score ");
 		sql.append("from memory_index_chunks c where ");
@@ -72,11 +72,11 @@ public class MemoryIndexSearchRepository {
 		params.add(normalized);
 		params.add(normalized);
 		appendScopeClause(sql, params, scopes);
-		sql.append(" and (c.content ilike ? escape '\\\\' ");
+		sql.append(" and (c.content ilike ? escape '\\' ");
 		sql.append("  or to_tsvector('simple', c.content) @@ plainto_tsquery('simple', ?) ");
 		sql.append("  or c.content % ?) ");
 		sql.append("order by ");
-		sql.append("  (case when c.content ilike ? escape '\\\\' then 2.0 else 0.0 end) ");
+		sql.append("  (case when c.content ilike ? escape '\\' then 2.0 else 0.0 end) ");
 		sql.append("  + ts_rank_cd(to_tsvector('simple', c.content), plainto_tsquery('simple', ?)) ");
 		sql.append("  + similarity(c.content, ?) desc limit ?");
 		params.add(likePattern);
