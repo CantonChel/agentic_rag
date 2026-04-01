@@ -14,6 +14,7 @@ public class MemoryProperties {
 	private int flushInputMaxChars = 6000;
 	private int slugMaxLength = 64;
 	private int maxChunkChars = 800;
+	private int chunkOverlap = 120;
 	private int topKCandidates = 20;
 	private int topK = 5;
 	private String embeddingCacheDir = "memory/.cache/embeddings";
@@ -96,6 +97,14 @@ public class MemoryProperties {
 
 	public void setMaxChunkChars(int maxChunkChars) {
 		this.maxChunkChars = maxChunkChars;
+	}
+
+	public int getChunkOverlap() {
+		return chunkOverlap;
+	}
+
+	public void setChunkOverlap(int chunkOverlap) {
+		this.chunkOverlap = chunkOverlap;
 	}
 
 	public int getTopKCandidates() {
