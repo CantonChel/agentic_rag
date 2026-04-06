@@ -1,0 +1,866 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>记忆总览</title>
+    <style>
+      :root {
+        --bg: #f3efe6;
+        --panel: rgba(255, 252, 247, 0.94);
+        --panel-strong: rgba(250, 245, 236, 0.98);
+        --line: rgba(111, 92, 72, 0.16);
+        --text: #2e241c;
+        --muted: #7f6b59;
+        --brand: #0f766e;
+        --brand-strong: #115e59;
+        --accent: #d97706;
+        --shadow: 0 20px 60px rgba(58, 44, 28, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Avenir Next", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(15, 118, 110, 0.18), transparent 32%),
+          radial-gradient(circle at right 20%, rgba(217, 119, 6, 0.18), transparent 28%),
+          linear-gradient(135deg, #f7f1e7 0%, #efe6d7 100%);
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .shell {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .header {
+        padding: 28px 32px 18px;
+      }
+
+      .header-card {
+        max-width: 1360px;
+        margin: 0 auto;
+        padding: 22px 26px;
+        border: 1px solid rgba(255, 255, 255, 0.42);
+        border-radius: 28px;
+        background: linear-gradient(135deg, rgba(255, 250, 243, 0.94), rgba(245, 238, 225, 0.9));
+        box-shadow: var(--shadow);
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        align-items: center;
+      }
+
+      .title-wrap {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+      }
+
+      .title-mark {
+        width: 58px;
+        height: 58px;
+        border-radius: 18px;
+        background: linear-gradient(145deg, #0f766e, #115e59);
+        color: #f8fafc;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        font-weight: 700;
+      }
+
+      .title-text h1 {
+        margin: 0;
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .title-text p {
+        margin: 8px 0 0;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .header-actions {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .nav-link {
+        padding: 11px 16px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.72);
+        text-decoration: none;
+        font-weight: 600;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      }
+
+      .nav-link:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 24px rgba(17, 94, 89, 0.12);
+        background: rgba(255, 255, 255, 0.92);
+      }
+
+      .layout {
+        width: min(1360px, calc(100% - 40px));
+        margin: 0 auto 28px;
+        display: grid;
+        grid-template-columns: 360px minmax(0, 1fr);
+        gap: 18px;
+        align-items: start;
+      }
+
+      .panel {
+        border-radius: 28px;
+        border: 1px solid rgba(255, 255, 255, 0.46);
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(14px);
+      }
+
+      .sidebar {
+        padding: 20px;
+        position: sticky;
+        top: 16px;
+      }
+
+      .panel-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+
+      .panel-title {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .panel-subtitle {
+        margin: 6px 0 0;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .control-card {
+        padding: 16px;
+        border-radius: 22px;
+        background: var(--panel-strong);
+        border: 1px solid var(--line);
+        margin-bottom: 18px;
+      }
+
+      .field-label {
+        display: block;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+
+      .field-row {
+        display: flex;
+        gap: 10px;
+      }
+
+      .input {
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: #fffdf9;
+        color: var(--text);
+        font-size: 14px;
+      }
+
+      .btn {
+        border: none;
+        border-radius: 14px;
+        padding: 12px 16px;
+        cursor: pointer;
+        font-weight: 700;
+        font-size: 14px;
+        transition: transform 0.2s ease, opacity 0.2s ease;
+      }
+
+      .btn:hover {
+        transform: translateY(-1px);
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, var(--brand), var(--brand-strong));
+        color: #f8fafc;
+      }
+
+      .hint {
+        margin-top: 10px;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .scope-list {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .scope-group {
+        padding: 14px;
+        border-radius: 20px;
+        background: var(--panel-strong);
+        border: 1px solid var(--line);
+      }
+
+      .scope-group-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .scope-name {
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .scope-count {
+        min-width: 30px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(15, 118, 110, 0.1);
+        color: var(--brand-strong);
+        font-size: 12px;
+        text-align: center;
+      }
+
+      .scope-empty {
+        color: var(--muted);
+        font-size: 13px;
+        padding: 6px 2px;
+      }
+
+      .scope-items {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .scope-item {
+        width: 100%;
+        text-align: left;
+        border: 1px solid rgba(111, 92, 72, 0.14);
+        background: rgba(255, 255, 255, 0.62);
+        border-radius: 16px;
+        padding: 12px 13px;
+        cursor: pointer;
+        transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+      }
+
+      .scope-item:hover {
+        background: rgba(255, 255, 255, 0.92);
+        transform: translateX(2px);
+      }
+
+      .scope-item.active {
+        border-color: rgba(15, 118, 110, 0.45);
+        background: rgba(15, 118, 110, 0.12);
+      }
+
+      .scope-item-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      .scope-item-meta {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .detail {
+        min-height: 72vh;
+        padding: 24px;
+      }
+
+      .detail-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        align-items: start;
+        margin-bottom: 18px;
+      }
+
+      .detail-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(217, 119, 6, 0.12);
+        color: #9a4d00;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .detail-title {
+        margin: 12px 0 0;
+        font-size: 26px;
+        line-height: 1.2;
+      }
+
+      .detail-meta {
+        margin: 12px 0 0;
+        color: var(--muted);
+        line-height: 1.7;
+        font-size: 14px;
+      }
+
+      .detail-body {
+        min-height: 480px;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.54);
+        padding: 20px;
+      }
+
+      .empty-state {
+        min-height: 420px;
+        border: 1px dashed rgba(111, 92, 72, 0.26);
+        border-radius: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 12px;
+        color: var(--muted);
+        text-align: center;
+        padding: 36px 20px;
+      }
+
+      .empty-icon {
+        width: 68px;
+        height: 68px;
+        border-radius: 22px;
+        background: rgba(15, 118, 110, 0.1);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+      }
+
+      .content-pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "SFMono-Regular", "Menlo", "Monaco", "Cascadia Mono", "Consolas", monospace;
+        font-size: 13px;
+        line-height: 1.75;
+        color: #241d17;
+      }
+
+      .message-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .message-card {
+        border-radius: 18px;
+        border: 1px solid rgba(111, 92, 72, 0.14);
+        background: rgba(255, 255, 255, 0.86);
+        padding: 14px 16px;
+      }
+
+      .message-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .message-type {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 78px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        background: rgba(15, 118, 110, 0.12);
+        color: var(--brand-strong);
+      }
+
+      .message-index {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .message-content {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.7;
+        font-size: 14px;
+      }
+
+      @media (max-width: 1080px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar {
+          position: static;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .header {
+          padding: 18px 14px 12px;
+        }
+
+        .header-card {
+          padding: 18px;
+          border-radius: 22px;
+          flex-direction: column;
+          align-items: start;
+        }
+
+        .layout {
+          width: min(100% - 20px, 1360px);
+          gap: 14px;
+        }
+
+        .detail,
+        .sidebar {
+          padding: 18px;
+        }
+
+        .detail-title {
+          font-size: 22px;
+        }
+
+        .field-row {
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="header">
+        <div class="header-card">
+          <div class="title-wrap">
+            <div class="title-mark">M</div>
+            <div class="title-text">
+              <h1>记忆总览</h1>
+              <p>统一查看 `global`、`facts`、`summaries` 与 `session_context` 四个 scope。</p>
+            </div>
+          </div>
+          <div class="header-actions">
+            <a class="nav-link" id="backToChatLink" href="/chat.html">返回聊天</a>
+            <a class="nav-link" href="/index.html">回到首页</a>
+          </div>
+        </div>
+      </header>
+
+      <main class="layout">
+        <aside class="panel sidebar">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">Scope 导航</h2>
+              <p class="panel-subtitle">左侧按 scope 分组，右侧展示详情。</p>
+            </div>
+          </div>
+
+          <div class="control-card">
+            <label class="field-label" for="userIdInput">User ID</label>
+            <div class="field-row">
+              <input class="input" id="userIdInput" type="text" placeholder="anonymous" />
+              <button class="btn btn-primary" id="refreshBtn" type="button">刷新</button>
+            </div>
+            <div class="hint" id="statusText">准备加载记忆数据。</div>
+          </div>
+
+          <div class="scope-list" id="scopeList"></div>
+        </aside>
+
+        <section class="panel detail">
+          <div class="detail-header">
+            <div>
+              <div class="detail-kicker" id="detailKicker">scope</div>
+              <h2 class="detail-title" id="detailTitle">选择一项记忆</h2>
+              <p class="detail-meta" id="detailMeta">支持查看 markdown 真源文件和当前 session projection 快照。</p>
+            </div>
+          </div>
+          <div class="detail-body" id="detailBody">
+            <div class="empty-state">
+              <div class="empty-icon">🧠</div>
+              <div>左侧选择一个 scope 条目后，这里会显示完整内容。</div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const userIdInput = document.getElementById('userIdInput');
+      const refreshBtn = document.getElementById('refreshBtn');
+      const scopeList = document.getElementById('scopeList');
+      const statusText = document.getElementById('statusText');
+      const detailKicker = document.getElementById('detailKicker');
+      const detailTitle = document.getElementById('detailTitle');
+      const detailMeta = document.getElementById('detailMeta');
+      const detailBody = document.getElementById('detailBody');
+      const backToChatLink = document.getElementById('backToChatLink');
+
+      const state = {
+        userId: 'anonymous',
+        sessionId: '',
+        scopes: null,
+        selection: null
+      };
+
+      function formatTime(iso) {
+        if (!iso) return '';
+        const date = new Date(iso);
+        if (Number.isNaN(date.getTime())) return iso;
+        return date.toLocaleString();
+      }
+
+      function formatBytes(value) {
+        const size = Number(value || 0);
+        if (!Number.isFinite(size) || size <= 0) return '0 B';
+        if (size < 1024) return size + ' B';
+        if (size < 1024 * 1024) return (size / 1024).toFixed(1) + ' KB';
+        return (size / (1024 * 1024)).toFixed(1) + ' MB';
+      }
+
+      function currentUserId() {
+        return (userIdInput.value || '').trim() || 'anonymous';
+      }
+
+      function buildChatUrl() {
+        const query = new URLSearchParams({ userId: state.userId || 'anonymous' });
+        if (state.sessionId) {
+          query.set('sessionId', state.sessionId);
+        }
+        return '/chat.html?' + query.toString();
+      }
+
+      function syncQuery() {
+        const query = new URLSearchParams({ userId: state.userId || 'anonymous' });
+        if (state.sessionId) {
+          query.set('sessionId', state.sessionId);
+        }
+        window.history.replaceState({}, '', '/memory.html?' + query.toString());
+        backToChatLink.href = buildChatUrl();
+      }
+
+      function setStatus(message) {
+        statusText.textContent = message;
+      }
+
+      function scopeKey(item) {
+        return item.scope + ':' + (item.id || item.sessionId || '');
+      }
+
+      function fileNameOf(path) {
+        if (!path) return '';
+        const parts = String(path).split('/');
+        return parts[parts.length - 1] || path;
+      }
+
+      function allScopeItems() {
+        if (!state.scopes) return [];
+        const items = [];
+        for (const file of state.scopes.globalFiles || []) {
+          items.push({ scope: 'global', id: file.id, label: file.path || file.id, meta: file.kind, raw: file });
+        }
+        for (const file of state.scopes.factFiles || []) {
+          items.push({ scope: 'facts', id: file.id, label: fileNameOf(file.path || file.id), meta: file.path || file.id, raw: file });
+        }
+        for (const file of state.scopes.summaryFiles || []) {
+          items.push({ scope: 'summaries', id: file.id, label: fileNameOf(file.path || file.id), meta: formatTime(file.updatedAt), raw: file });
+        }
+        for (const sessionContext of state.scopes.sessionContexts || []) {
+          items.push({
+            scope: 'session_context',
+            sessionId: sessionContext.sessionId,
+            label: sessionContext.sessionId || 'unknown',
+            meta: (sessionContext.messageCount || 0) + ' 条消息 · ' + formatTime(sessionContext.updatedAt),
+            raw: sessionContext
+          });
+        }
+        return items;
+      }
+
+      function renderScopeGroup(title, count, items) {
+        const group = document.createElement('section');
+        group.className = 'scope-group';
+
+        const head = document.createElement('div');
+        head.className = 'scope-group-head';
+        const name = document.createElement('div');
+        name.className = 'scope-name';
+        name.textContent = title;
+        const badge = document.createElement('div');
+        badge.className = 'scope-count';
+        badge.textContent = String(count);
+        head.appendChild(name);
+        head.appendChild(badge);
+        group.appendChild(head);
+
+        if (!items.length) {
+          const empty = document.createElement('div');
+          empty.className = 'scope-empty';
+          empty.textContent = '暂无内容';
+          group.appendChild(empty);
+          return group;
+        }
+
+        const list = document.createElement('div');
+        list.className = 'scope-items';
+        for (const item of items) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'scope-item' + (state.selection && scopeKey(state.selection) === scopeKey(item) ? ' active' : '');
+          button.addEventListener('click', () => selectItem(item));
+
+          const titleEl = document.createElement('div');
+          titleEl.className = 'scope-item-title';
+          titleEl.textContent = item.label || 'unknown';
+          button.appendChild(titleEl);
+
+          const metaEl = document.createElement('div');
+          metaEl.className = 'scope-item-meta';
+          metaEl.textContent = item.meta || '';
+          button.appendChild(metaEl);
+
+          list.appendChild(button);
+        }
+        group.appendChild(list);
+        return group;
+      }
+
+      function renderScopeList() {
+        scopeList.innerHTML = '';
+        const grouped = {
+          global: [],
+          facts: [],
+          summaries: [],
+          session_context: []
+        };
+        for (const item of allScopeItems()) {
+          grouped[item.scope].push(item);
+        }
+        scopeList.appendChild(renderScopeGroup('global', grouped.global.length, grouped.global));
+        scopeList.appendChild(renderScopeGroup('facts', grouped.facts.length, grouped.facts));
+        scopeList.appendChild(renderScopeGroup('summaries', grouped.summaries.length, grouped.summaries));
+        scopeList.appendChild(renderScopeGroup('session_context', grouped.session_context.length, grouped.session_context));
+      }
+
+      function renderEmptyDetail(message) {
+        detailBody.innerHTML = '';
+        const empty = document.createElement('div');
+        empty.className = 'empty-state';
+        const icon = document.createElement('div');
+        icon.className = 'empty-icon';
+        icon.textContent = '🧠';
+        const text = document.createElement('div');
+        text.textContent = message;
+        empty.appendChild(icon);
+        empty.appendChild(text);
+        detailBody.appendChild(empty);
+      }
+
+      function renderFileDetail(file) {
+        detailKicker.textContent = file.kind || 'memory';
+        detailTitle.textContent = file.path || file.id || 'memory';
+        detailMeta.textContent = [
+          file.path || file.id || 'unknown',
+          formatBytes(file.size),
+          formatTime(file.updatedAt)
+        ].filter(Boolean).join(' · ');
+
+        detailBody.innerHTML = '';
+        const pre = document.createElement('pre');
+        pre.className = 'content-pre';
+        pre.textContent = file.content || '';
+        detailBody.appendChild(pre);
+      }
+
+      function renderSessionContextDetail(detail) {
+        detailKicker.textContent = 'session_context';
+        detailTitle.textContent = detail.sessionId || 'unknown session';
+        detailMeta.textContent = [
+          (detail.messageCount || 0) + ' 条消息',
+          formatTime(detail.updatedAt)
+        ].join(' · ');
+
+        detailBody.innerHTML = '';
+        const list = document.createElement('div');
+        list.className = 'message-list';
+        for (let i = 0; i < (detail.messages || []).length; i++) {
+          const message = detail.messages[i];
+          const card = document.createElement('div');
+          card.className = 'message-card';
+
+          const head = document.createElement('div');
+          head.className = 'message-head';
+
+          const type = document.createElement('div');
+          type.className = 'message-type';
+          type.textContent = message.type || 'UNKNOWN';
+          head.appendChild(type);
+
+          const index = document.createElement('div');
+          index.className = 'message-index';
+          index.textContent = '#' + (i + 1);
+          head.appendChild(index);
+
+          const content = document.createElement('pre');
+          content.className = 'message-content';
+          content.textContent = message.content || '';
+
+          card.appendChild(head);
+          card.appendChild(content);
+          list.appendChild(card);
+        }
+        if (!list.children.length) {
+          renderEmptyDetail('这个 session 当前没有可展示的 projection 快照。');
+          return;
+        }
+        detailBody.appendChild(list);
+      }
+
+      async function openFile(id) {
+        const query = new URLSearchParams({ userId: state.userId, id });
+        const response = await fetch('/api/memory/file?' + query.toString());
+        if (!response.ok) {
+          throw new Error('open memory file failed: ' + response.status);
+        }
+        return response.json();
+      }
+
+      async function openSessionContext(sessionId) {
+        const query = new URLSearchParams({ userId: state.userId, sessionId });
+        const response = await fetch('/api/memory/session-context?' + query.toString());
+        if (!response.ok) {
+          throw new Error('open session context failed: ' + response.status);
+        }
+        return response.json();
+      }
+
+      async function selectItem(item) {
+        state.selection = item;
+        if (item.scope === 'session_context') {
+          state.sessionId = item.sessionId || state.sessionId;
+        }
+        syncQuery();
+        renderScopeList();
+        renderEmptyDetail('正在加载详情...');
+        try {
+          if (item.scope === 'session_context') {
+            renderSessionContextDetail(await openSessionContext(item.sessionId));
+          } else {
+            renderFileDetail(await openFile(item.id));
+          }
+        } catch (_) {
+          renderEmptyDetail('详情加载失败，请稍后重试。');
+        }
+      }
+
+      function resolveInitialSelection() {
+        const items = allScopeItems();
+        if (!items.length) {
+          return null;
+        }
+        if (state.selection) {
+          const existing = items.find(item => scopeKey(item) === scopeKey(state.selection));
+          if (existing) {
+            return existing;
+          }
+        }
+        if (state.sessionId) {
+          const matchingSession = items.find(item => item.scope === 'session_context' && item.sessionId === state.sessionId);
+          if (matchingSession) {
+            return matchingSession;
+          }
+        }
+        return items[0];
+      }
+
+      async function loadScopes() {
+        state.userId = currentUserId();
+        syncQuery();
+        setStatus('正在加载 scope...');
+        renderEmptyDetail('正在加载记忆数据...');
+        try {
+          const query = new URLSearchParams({ userId: state.userId, includeGlobal: 'true' });
+          const response = await fetch('/api/memory/scopes?' + query.toString());
+          if (!response.ok) {
+            throw new Error('load scopes failed: ' + response.status);
+          }
+          state.scopes = await response.json();
+          renderScopeList();
+          const initialSelection = resolveInitialSelection();
+          if (!initialSelection) {
+            detailKicker.textContent = 'scope';
+            detailTitle.textContent = '暂无可展示记忆';
+            detailMeta.textContent = '当前用户下还没有 global / facts / summaries / session_context 数据。';
+            renderEmptyDetail('先去聊天写点记忆，再回来这里看全景。');
+            setStatus('当前用户暂无记忆数据。');
+            return;
+          }
+          await selectItem(initialSelection);
+          setStatus('已加载 ' + state.userId + ' 的记忆 scope。');
+        } catch (_) {
+          scopeList.innerHTML = '';
+          detailKicker.textContent = 'scope';
+          detailTitle.textContent = '记忆加载失败';
+          detailMeta.textContent = '请检查后端服务是否正常运行。';
+          renderEmptyDetail('无法获取 scope 数据，请稍后重试。');
+          setStatus('scope 加载失败。');
+        }
+      }
+
+      refreshBtn.addEventListener('click', loadScopes);
+      userIdInput.addEventListener('change', loadScopes);
+
+      (async function init() {
+        const query = new URLSearchParams(window.location.search);
+        state.userId = (query.get('userId') || '').trim() || 'anonymous';
+        state.sessionId = (query.get('sessionId') || '').trim();
+        userIdInput.value = state.userId;
+        syncQuery();
+        await loadScopes();
+      })();
+    </script>
+  </body>
+</html>
