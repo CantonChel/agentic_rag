@@ -64,6 +64,42 @@ class SessionArchiveServiceTest {
 		);
 	}
 
+	@Test
+	void fallsBackToProjectedBulletsWhenSummaryExtractorReturnsEmpty() throws Exception {
+		MemoryProperties properties = new MemoryProperties();
+		properties.setWorkspaceRoot(tempDir.toString());
+		properties.setUserMemoryBaseDir("memory/users");
+
+		MemoryLlmExtractor memoryLlmExtractor = Mockito.mock(MemoryLlmExtractor.class);
+		Mockito.when(memoryLlmExtractor.generateSessionSummary(Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyList()))
+			.thenReturn("");
+		Mockito.when(memoryLlmExtractor.generateSessionSlug(Mockito.anyString(), Mockito.anyString(), Mockito.anyList()))
+			.thenReturn("reset-summary");
+
+		MemoryFileService memoryFileService = new MemoryFileService(properties);
+		MemoryBlockParser memoryBlockParser = new MemoryBlockParser(memoryFileService, new ObjectMapper());
+		SessionArchiveService service = new SessionArchiveService(properties, memoryLlmExtractor, memoryFileService, memoryBlockParser);
+
+		List<ChatMessage> contextMessages = List.of(
+			new SystemMessage("SYSTEM"),
+			new UserMessage("以后都要中文回答"),
+			new AssistantMessage("好的，我会使用中文。"),
+			new UserMessage("回答尽量简洁")
+		);
+
+		service.archive("u1::s1", "command:/reset", contextMessages, List.of());
+
+		Path summariesDir = tempDir.resolve("memory/users/u1/summaries");
+		Assertions.assertTrue(Files.exists(summariesDir));
+		List<Path> files = Files.list(summariesDir).toList();
+		Assertions.assertEquals(1, files.size());
+		String content = Files.readString(files.get(0), StandardCharsets.UTF_8);
+		Assertions.assertTrue(content.contains("\"kind\":\"session_summary\""));
+		Assertions.assertTrue(content.contains("- USER: 以后都要中文回答"));
+		Assertions.assertTrue(content.contains("- ASSISTANT: 好的，我会使用中文。"));
+		Assertions.assertTrue(content.contains("- USER: 回答尽量简洁"));
+	}
+
 	private List<ChatMessage> projectedMessages(int rounds) {
 		List<ChatMessage> messages = new ArrayList<>();
 		messages.add(new SystemMessage("system"));

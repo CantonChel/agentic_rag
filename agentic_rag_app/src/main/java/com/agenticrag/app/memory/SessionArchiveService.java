@@ -56,6 +56,9 @@ public class SessionArchiveService {
 		String normalizedReason = normalizeReason(reason);
 		String body = memoryLlmExtractor.generateSessionSummary(userId, sessionId, normalizedReason, projectedLines);
 		if (body == null || body.trim().isEmpty()) {
+			body = buildFallbackSummary(projectedLines);
+		}
+		if (body == null || body.trim().isEmpty()) {
 			return;
 		}
 		String slug = memoryLlmExtractor.generateSessionSlug(userId, sessionId, projectedLines);
@@ -127,6 +130,24 @@ public class SessionArchiveService {
 			return "";
 		}
 		return WHITESPACE.matcher(content).replaceAll(" ").trim();
+	}
+
+	private String buildFallbackSummary(List<String> projectedLines) {
+		if (projectedLines == null || projectedLines.isEmpty()) {
+			return "";
+		}
+		StringBuilder out = new StringBuilder();
+		for (String line : projectedLines) {
+			String sanitized = sanitize(line);
+			if (sanitized.isEmpty()) {
+				continue;
+			}
+			if (out.length() > 0) {
+				out.append('\n');
+			}
+			out.append("- ").append(sanitized);
+		}
+		return out.toString().trim();
 	}
 
 	private String normalizeReason(String reason) {
