@@ -23,7 +23,7 @@ class MemoryRecallServiceTest {
 		MemoryIndexSearchService searchService = Mockito.mock(MemoryIndexSearchService.class);
 		MemoryRecallService recallService = new MemoryRecallService(properties, fileService, parser, searchService);
 		List<MemorySearchHit> expected = List.of(
-			new MemorySearchHit("memory/users/u1/daily/2026-04-01.md", "daily_durable", "b1", 3, 4, 0.92, "只对接企业微信")
+			new MemorySearchHit("memory/users/u1/facts/project.reminder.md", "fact", "b1", 3, 4, 0.92, "只对接企业微信")
 		);
 		Mockito.when(searchService.search("u1", "企业微信", 3)).thenReturn(expected);
 
@@ -40,15 +40,15 @@ class MemoryRecallServiceTest {
 		MemoryBlockParser parser = new MemoryBlockParser(fileService, new ObjectMapper());
 		MemoryIndexSearchService searchService = Mockito.mock(MemoryIndexSearchService.class);
 		MemoryRecallService recallService = new MemoryRecallService(properties, fileService, parser, searchService);
-		Path file = tempDir.resolve("memory/users/u1/daily/2026-04-01.md");
+		Path file = tempDir.resolve("memory/users/u1/facts/project.reminder.md");
 		Files.createDirectories(file.getParent());
 		Files.writeString(file, "第一行\n只对接企业微信\n先不开审批\n", StandardCharsets.UTF_8);
 
-		MemoryReadResult result = recallService.get("u1", "memory/users/u1/daily/2026-04-01.md", 2, 3);
+		MemoryReadResult result = recallService.get("u1", "memory/users/u1/facts/project.reminder.md", 2, 3);
 
 		Assertions.assertNotNull(result);
-		Assertions.assertEquals("memory/users/u1/daily/2026-04-01.md", result.getPath());
-		Assertions.assertEquals("daily_durable", result.getKind());
+		Assertions.assertEquals("memory/users/u1/facts/project.reminder.md", result.getPath());
+		Assertions.assertEquals("fact", result.getKind());
 		Assertions.assertTrue(result.getBlockId() != null && result.getBlockId().startsWith("legacy-"));
 		Assertions.assertEquals("只对接企业微信\n先不开审批", result.getContent());
 		Mockito.verifyNoInteractions(searchService);

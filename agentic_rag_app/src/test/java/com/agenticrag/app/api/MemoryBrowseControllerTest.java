@@ -18,18 +18,21 @@ class MemoryBrowseControllerTest {
 	@Test
 	void listFilesShouldIncludeGlobalAndUserFiles() throws Exception {
 		Files.writeString(tempDir.resolve("MEMORY.md"), "global memory", StandardCharsets.UTF_8);
+		Files.createDirectories(tempDir.resolve("memory/users/u1/facts"));
+		Files.createDirectories(tempDir.resolve("memory/users/u1/summaries"));
 		Files.createDirectories(tempDir.resolve("memory/users/u1/daily"));
-		Files.createDirectories(tempDir.resolve("memory/users/u1/sessions"));
-		Files.writeString(tempDir.resolve("memory/users/u1/daily/2026-03-23.md"), "daily", StandardCharsets.UTF_8);
-		Files.writeString(tempDir.resolve("memory/users/u1/sessions/2026-03-23-note.md"), "snapshot", StandardCharsets.UTF_8);
+		Files.writeString(tempDir.resolve("memory/users/u1/facts/project.reminder.md"), "facts", StandardCharsets.UTF_8);
+		Files.writeString(tempDir.resolve("memory/users/u1/summaries/2026-03-23-note.md"), "summary", StandardCharsets.UTF_8);
+		Files.writeString(tempDir.resolve("memory/users/u1/daily/2026-03-23.md"), "legacy daily", StandardCharsets.UTF_8);
 
 		MemoryBrowseController controller = new MemoryBrowseController(new MemoryFileService(props(tempDir)));
 		List<MemoryBrowseController.MemoryFileView> files = controller.listFiles("u1", true).block();
 
 		Assertions.assertNotNull(files);
 		Assertions.assertTrue(files.stream().anyMatch(f -> "global".equals(f.getKind())));
-		Assertions.assertTrue(files.stream().anyMatch(f -> "daily_durable".equals(f.getKind())));
-		Assertions.assertTrue(files.stream().anyMatch(f -> "session_archive".equals(f.getKind())));
+		Assertions.assertTrue(files.stream().anyMatch(f -> "fact".equals(f.getKind())));
+		Assertions.assertTrue(files.stream().anyMatch(f -> "session_summary".equals(f.getKind())));
+		Assertions.assertFalse(files.stream().anyMatch(f -> f.getPath().contains("/daily/")));
 	}
 
 	@Test

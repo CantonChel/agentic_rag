@@ -4,9 +4,15 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class MemoryBlockMetadata {
-	public static final String SCHEMA_V1 = "memory.v1";
-	public static final String KIND_DURABLE = "durable";
-	public static final String KIND_SESSION_ARCHIVE = "session_archive";
+	public static final String SCHEMA_V2 = "memory.v2";
+	public static final String KIND_FACT = "fact";
+	public static final String KIND_SESSION_SUMMARY = "session_summary";
+	@Deprecated
+	public static final String SCHEMA_V1 = SCHEMA_V2;
+	@Deprecated
+	public static final String KIND_DURABLE = KIND_FACT;
+	@Deprecated
+	public static final String KIND_SESSION_ARCHIVE = KIND_SESSION_SUMMARY;
 
 	private final String schema;
 	private final String kind;
@@ -14,11 +20,42 @@ public class MemoryBlockMetadata {
 	private final String userId;
 	private final String sessionId;
 	private final String createdAt;
+	private final String updatedAt;
 	private final String trigger;
-	private final String dedupeKey;
+	private final String bucket;
+	private final String factKey;
 	private final String reason;
 	private final String slug;
 
+	public MemoryBlockMetadata(
+		String schema,
+		String kind,
+		String blockId,
+		String userId,
+		String sessionId,
+		String createdAt,
+		String updatedAt,
+		String trigger,
+		String bucket,
+		String factKey,
+		String reason,
+		String slug
+	) {
+		this.schema = schema;
+		this.kind = kind;
+		this.blockId = blockId;
+		this.userId = userId;
+		this.sessionId = sessionId;
+		this.createdAt = createdAt;
+		this.updatedAt = updatedAt;
+		this.trigger = trigger;
+		this.bucket = bucket;
+		this.factKey = factKey;
+		this.reason = reason;
+		this.slug = slug;
+	}
+
+	@Deprecated
 	public MemoryBlockMetadata(
 		String schema,
 		String kind,
@@ -31,16 +68,7 @@ public class MemoryBlockMetadata {
 		String reason,
 		String slug
 	) {
-		this.schema = schema;
-		this.kind = kind;
-		this.blockId = blockId;
-		this.userId = userId;
-		this.sessionId = sessionId;
-		this.createdAt = createdAt;
-		this.trigger = trigger;
-		this.dedupeKey = dedupeKey;
-		this.reason = reason;
-		this.slug = slug;
+		this(schema, kind, blockId, userId, sessionId, createdAt, null, trigger, null, dedupeKey, reason, slug);
 	}
 
 	public String getSchema() {
@@ -67,12 +95,25 @@ public class MemoryBlockMetadata {
 		return createdAt;
 	}
 
+	public String getUpdatedAt() {
+		return updatedAt;
+	}
+
 	public String getTrigger() {
 		return trigger;
 	}
 
+	public String getBucket() {
+		return bucket;
+	}
+
+	public String getFactKey() {
+		return factKey;
+	}
+
+	@Deprecated
 	public String getDedupeKey() {
-		return dedupeKey;
+		return factKey;
 	}
 
 	public String getReason() {
@@ -91,8 +132,16 @@ public class MemoryBlockMetadata {
 		out.put("user_id", userId);
 		out.put("session_id", sessionId);
 		out.put("created_at", createdAt);
+		if (updatedAt != null && !updatedAt.trim().isEmpty()) {
+			out.put("updated_at", updatedAt);
+		}
 		out.put("trigger", trigger);
-		out.put("dedupe_key", dedupeKey);
+		if (bucket != null && !bucket.trim().isEmpty()) {
+			out.put("bucket", bucket);
+		}
+		if (factKey != null && !factKey.trim().isEmpty()) {
+			out.put("fact_key", factKey);
+		}
 		if (reason != null && !reason.trim().isEmpty()) {
 			out.put("reason", reason);
 		}
@@ -113,8 +162,10 @@ public class MemoryBlockMetadata {
 			stringValue(values.get("user_id")),
 			stringValue(values.get("session_id")),
 			stringValue(values.get("created_at")),
+			stringValue(values.get("updated_at")),
 			stringValue(values.get("trigger")),
-			stringValue(values.get("dedupe_key")),
+			stringValue(values.get("bucket")),
+			stringValue(values.get("fact_key")),
 			stringValue(values.get("reason")),
 			stringValue(values.get("slug"))
 		);

@@ -110,7 +110,7 @@ public class MemoryIndexScopeService {
 		} else {
 			Path userRoot = memoryFileService.userRoot(scope.getId());
 			payload.put("root", relative(userRoot));
-			payload.put("includePatterns", new String[] {"**/*.md"});
+			payload.put("includePatterns", new String[] {"facts/**/*.md", "summaries/**/*.md"});
 			payload.put("excludePatterns", new String[] {"memory/.cache/**"});
 		}
 		try {
