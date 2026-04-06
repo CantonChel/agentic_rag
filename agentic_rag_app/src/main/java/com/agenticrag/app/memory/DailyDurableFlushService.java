@@ -230,6 +230,7 @@ public class DailyDurableFlushService {
 				tempFile,
 				markdown.toString(),
 				StandardCharsets.UTF_8,
+				StandardOpenOption.WRITE,
 				StandardOpenOption.TRUNCATE_EXISTING
 			);
 			moveAtomically(tempFile, file);
