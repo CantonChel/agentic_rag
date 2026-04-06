@@ -10,6 +10,27 @@ public interface ContextManager {
 
 	void ensureSystemPrompt(String sessionId, String systemPrompt);
 
+	default void replaceContext(String sessionId, List<ChatMessage> messages) {
+		replaceContext(sessionId, messages, SessionContextAppendOptions.defaults());
+	}
+
+	default void replaceContext(String sessionId, List<ChatMessage> messages, SessionContextAppendOptions options) {
+		clear(sessionId);
+		if (messages == null || messages.isEmpty()) {
+			return;
+		}
+		for (ChatMessage message : messages) {
+			if (message == null) {
+				continue;
+			}
+			if (message.getType() == com.agenticrag.app.chat.message.ChatMessageType.SYSTEM) {
+				ensureSystemPrompt(sessionId, message.getContent());
+				continue;
+			}
+			addMessage(sessionId, message, options);
+		}
+	}
+
 	default void addMessage(String sessionId, ChatMessage message) {
 		addMessage(sessionId, message, SessionContextAppendOptions.defaults());
 	}
