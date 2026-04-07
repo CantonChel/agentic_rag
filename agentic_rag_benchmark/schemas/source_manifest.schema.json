@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-rag.local/benchmark/schemas/source_manifest.schema.json",
+  "title": "SourceManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_set_id",
+    "project_key",
+    "source_root",
+    "file_count",
+    "files",
+    "created_at"
+  ],
+  "properties": {
+    "source_set_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_key": {
+      "type": "string",
+      "pattern": "^[a-z0-9_\\-]+$"
+    },
+    "source_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "file_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "size_bytes",
+          "sha256"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

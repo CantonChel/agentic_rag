@@ -42,14 +42,47 @@ def validate_package_dir(package_dir: Path) -> ValidationResult:
             messages.append(ValidationMessage("error", f"Missing required file: {file_name}"))
         return ValidationResult(False, messages)
 
-    manifest_result = validate_optional_json_file(package_dir / STANDARD_PACKAGE_FILES["suite_manifest"], "suite_manifest")
+    manifest_result = validate_optional_json_file(
+        package_dir / STANDARD_PACKAGE_FILES["source_manifest"],
+        "source_manifest",
+    )
     messages.extend(manifest_result.messages)
 
-    evidence_result = validate_optional_jsonl_file(package_dir / STANDARD_PACKAGE_FILES["evidence_units"], "evidence_unit")
-    messages.extend(evidence_result.messages)
+    normalized_document_result = validate_optional_jsonl_file(
+        package_dir / STANDARD_PACKAGE_FILES["normalized_documents"],
+        "normalized_document",
+    )
+    messages.extend(normalized_document_result.messages)
 
-    sample_result = validate_optional_jsonl_file(package_dir / STANDARD_PACKAGE_FILES["benchmark_suite"], "benchmark_sample")
+    authoring_block_result = validate_optional_jsonl_file(
+        package_dir / STANDARD_PACKAGE_FILES["authoring_blocks"],
+        "authoring_block",
+    )
+    messages.extend(authoring_block_result.messages)
+
+    block_link_result = validate_optional_jsonl_file(
+        package_dir / STANDARD_PACKAGE_FILES["block_links"],
+        "block_link",
+    )
+    messages.extend(block_link_result.messages)
+
+    sample_result = validate_optional_jsonl_file(
+        package_dir / STANDARD_PACKAGE_FILES["samples"],
+        "benchmark_sample",
+    )
     messages.extend(sample_result.messages)
+
+    sample_trace_result = validate_optional_jsonl_file(
+        package_dir / STANDARD_PACKAGE_FILES["sample_generation_trace"],
+        "sample_generation_trace",
+    )
+    messages.extend(sample_trace_result.messages)
+
+    gold_manifest_result = validate_optional_json_file(
+        package_dir / STANDARD_PACKAGE_FILES["gold_package_manifest"],
+        "gold_package_manifest",
+    )
+    messages.extend(gold_manifest_result.messages)
 
     markdown_path = package_dir / STANDARD_PACKAGE_FILES["review_markdown"]
     if markdown_path.stat().st_size == 0:
@@ -88,7 +121,17 @@ def describe_schema(schema_name: str | None = None) -> ValidationResult:
         )
 
     messages: List[ValidationMessage] = []
-    for name in ("evidence_unit", "benchmark_sample", "build_descriptor", "turn_execution_summary", "suite_manifest"):
+    for name in (
+        "source_manifest",
+        "normalized_document",
+        "authoring_block",
+        "block_link",
+        "benchmark_sample",
+        "sample_generation_trace",
+        "gold_package_manifest",
+        "build_descriptor",
+        "turn_execution_summary",
+    ):
         schema = load_schema(name)
         required = schema.get("required", [])
         messages.append(ValidationMessage("info", f"{name}: {','.join(required)}"))

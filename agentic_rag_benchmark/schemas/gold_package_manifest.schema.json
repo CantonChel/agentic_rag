@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-rag.local/benchmark/schemas/gold_package_manifest.schema.json",
+  "title": "GoldPackageManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "package_version",
+    "project_key",
+    "suite_version",
+    "created_at",
+    "generator_version",
+    "files"
+  ],
+  "properties": {
+    "package_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_key": {
+      "type": "string",
+      "pattern": "^[a-z0-9_\\-]+$"
+    },
+    "suite_version": {
+      "type": "string",
+      "pattern": "^[a-z0-9_\\-]+$"
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generator_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_manifest",
+        "normalized_documents",
+        "authoring_blocks",
+        "block_links",
+        "samples",
+        "sample_generation_trace",
+        "gold_package_manifest",
+        "review_markdown"
+      ],
+      "properties": {
+        "source_manifest": {
+          "const": "source_manifest.json"
+        },
+        "normalized_documents": {
+          "const": "normalized_documents.jsonl"
+        },
+        "authoring_blocks": {
+          "const": "authoring_blocks.jsonl"
+        },
+        "block_links": {
+          "const": "block_links.jsonl"
+        },
+        "samples": {
+          "const": "samples.jsonl"
+        },
+        "sample_generation_trace": {
+          "const": "sample_generation_trace.jsonl"
+        },
+        "gold_package_manifest": {
+          "const": "gold_package_manifest.json"
+        },
+        "review_markdown": {
+          "const": "review.md"
+        }
+      }
+    }
+  }
+}

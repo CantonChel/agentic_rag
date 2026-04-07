@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
             f"[info] Package written to: {report.package_dir}",
             f"[info] Source file count: {len(report.source_files)}",
             f"[info] Normalized document count: {report.normalized_document_count}",
-            f"[info] Evidence count: {report.evidence_count}",
+            f"[info] Authoring block count: {report.authoring_block_count}",
             f"[info] Sample count: {report.sample_count}",
         ):
             print(line)

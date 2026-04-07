@@ -1,18 +1,18 @@
-"""Rule-based benchmark sample authoring from evidence units."""
+"""Rule-based benchmark sample authoring from gold authoring blocks."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict
 from typing import Iterable
 from typing import List
 from typing import Sequence
 import hashlib
 import re
 
+from .contracts import AuthoringBlock
 from .contracts import BenchmarkSample
-from .contracts import EvidenceReference
-from .contracts import EvidenceUnit
+from .contracts import GoldBlockReference
+from .contracts import SampleGenerationTrace
 
 
 FIELD_PATTERN = re.compile(r"^\s*-\s+\*\*(.+?)\*\*")
@@ -21,21 +21,34 @@ ALIGNMENT_LINE_PATTERN = re.compile(r"^\s*\|?[\s:\-|\+]+\|?\s*$")
 
 
 class BenchmarkAuthoringStrategy:
-    """Create portable benchmark samples from evidence units."""
+    """Create portable benchmark samples from authoring blocks."""
 
     def __init__(self, suite_version: str = "base_v1") -> None:
         self.suite_version = suite_version
 
-    def generate_samples(self, evidence_units: Iterable[EvidenceUnit]) -> List[BenchmarkSample]:
-        samples: List[BenchmarkSample] = []
-        for evidence in evidence_units:
-            samples.append(self.generate_sample(evidence))
-        return samples
+    def generate_samples(self, authoring_blocks: Iterable[AuthoringBlock]) -> List[BenchmarkSample]:
+        return [self.generate_sample(block) for block in authoring_blocks]
 
-    def generate_sample(self, evidence: EvidenceUnit) -> BenchmarkSample:
-        doc_title = Path(evidence.doc_path).stem
-        subject = infer_subject(evidence.section_title)
-        required_fields, all_fields = extract_fields(evidence.canonical_text)
+    def generate_samples_with_traces(
+        self,
+        authoring_blocks: Iterable[AuthoringBlock],
+    ) -> tuple[List[BenchmarkSample], List[SampleGenerationTrace]]:
+        samples: List[BenchmarkSample] = []
+        traces: List[SampleGenerationTrace] = []
+        for block in authoring_blocks:
+            sample, trace = self.generate_sample_with_trace(block)
+            samples.append(sample)
+            traces.append(trace)
+        return samples, traces
+
+    def generate_sample(self, block: AuthoringBlock) -> BenchmarkSample:
+        sample, _ = self.generate_sample_with_trace(block)
+        return sample
+
+    def generate_sample_with_trace(self, block: AuthoringBlock) -> tuple[BenchmarkSample, SampleGenerationTrace]:
+        doc_title = Path(block.doc_path).stem
+        subject = infer_subject(block.section_title)
+        required_fields, all_fields = extract_fields(block.text)
 
         if subject and required_fields:
             question = f"{doc_title}接口的必填{subject}有哪些？"
@@ -50,28 +63,37 @@ class BenchmarkAuthoringStrategy:
             difficulty = "easy"
             tags = ["structured", subject]
         else:
-            question = f"{doc_title}文档中“{evidence.section_title}”部分主要说明了什么？"
-            ground_truth = summarize_text(evidence.canonical_text)
+            question = f"{doc_title}文档中“{block.section_title}”部分主要说明了什么？"
+            ground_truth = summarize_text(block.text)
             sample_kind = "summary"
             difficulty = "medium"
-            tags = ["summary", evidence.section_key]
+            tags = ["summary", block.section_key]
 
-        return BenchmarkSample(
-            sample_id=build_sample_id(evidence, sample_kind),
+        sample = BenchmarkSample(
+            sample_id=build_sample_id(block, sample_kind),
             question=question,
             ground_truth=ground_truth,
-            ground_truth_contexts=[evidence.canonical_text],
-            gold_evidence_refs=[
-                EvidenceReference(
-                    evidence_id=evidence.evidence_id,
-                    doc_path=evidence.doc_path,
-                    section_key=evidence.section_key,
+            ground_truth_contexts=[block.text],
+            gold_block_refs=[
+                GoldBlockReference(
+                    block_id=block.block_id,
+                    doc_path=block.doc_path,
+                    section_key=block.section_key,
                 )
             ],
             tags=tags,
             difficulty=difficulty,
             suite_version=self.suite_version,
         )
+        trace = SampleGenerationTrace(
+            sample_id=sample.sample_id,
+            generation_method="rule_based",
+            input_block_ids=[block.block_id],
+            generator_version="gold_stage1_v1",
+            model_or_rule_name=self.__class__.__name__,
+            validation_status="generated",
+        )
+        return sample, trace
 
 
 def infer_subject(section_title: str) -> str:
@@ -210,7 +232,7 @@ def summarize_text(text: str, max_chars: int = 160) -> str:
     return summary
 
 
-def build_sample_id(evidence: EvidenceUnit, sample_kind: str) -> str:
-    seed = "|".join([evidence.evidence_id, sample_kind])
+def build_sample_id(block: AuthoringBlock, sample_kind: str) -> str:
+    seed = "|".join([block.block_id, sample_kind])
     digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
-    return f"{evidence.section_key}_{sample_kind}_{digest}"
+    return f"{block.section_key}_{sample_kind}_{digest}"

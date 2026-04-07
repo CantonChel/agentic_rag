@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-rag.local/benchmark/schemas/block_link.schema.json",
+  "title": "BlockLink",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "from_block_id",
+    "to_block_id",
+    "link_type"
+  ],
+  "properties": {
+    "from_block_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "to_block_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "link_type": {
+      "type": "string",
+      "enum": [
+        "prev_next",
+        "parent_child"
+      ]
+    }
+  }
+}

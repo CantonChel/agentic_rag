@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-rag.local/benchmark/schemas/authoring_block.schema.json",
+  "title": "AuthoringBlock",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "block_id",
+    "doc_path",
+    "section_key",
+    "section_title",
+    "block_type",
+    "heading_level",
+    "text",
+    "anchor",
+    "source_hash",
+    "start_line",
+    "end_line"
+  ],
+  "properties": {
+    "block_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "doc_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "section_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "section_title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "block_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "heading_level": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "anchor": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "start_line": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "end_line": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

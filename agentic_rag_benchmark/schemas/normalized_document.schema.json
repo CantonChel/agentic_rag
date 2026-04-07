@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-rag.local/benchmark/schemas/normalized_document.schema.json",
+  "title": "NormalizedDocument",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "doc_path",
+    "title",
+    "normalized_text",
+    "metadata",
+    "blocks"
+  ],
+  "properties": {
+    "doc_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "normalized_text": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "blocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "block_id",
+          "section_key",
+          "section_title",
+          "block_type",
+          "heading_level",
+          "content",
+          "start_line",
+          "end_line"
+        ],
+        "properties": {
+          "block_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "section_key": {
+            "type": "string",
+            "minLength": 1
+          },
+          "section_title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "block_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "heading_level": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "content": {
+            "type": "string"
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  }
+}

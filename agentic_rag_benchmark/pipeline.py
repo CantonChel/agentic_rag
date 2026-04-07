@@ -1,4 +1,4 @@
-"""Compose stage-2 benchmark package generation steps."""
+"""Compose stage-1 gold package generation steps."""
 
 from __future__ import annotations
 
@@ -8,11 +8,12 @@ from typing import List
 import re
 
 from .authoring import BenchmarkAuthoringStrategy
+from .authoring_source import build_authoring_blocks
+from .authoring_source import build_block_links
+from .authoring_source import build_source_manifest
 from .docreader_client import DocreaderServiceClient
-from .evidence import EvidenceExtractor
 from .normalizer import DocumentNormalizer
 from .package_spec import build_package_dir
-from .package_writer import PackageWriteResult
 from .package_writer import PackageWriter
 from .progress import ProgressCallback
 from .progress import emit_progress
@@ -27,7 +28,7 @@ class BuildPackageReport:
     package_dir: Path
     source_files: List[Path]
     normalized_document_count: int
-    evidence_count: int
+    authoring_block_count: int
     sample_count: int
 
 
@@ -53,7 +54,6 @@ def build_benchmark_package(
     sanitized_project_key = normalize_project_key(project_key)
     docreader_client = DocreaderServiceClient(base_url=docreader_base_url)
     normalizer = DocumentNormalizer(docreader_client)
-    extractor = EvidenceExtractor()
     authoring = BenchmarkAuthoringStrategy(suite_version=suite_version)
     writer = PackageWriter()
 
@@ -83,39 +83,50 @@ def build_benchmark_package(
             message=f"Normalized {path.name}",
             details={"path": str(path)},
         )
-    evidence_units = []
+    source_manifest = build_source_manifest(
+        source_files=source_files,
+        project_key=sanitized_project_key,
+        source_root=resolved_source_root,
+    )
     emit_progress(
         progress_callback,
-        stage="extracting_evidence",
+        stage="building_authoring_blocks",
         completed=0,
         total=len(documents),
-        message=f"Extracting evidence from {len(documents)} documents",
+        message=f"Building authoring blocks from {len(documents)} documents",
     )
-    for index, document in enumerate(documents, start=1):
-        emit_progress(
-            progress_callback,
-            stage="extracting_evidence",
-            completed=index - 1,
-            total=len(documents),
-            message=f"Extracting evidence from {document.doc_path}",
-            details={"doc_path": document.doc_path},
-        )
-        evidence_units.extend(extractor.extract_document(document))
-        emit_progress(
-            progress_callback,
-            stage="extracting_evidence",
-            completed=index,
-            total=len(documents),
-            message=f"Extracted evidence from {document.doc_path}",
-            details={"doc_path": document.doc_path},
-        )
+    authoring_blocks = build_authoring_blocks(documents)
+    emit_progress(
+        progress_callback,
+        stage="building_authoring_blocks",
+        completed=1,
+        total=1,
+        message=f"Built {len(authoring_blocks)} authoring blocks",
+        details={"authoring_block_count": len(authoring_blocks)},
+    )
+    emit_progress(
+        progress_callback,
+        stage="building_block_links",
+        completed=0,
+        total=1,
+        message=f"Building block links for {len(documents)} documents",
+    )
+    block_links = build_block_links(documents)
+    emit_progress(
+        progress_callback,
+        stage="building_block_links",
+        completed=1,
+        total=1,
+        message=f"Built {len(block_links)} block links",
+        details={"block_link_count": len(block_links)},
+    )
     emit_progress(
         progress_callback,
         stage="authoring_samples",
-        message=f"Generating samples from {len(evidence_units)} evidence units",
-        details={"evidence_count": len(evidence_units)},
+        message=f"Generating samples from {len(authoring_blocks)} authoring blocks",
+        details={"authoring_block_count": len(authoring_blocks)},
     )
-    benchmark_samples = authoring.generate_samples(evidence_units)
+    benchmark_samples, sample_generation_traces = authoring.generate_samples_with_traces(authoring_blocks)
 
     package_dir = build_package_dir(package_root, sanitized_project_key, suite_version)
     emit_progress(
@@ -128,8 +139,12 @@ def build_benchmark_package(
         package_dir=package_dir,
         project_key=sanitized_project_key,
         suite_version=suite_version,
-        evidence_units=evidence_units,
+        source_manifest=source_manifest,
+        normalized_documents=documents,
+        authoring_blocks=authoring_blocks,
+        block_links=block_links,
         benchmark_samples=benchmark_samples,
+        sample_generation_traces=sample_generation_traces,
     )
     emit_progress(
         progress_callback,
@@ -144,7 +159,7 @@ def build_benchmark_package(
         package_dir=write_result.package_dir,
         source_files=source_files,
         normalized_document_count=len(documents),
-        evidence_count=write_result.evidence_count,
+        authoring_block_count=write_result.authoring_block_count,
         sample_count=write_result.sample_count,
     )
 

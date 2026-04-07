@@ -9,7 +9,7 @@
     "question",
     "ground_truth",
     "ground_truth_contexts",
-    "gold_evidence_refs",
+    "gold_block_refs",
     "tags",
     "difficulty",
     "suite_version"
@@ -34,18 +34,18 @@
         "minLength": 1
       }
     },
-    "gold_evidence_refs": {
+    "gold_block_refs": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "evidence_id",
+          "block_id",
           "doc_path",
           "section_key"
         ],
         "properties": {
-          "evidence_id": {
+          "block_id": {
             "type": "string",
             "minLength": 1
           },

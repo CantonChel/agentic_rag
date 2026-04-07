@@ -34,7 +34,7 @@ class ValidatorTest(unittest.TestCase):
                 "generator_version": "stage1",
                 "files": dict(STANDARD_PACKAGE_FILES),
             }
-            (package_dir / STANDARD_PACKAGE_FILES["suite_manifest"]).write_text(
+            (package_dir / STANDARD_PACKAGE_FILES["gold_package_manifest"]).write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
@@ -42,7 +42,7 @@ class ValidatorTest(unittest.TestCase):
             result = validate_package_dir(package_dir)
 
             self.assertTrue(result.ok)
-            self.assertTrue(any("matches suite_manifest" in message.message for message in result.messages))
+            self.assertTrue(any("matches gold_package_manifest" in message.message for message in result.messages))
 
     def test_validate_legacy_dataset_success(self) -> None:
         dataset_path = Path(__file__).resolve().parents[1] / "fixtures" / "legacy" / "legacy_question_bank_sample.jsonl"

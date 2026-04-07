@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-rag.local/benchmark/schemas/sample_generation_trace.schema.json",
+  "title": "SampleGenerationTrace",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sample_id",
+    "generation_method",
+    "input_block_ids",
+    "generator_version",
+    "model_or_rule_name",
+    "validation_status"
+  ],
+  "properties": {
+    "sample_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generation_method": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input_block_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "generator_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model_or_rule_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "validation_status": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

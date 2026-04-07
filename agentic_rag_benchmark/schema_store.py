@@ -10,11 +10,15 @@ from typing import Iterable
 
 SCHEMA_DIR = Path(__file__).resolve().parent / "schemas"
 SCHEMA_FILES: Dict[str, str] = {
-    "evidence_unit": "evidence_unit.schema.json",
+    "source_manifest": "source_manifest.schema.json",
+    "normalized_document": "normalized_document.schema.json",
+    "authoring_block": "authoring_block.schema.json",
+    "block_link": "block_link.schema.json",
     "benchmark_sample": "benchmark_sample.schema.json",
+    "sample_generation_trace": "sample_generation_trace.schema.json",
+    "gold_package_manifest": "gold_package_manifest.schema.json",
     "build_descriptor": "build_descriptor.schema.json",
     "turn_execution_summary": "turn_execution_summary.schema.json",
-    "suite_manifest": "suite_manifest.schema.json",
 }
 
 
@@ -28,4 +32,3 @@ def load_schema(schema_name: str) -> Dict[str, object]:
 
 def list_schema_names() -> Iterable[str]:
     return SCHEMA_FILES.keys()
-

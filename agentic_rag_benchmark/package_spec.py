@@ -8,10 +8,14 @@ from typing import Dict
 
 PACKAGE_VERSION = "v1"
 STANDARD_PACKAGE_FILES: Dict[str, str] = {
-    "evidence_units": "evidence_units.jsonl",
-    "benchmark_suite": "benchmark_suite.jsonl",
-    "suite_manifest": "suite_manifest.json",
-    "review_markdown": "benchmark_suite.md",
+    "source_manifest": "source_manifest.json",
+    "normalized_documents": "normalized_documents.jsonl",
+    "authoring_blocks": "authoring_blocks.jsonl",
+    "block_links": "block_links.jsonl",
+    "samples": "samples.jsonl",
+    "sample_generation_trace": "sample_generation_trace.jsonl",
+    "gold_package_manifest": "gold_package_manifest.json",
+    "review_markdown": "review.md",
 }
 
 
