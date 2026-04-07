@@ -13,6 +13,8 @@ public class MemoryProperties {
 	private int flushMaxCompletionTokens = 700;
 	private int flushInputMaxChars = 6000;
 	private int slugMaxLength = 64;
+	private int maxFactsPerFlush = 3;
+	private int maxFactCandidates = 2;
 	private int maxChunkChars = 800;
 	private int chunkOverlap = 120;
 	private int topKCandidates = 20;
@@ -92,6 +94,22 @@ public class MemoryProperties {
 
 	public void setSlugMaxLength(int slugMaxLength) {
 		this.slugMaxLength = slugMaxLength;
+	}
+
+	public int getMaxFactsPerFlush() {
+		return maxFactsPerFlush;
+	}
+
+	public void setMaxFactsPerFlush(int maxFactsPerFlush) {
+		this.maxFactsPerFlush = maxFactsPerFlush;
+	}
+
+	public int getMaxFactCandidates() {
+		return maxFactCandidates;
+	}
+
+	public void setMaxFactCandidates(int maxFactCandidates) {
+		this.maxFactCandidates = maxFactCandidates;
 	}
 
 	public int getMaxChunkChars() {

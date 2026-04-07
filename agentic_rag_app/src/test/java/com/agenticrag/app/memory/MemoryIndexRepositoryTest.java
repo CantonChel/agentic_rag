@@ -52,8 +52,8 @@ class MemoryIndexRepositoryTest {
 		MemoryIndexFileEntity file = new MemoryIndexFileEntity();
 		file.setScopeType("user");
 		file.setScopeId("anonymous");
-		file.setPath("memory/users/anonymous/daily/2026-04-01.md");
-		file.setKind("daily_durable");
+		file.setPath("memory/users/anonymous/facts/project.reminder.md");
+		file.setKind("fact");
 		file.setContentHash("file-hash");
 		file.setFileMtime(now);
 		file.setIndexedAt(now);
@@ -65,7 +65,7 @@ class MemoryIndexRepositoryTest {
 		chunk.setScopeType("user");
 		chunk.setScopeId("anonymous");
 		chunk.setPath(file.getPath());
-		chunk.setKind("daily_durable");
+		chunk.setKind("fact");
 		chunk.setBlockId("block-1");
 		chunk.setLineStart(10);
 		chunk.setLineEnd(16);

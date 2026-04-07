@@ -126,21 +126,7 @@ public class SessionContextPreflightCompactor {
 	}
 
 	private void rewriteSessionContext(String sessionId, List<ChatMessage> compacted) {
-		contextManager.clear(sessionId);
-		String systemPrompt = "";
-		for (ChatMessage message : compacted) {
-			if (message != null && message.getType() == ChatMessageType.SYSTEM) {
-				systemPrompt = message.getContent() != null ? message.getContent() : "";
-				break;
-			}
-		}
-		contextManager.ensureSystemPrompt(sessionId, systemPrompt);
-		for (ChatMessage message : compacted) {
-			if (message == null || message.getType() == ChatMessageType.SYSTEM) {
-				continue;
-			}
-			contextManager.addMessage(sessionId, message, SessionContextAppendOptions.withoutPreCompactionFlush());
-		}
+		contextManager.replaceContext(sessionId, compacted, SessionContextAppendOptions.withoutPreCompactionFlush());
 	}
 
 	private boolean sameSequence(List<ChatMessage> left, List<ChatMessage> right) {

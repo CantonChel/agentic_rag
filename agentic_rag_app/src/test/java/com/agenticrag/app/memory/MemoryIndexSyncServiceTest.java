@@ -99,7 +99,7 @@ class MemoryIndexSyncServiceTest {
 
 	@Test
 	void runSyncSkipsUnchangedFilesWithoutReembedding() throws Exception {
-		Path file = writeUserDaily("u1", "2026-04-01.md", "只对接企业微信\n先不开审批\n");
+		Path file = writeUserFact("u1", "project.reminder.md", "只对接企业微信\n先不开审批\n");
 		MemoryIndexScope scope = scopeService.userScope("u1");
 
 		syncService.runSync(scope);
@@ -119,7 +119,7 @@ class MemoryIndexSyncServiceTest {
 
 	@Test
 	void fullReindexReusesEmbeddingCache() throws Exception {
-		writeUserDaily("u2", "2026-04-01.md", "先开启自动释放会议室\n权限按空间细分\n");
+		writeUserFact("u2", "project.constraint.md", "先开启自动释放会议室\n权限按空间细分\n");
 		MemoryIndexScope scope = scopeService.userScope("u2");
 
 		syncService.runSync(scope);
@@ -139,7 +139,7 @@ class MemoryIndexSyncServiceTest {
 
 	@Test
 	void markAllKnownScopesDirtyKeepsExistingChunksAvailable() throws Exception {
-		writeUserDaily("u3", "2026-04-01.md", "本地化环境下只保留站内通知\n");
+		writeUserFact("u3", "project.policy.md", "本地化环境下只保留站内通知\n");
 		MemoryIndexScope scope = scopeService.userScope("u3");
 		syncService.runSync(scope);
 		int chunkCount = chunkRepository.findByScopeTypeAndScopeId("user", "u3").size();
@@ -152,7 +152,7 @@ class MemoryIndexSyncServiceTest {
 
 	@Test
 	void deletesRemovedFilesFromIndexOnNextSync() throws Exception {
-		Path file = writeUserDaily("u4", "2026-04-01.md", "先只保留站内通知\n");
+		Path file = writeUserFact("u4", "project.reminder.md", "先只保留站内通知\n");
 		MemoryIndexScope scope = scopeService.userScope("u4");
 
 		syncService.runSync(scope);
@@ -168,24 +168,24 @@ class MemoryIndexSyncServiceTest {
 	}
 
 	@Test
-	void indexesSessionArchiveFilesIntoSearchableScope() throws Exception {
-		writeUserSession("u5", "session-1.md", "这是会话归档\n后续要按空间细分权限\n");
+	void indexesSessionSummaryFilesIntoSearchableScope() throws Exception {
+		writeUserSummary("u5", "session-1.md", "这是会话摘要\n后续要按空间细分权限\n");
 		MemoryIndexScope scope = scopeService.userScope("u5");
 
 		syncService.runSync(scope);
 
 		Assertions.assertTrue(
 			chunkRepository.findByScopeTypeAndScopeId("user", "u5").stream()
-				.anyMatch(chunk -> "session_archive".equals(chunk.getKind()) && chunk.getPath().contains("/sessions/"))
+				.anyMatch(chunk -> "session_summary".equals(chunk.getKind()) && chunk.getPath().contains("/summaries/"))
 		);
 	}
 
 	@Test
-	void rerunsSyncForAppendedMemoryBlockWithoutDuplicateChunkFailure() throws Exception {
-		Path file = writeUserDaily(
+	void rerunsSyncForRewrittenFactFileWithoutDuplicateChunkFailure() throws Exception {
+		Path file = writeUserFact(
 			"u6",
-			"2026-04-01.md",
-			durableBlock("block-1", "只对接企业微信\n先不开审批")
+			"project.reminder.md",
+			factBlock("block-1", "project.reminder", "fact-1", "只对接企业微信\n先不开审批")
 		);
 		MemoryIndexScope scope = scopeService.userScope("u6");
 
@@ -194,8 +194,8 @@ class MemoryIndexSyncServiceTest {
 
 		Files.writeString(
 			file,
-			durableBlock("block-1", "只对接企业微信\n先不开审批")
-				+ durableBlock("block-2", "项目代号：青岚-42\n试点范围：华东二区"),
+			factBlock("block-1", "project.reminder", "fact-1", "只对接企业微信\n先不开审批")
+				+ factBlock("block-2", "project.decision", "fact-2", "项目代号：青岚-42\n试点范围：华东二区"),
 			StandardCharsets.UTF_8
 		);
 
@@ -232,25 +232,27 @@ class MemoryIndexSyncServiceTest {
 		return meta;
 	}
 
-	private Path writeUserDaily(String userId, String fileName, String content) throws IOException {
-		Path file = WORKSPACE_ROOT.resolve("memory/users/" + userId + "/daily/" + fileName);
+	private Path writeUserFact(String userId, String fileName, String content) throws IOException {
+		Path file = WORKSPACE_ROOT.resolve("memory/users/" + userId + "/facts/" + fileName);
 		Files.createDirectories(file.getParent());
 		Files.writeString(file, content, StandardCharsets.UTF_8);
 		return file;
 	}
 
-	private Path writeUserSession(String userId, String fileName, String content) throws IOException {
-		Path file = WORKSPACE_ROOT.resolve("memory/users/" + userId + "/sessions/" + fileName);
+	private Path writeUserSummary(String userId, String fileName, String content) throws IOException {
+		Path file = WORKSPACE_ROOT.resolve("memory/users/" + userId + "/summaries/" + fileName);
 		Files.createDirectories(file.getParent());
 		Files.writeString(file, content, StandardCharsets.UTF_8);
 		return file;
 	}
 
-	private String durableBlock(String blockId, String body) {
-		return "<!-- MEMORY_BLOCK {\"schema\":\"memory.v1\",\"kind\":\"durable\",\"block_id\":\""
+	private String factBlock(String blockId, String bucket, String factKey, String body) {
+		return "<!-- MEMORY_BLOCK {\"schema\":\"memory.v2\",\"kind\":\"fact\",\"block_id\":\""
 			+ blockId
-			+ "\",\"user_id\":\"anonymous\",\"trigger\":\"test\",\"dedupe_key\":\""
-			+ blockId
+			+ "\",\"user_id\":\"anonymous\",\"session_id\":\"s1\",\"created_at\":\"2026-04-06T00:00:00Z\",\"updated_at\":\"2026-04-06T00:00:00Z\",\"trigger\":\"test\",\"bucket\":\""
+			+ bucket
+			+ "\",\"fact_key\":\""
+			+ factKey
 			+ "\"} -->\n"
 			+ body
 			+ "\n<!-- /MEMORY_BLOCK -->\n\n";

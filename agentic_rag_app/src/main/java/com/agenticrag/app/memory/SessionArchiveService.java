@@ -8,7 +8,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -50,106 +49,61 @@ public class SessionArchiveService {
 		}
 		String userId = SessionScope.userIdFromScopedSessionId(scopedSessionId);
 		String sessionId = SessionScope.sessionIdFromScopedSessionId(scopedSessionId);
-		List<String> transcriptLines = extractTranscriptLines(contextMessages, persistedMessages);
-		if (transcriptLines.isEmpty()) {
+		List<String> projectedLines = extractProjectedLines(contextMessages);
+		if (projectedLines.isEmpty()) {
 			return;
 		}
 		String normalizedReason = normalizeReason(reason);
-		String body = String.join("\n", transcriptLines).trim();
-		String fingerprint = fingerprint(body);
-		List<String> slugSource = new ArrayList<>(transcriptLines);
-		String slug = memoryLlmExtractor != null
-			? memoryLlmExtractor.generateSessionSlug(userId, sessionId, slugSource)
-			: "session-memory";
-		Path file = memoryFileService.sessionsDir(userId).resolve(LocalDate.now() + "-" + normalizeSlug(slug) + ".md");
-		String dedupeKey = "archive:" + SessionScope.normalizeSessionId(sessionId) + ":" + normalizedReason + ":" + fingerprint;
-		if (hasDedupeKey(userId, dedupeKey)) {
+		String body = memoryLlmExtractor.generateSessionSummary(userId, sessionId, normalizedReason, projectedLines);
+		if (body == null || body.trim().isEmpty()) {
+			body = buildFallbackSummary(projectedLines);
+		}
+		if (body == null || body.trim().isEmpty()) {
 			return;
 		}
+		String slug = memoryLlmExtractor.generateSessionSlug(userId, sessionId, projectedLines);
+		Path file = memoryFileService.summariesDir(userId).resolve(LocalDate.now() + "-" + normalizeSlug(slug) + ".md");
 		MemoryBlockMetadata metadata = new MemoryBlockMetadata(
-			MemoryBlockMetadata.SCHEMA_V1,
-			MemoryBlockMetadata.KIND_SESSION_ARCHIVE,
+			MemoryBlockMetadata.SCHEMA_V2,
+			MemoryBlockMetadata.KIND_SESSION_SUMMARY,
 			UUID.randomUUID().toString(),
 			SessionScope.normalizeUserId(userId),
 			SessionScope.normalizeSessionId(sessionId),
 			OffsetDateTime.now().toString(),
+			null,
 			"session_lifecycle",
-			dedupeKey,
+			null,
+			null,
 			normalizedReason,
 			normalizeSlug(slug)
 		);
-		appendBlock(file, metadata, body);
+		appendBlock(file, metadata, body.trim());
 	}
 
-	private List<String> extractTranscriptLines(
-		List<ChatMessage> contextMessages,
-		List<StoredMessageEntity> persistedMessages
-	) {
+	private List<String> extractProjectedLines(List<ChatMessage> contextMessages) {
 		List<String> lines = new ArrayList<>();
-		if (persistedMessages != null) {
-			for (StoredMessageEntity message : persistedMessages) {
-				String line = formatStoredMessage(message);
-				if (!line.isEmpty()) {
-					lines.add(line);
-				}
-			}
-		}
-		if (!lines.isEmpty()) {
+		if (contextMessages == null || contextMessages.isEmpty()) {
 			return lines;
 		}
-		if (contextMessages != null) {
-			for (ChatMessage message : contextMessages) {
-				String line = formatContextMessage(message);
-				if (!line.isEmpty()) {
-					lines.add(line);
-				}
-			}
-		}
-		return lines;
-	}
-
-	private String formatStoredMessage(StoredMessageEntity message) {
-		if (message == null || message.getType() == null || message.getContent() == null) {
-			return "";
-		}
-		String type = message.getType().trim().toUpperCase(Locale.ROOT);
-		if (!"USER".equals(type) && !"ASSISTANT".equals(type)) {
-			return "";
-		}
-		String content = sanitize(message.getContent());
-		if (content.isEmpty()) {
-			return "";
-		}
-		return "- " + type + ": " + content;
-	}
-
-	private String formatContextMessage(ChatMessage message) {
-		if (message == null || message.getType() == null || message.getContent() == null) {
-			return "";
-		}
-		String type = message.getType().name();
-		if (!"USER".equals(type) && !"ASSISTANT".equals(type)) {
-			return "";
-		}
-		String content = sanitize(message.getContent());
-		if (content.isEmpty()) {
-			return "";
-		}
-		return "- " + type + ": " + content;
-	}
-
-	private boolean hasDedupeKey(String userId, String dedupeKey) {
-		for (Path file : memoryFileService.discoverMemoryFiles(userId, false)) {
-			if (!"session_archive".equals(memoryFileService.kindOf(userId, file))) {
+		for (ChatMessage message : contextMessages) {
+			if (message == null || message.getType() == null || message.getContent() == null) {
 				continue;
 			}
-			for (ParsedMemoryBlock block : memoryBlockParser.parse(userId, file)) {
-				if (block.getMetadata() != null && dedupeKey.equals(block.getMetadata().getDedupeKey())) {
-					return true;
-				}
+			String type = message.getType().name();
+			if (!"USER".equals(type) && !"ASSISTANT".equals(type)) {
+				continue;
 			}
+			String content = sanitize(message.getContent());
+			if (content.isEmpty()) {
+				continue;
+			}
+			lines.add(type + ": " + content);
 		}
-		return false;
+		int maxMessages = 15;
+		if (lines.size() <= maxMessages) {
+			return lines;
+		}
+		return new ArrayList<>(lines.subList(lines.size() - maxMessages, lines.size()));
 	}
 
 	private void appendBlock(Path file, MemoryBlockMetadata metadata, String body) {
@@ -167,7 +121,7 @@ public class SessionArchiveService {
 				StandardOpenOption.APPEND
 			);
 		} catch (IOException ignored) {
-			// avoid blocking session lifecycle on archive write failure
+			// avoid blocking session lifecycle on memory summary write failure
 		}
 	}
 
@@ -176,6 +130,24 @@ public class SessionArchiveService {
 			return "";
 		}
 		return WHITESPACE.matcher(content).replaceAll(" ").trim();
+	}
+
+	private String buildFallbackSummary(List<String> projectedLines) {
+		if (projectedLines == null || projectedLines.isEmpty()) {
+			return "";
+		}
+		StringBuilder out = new StringBuilder();
+		for (String line : projectedLines) {
+			String sanitized = sanitize(line);
+			if (sanitized.isEmpty()) {
+				continue;
+			}
+			if (out.length() > 0) {
+				out.append('\n');
+			}
+			out.append("- ").append(sanitized);
+		}
+		return out.toString().trim();
 	}
 
 	private String normalizeReason(String reason) {
@@ -211,19 +183,5 @@ public class SessionArchiveService {
 			return out.substring(0, max);
 		}
 		return out.toString();
-	}
-
-	private String fingerprint(String content) {
-		try {
-			MessageDigest digest = MessageDigest.getInstance("SHA-256");
-			byte[] bytes = digest.digest(content.getBytes(StandardCharsets.UTF_8));
-			StringBuilder sb = new StringBuilder();
-			for (int i = 0; i < Math.min(bytes.length, 12); i++) {
-				sb.append(String.format("%02x", bytes[i]));
-			}
-			return sb.toString();
-		} catch (Exception e) {
-			return Integer.toHexString(content.hashCode());
-		}
 	}
 }

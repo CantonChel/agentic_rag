@@ -687,6 +687,7 @@
             </div>
           </div>
           <nav class="nav-links">
+            <a href="/memory.html" class="nav-link" id="memoryOverviewLink">🧠 记忆总览</a>
             <a href="/knowledge.html" class="nav-link">📚 知识库管理</a>
             <a href="/index.html" class="nav-link">🏠 首页</a>
           </nav>
@@ -828,6 +829,7 @@
       const memoryFileSelect = document.getElementById('memoryFileSelect');
       const memoryMeta = document.getElementById('memoryMeta');
       const memoryContent = document.getElementById('memoryContent');
+      const memoryOverviewLink = document.getElementById('memoryOverviewLink');
       const sessionBadge = document.getElementById('sessionBadge');
       const sessionStatus = document.getElementById('sessionStatus');
 
@@ -849,6 +851,24 @@
 
       function currentUserId() {
         return (userIdInput && userIdInput.value ? userIdInput.value : '').trim() || 'anonymous';
+      }
+
+      function currentSessionId() {
+        return (sessionIdInput && sessionIdInput.value ? sessionIdInput.value : '').trim();
+      }
+
+      function buildMemoryOverviewUrl() {
+        const query = new URLSearchParams({ userId: currentUserId() });
+        const sid = currentSessionId();
+        if (sid) {
+          query.set('sessionId', sid);
+        }
+        return '/memory.html?' + query.toString();
+      }
+
+      function syncMemoryOverviewLink() {
+        if (!memoryOverviewLink) return;
+        memoryOverviewLink.href = buildMemoryOverviewUrl();
       }
 
       function formatBytes(n) {
@@ -883,6 +903,7 @@
         if (sessionBadge) {
           sessionBadge.textContent = sid ? ('会话: ' + sid.substring(0, 12) + '...') : '新会话';
         }
+        syncMemoryOverviewLink();
       }
 
       function clearEmptyState() {
@@ -1850,9 +1871,19 @@
       });
 
       (async function init() {
+        const initialQuery = new URLSearchParams(window.location.search);
+        const initialUserId = (initialQuery.get('userId') || '').trim();
+        const initialSessionId = (initialQuery.get('sessionId') || '').trim();
+        if (initialUserId && userIdInput) {
+          userIdInput.value = initialUserId;
+        }
+        syncMemoryOverviewLink();
         syncMemoryControlState();
-        await refreshSessions(true);
-        if (!(sessionIdInput.value || '').trim()) {
+        await refreshSessions(false, initialSessionId);
+        if (currentSessionId()) {
+          await loadSessionHistoryById(currentSessionId());
+        }
+        if (!currentSessionId()) {
           await createSession();
         }
         await refreshMemoryFiles(false);

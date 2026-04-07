@@ -52,7 +52,7 @@ class MemorySearchServiceTest {
 		Mockito.when(repository.searchVector(Mockito.anyList(), Mockito.any(), Mockito.anyList(), Mockito.anyInt()))
 			.thenReturn(List.of(new MemoryIndexSearchCandidate("MEMORY.md", "global", "g1", 1, 2, "global note", 0.9)));
 		Mockito.when(repository.searchLexical(Mockito.anyList(), Mockito.eq("banana"), Mockito.anyInt()))
-			.thenReturn(List.of(new MemoryIndexSearchCandidate("memory/users/u1/daily/2026-04-01.md", "daily_durable", "u1b", 3, 4, "banana project", 1.2)));
+			.thenReturn(List.of(new MemoryIndexSearchCandidate("memory/users/u1/facts/project.reminder.md", "fact", "u1b", 3, 4, "banana project", 1.2)));
 
 		List<MemorySearchHit> result = service.search("u1", "banana", 5);
 
@@ -86,18 +86,18 @@ class MemorySearchServiceTest {
 		Mockito.when(metaRepository.findById(Mockito.any())).thenReturn(Optional.of(meta(false, "u1")));
 		Mockito.when(repository.searchVector(Mockito.anyList(), Mockito.any(), Mockito.anyList(), Mockito.anyInt()))
 			.thenReturn(List.of(
-				new MemoryIndexSearchCandidate("memory/users/u1/daily/2026-04-01.md", "daily_durable", "b1", 10, 12, "只对接企业微信", 0.9)
+				new MemoryIndexSearchCandidate("memory/users/u1/facts/project.reminder.md", "fact", "b1", 10, 12, "只对接企业微信", 0.9)
 			));
 		Mockito.when(repository.searchLexical(Mockito.anyList(), Mockito.eq("企业微信"), Mockito.anyInt()))
 			.thenReturn(List.of(
-				new MemoryIndexSearchCandidate("memory/users/u1/daily/2026-04-01.md", "daily_durable", "b1", 10, 12, "只对接企业微信", 1.5),
+				new MemoryIndexSearchCandidate("memory/users/u1/facts/project.reminder.md", "fact", "b1", 10, 12, "只对接企业微信", 1.5),
 				new MemoryIndexSearchCandidate("MEMORY.md", "global", "g1", 1, 2, "会议规范", 0.3)
 			));
 
 		List<MemorySearchHit> result = service.search("u1", "企业微信", 5);
 
 		Assertions.assertEquals(2, result.size());
-		Assertions.assertEquals("memory/users/u1/daily/2026-04-01.md", result.get(0).getPath());
+		Assertions.assertEquals("memory/users/u1/facts/project.reminder.md", result.get(0).getPath());
 		Assertions.assertTrue(result.get(0).getScore() > result.get(1).getScore());
 		Assertions.assertEquals(10, result.get(0).getLineStart());
 	}
@@ -150,14 +150,14 @@ class MemorySearchServiceTest {
 		Mockito.when(metaRepository.findById(Mockito.any())).thenReturn(Optional.of(meta(false, "u1")));
 		Mockito.when(repository.searchLexical(Mockito.anyList(), Mockito.eq("站内通知"), Mockito.anyInt()))
 			.thenReturn(List.of(
-				new MemoryIndexSearchCandidate("memory/users/u1/daily/2026-04-01.md", "daily_durable", "b2", 6, 7, "本地化环境先只保留站内通知", 0.8)
+				new MemoryIndexSearchCandidate("memory/users/u1/facts/project.policy.md", "fact", "b2", 6, 7, "本地化环境先只保留站内通知", 0.8)
 			));
 
 		List<MemorySearchHit> result = service.search("u1", "站内通知", 5);
 
 		Mockito.verify(repository, Mockito.never()).searchVector(Mockito.anyList(), Mockito.any(), Mockito.anyList(), Mockito.anyInt());
 		Assertions.assertEquals(1, result.size());
-		Assertions.assertEquals("memory/users/u1/daily/2026-04-01.md", result.get(0).getPath());
+		Assertions.assertEquals("memory/users/u1/facts/project.policy.md", result.get(0).getPath());
 		Assertions.assertEquals(0.8, result.get(0).getScore(), 0.0001);
 	}
 

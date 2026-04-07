@@ -19,7 +19,8 @@ class SessionContextPreflightCompactorTest {
 		props.setMaxTokens(600);
 		props.setPreflightReserveTokens(180);
 		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
-		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(props, tokenCounter);
+		SessionContextSnapshotStore snapshotStore = Mockito.mock(SessionContextSnapshotStore.class);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(props, tokenCounter, snapshotStore);
 		String sid = "u1::s1";
 
 		contextManager.ensureSystemPrompt(sid, "SYSTEM_PROMPT");
@@ -48,7 +49,8 @@ class SessionContextPreflightCompactorTest {
 		props.setMaxTokens(600);
 		props.setPreflightReserveTokens(180);
 		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
-		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(props, tokenCounter);
+		SessionContextSnapshotStore snapshotStore = Mockito.mock(SessionContextSnapshotStore.class);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(props, tokenCounter, snapshotStore);
 		String sid = "u1::token";
 
 		contextManager.ensureSystemPrompt(sid, "SYSTEM_PROMPT");
@@ -63,6 +65,7 @@ class SessionContextPreflightCompactorTest {
 			new SessionContextBudgetEvaluator(props, tokenCounter),
 			dailyDurableFlushService
 		);
+		Mockito.reset(snapshotStore);
 
 		List<ChatMessage> prepared = compactor.prepareForTurn(sid, SessionContextAppendOptions.defaults());
 
@@ -75,6 +78,8 @@ class SessionContextPreflightCompactorTest {
 		Assertions.assertEquals(toSequence(prepared), toSequence(contextManager.getContext(sid)));
 		Mockito.verify(dailyDurableFlushService, Mockito.times(1))
 			.flush(Mockito.eq(sid), Mockito.anyList());
+		Mockito.verify(snapshotStore, Mockito.times(1)).replaceSnapshot(Mockito.eq(sid), Mockito.anyList());
+		Mockito.verify(snapshotStore, Mockito.never()).deleteSnapshot(Mockito.anyString());
 	}
 
 	@Test
@@ -84,7 +89,11 @@ class SessionContextPreflightCompactorTest {
 		props.setMaxBytes(520);
 		props.setPreflightReserveBytes(160);
 		TokenCounter tokenCounter = text -> 1;
-		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(props, tokenCounter);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(
+			props,
+			tokenCounter,
+			Mockito.mock(SessionContextSnapshotStore.class)
+		);
 		String sid = "u1::byte";
 
 		contextManager.ensureSystemPrompt(sid, "SYSTEM");
@@ -115,7 +124,11 @@ class SessionContextPreflightCompactorTest {
 		props.setMaxTokens(600);
 		props.setPreflightReserveTokens(180);
 		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
-		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(props, tokenCounter);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(
+			props,
+			tokenCounter,
+			Mockito.mock(SessionContextSnapshotStore.class)
+		);
 		String sid = "u1::no-flush";
 
 		contextManager.ensureSystemPrompt(sid, "SYSTEM_PROMPT");
@@ -149,7 +162,11 @@ class SessionContextPreflightCompactorTest {
 		props.setMaxTokens(600);
 		props.setPreflightReserveTokens(180);
 		TokenCounter tokenCounter = text -> text != null ? text.length() : 0;
-		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(props, tokenCounter);
+		InMemorySessionContextManager contextManager = new InMemorySessionContextManager(
+			props,
+			tokenCounter,
+			Mockito.mock(SessionContextSnapshotStore.class)
+		);
 		String sid = "u1::latest-turn";
 
 		contextManager.ensureSystemPrompt(sid, "SYSTEM_PROMPT");

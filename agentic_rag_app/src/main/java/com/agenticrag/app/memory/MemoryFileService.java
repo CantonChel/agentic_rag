@@ -38,12 +38,22 @@ public class MemoryFileService {
 			.normalize();
 	}
 
-	public Path dailyDir(String userId) {
-		return userRoot(userId).resolve("daily").normalize();
+	public Path factsDir(String userId) {
+		return userRoot(userId).resolve("facts").normalize();
 	}
 
+	public Path summariesDir(String userId) {
+		return userRoot(userId).resolve("summaries").normalize();
+	}
+
+	@Deprecated
+	public Path dailyDir(String userId) {
+		return factsDir(userId);
+	}
+
+	@Deprecated
 	public Path sessionsDir(String userId) {
-		return userRoot(userId).resolve("sessions").normalize();
+		return summariesDir(userId);
 	}
 
 	public Path embeddingCacheDir() {
@@ -67,14 +77,9 @@ public class MemoryFileService {
 		if (!Files.exists(userDir) || !Files.isDirectory(userDir)) {
 			return files;
 		}
-		try (Stream<Path> walk = Files.walk(userDir)) {
-			walk.filter(Files::isRegularFile)
-				.filter(this::isMarkdownFile)
-				.sorted()
-				.forEach(files::add);
-		} catch (IOException ignored) {
-			// ignore broken paths
-		}
+		addMarkdownFiles(factsDir(normalizedUserId), files);
+		addMarkdownFiles(summariesDir(normalizedUserId), files);
+		files.sort(Path::compareTo);
 		return files;
 	}
 
@@ -87,8 +92,7 @@ public class MemoryFileService {
 		if (global.equals(abs)) {
 			return true;
 		}
-		Path userDir = userRoot(userId).toAbsolutePath().normalize();
-		return abs.startsWith(userDir) && isMarkdownFile(abs);
+		return isManagedUserMarkdown(userId, abs);
 	}
 
 	public Path resolveReadablePath(String userId, String relativePath) {
@@ -110,11 +114,15 @@ public class MemoryFileService {
 		if (abs.equals(globalMemoryFile().toAbsolutePath().normalize())) {
 			return "global";
 		}
-		Path sessionsDir = sessionsDir(userId).toAbsolutePath().normalize();
-		if (abs.startsWith(sessionsDir)) {
-			return "session_archive";
+		Path summariesDir = summariesDir(userId).toAbsolutePath().normalize();
+		if (abs.startsWith(summariesDir)) {
+			return "session_summary";
 		}
-		return "daily_durable";
+		Path factsDir = factsDir(userId).toAbsolutePath().normalize();
+		if (abs.startsWith(factsDir)) {
+			return "fact";
+		}
+		return "unknown";
 	}
 
 	public String relPath(Path path) {
@@ -128,5 +136,31 @@ public class MemoryFileService {
 	private boolean isMarkdownFile(Path path) {
 		String name = path.getFileName() != null ? path.getFileName().toString() : "";
 		return name.toLowerCase(Locale.ROOT).endsWith(".md");
+	}
+
+	private boolean isManagedUserMarkdown(String userId, Path path) {
+		if (path == null || !isMarkdownFile(path)) {
+			return false;
+		}
+		Path abs = path.toAbsolutePath().normalize();
+		Path factsDir = factsDir(userId).toAbsolutePath().normalize();
+		if (abs.startsWith(factsDir)) {
+			return true;
+		}
+		Path summariesDir = summariesDir(userId).toAbsolutePath().normalize();
+		return abs.startsWith(summariesDir);
+	}
+
+	private void addMarkdownFiles(Path directory, List<Path> out) {
+		if (directory == null || out == null || !Files.exists(directory) || !Files.isDirectory(directory)) {
+			return;
+		}
+		try (Stream<Path> walk = Files.walk(directory)) {
+			walk.filter(Files::isRegularFile)
+				.filter(this::isMarkdownFile)
+				.forEach(out::add);
+		} catch (IOException ignored) {
+			// ignore broken paths
+		}
 	}
 }
