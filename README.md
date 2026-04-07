@@ -1,160 +1,185 @@
-# agentic_rag
+# Agentic RAG
 
-`agentic_rag` 是一个面向知识检索与工具执行场景的 Agent/RAG 项目仓库。它把多轮 Agent 执行、文档解析、知识入库、混合检索、上下文管理和 benchmark 流水线放在同一个工程里，方便做端到端联调、验证和演进。
+一个面向内部协作与联调的 Agentic RAG 仓库，包含 Java 主服务、Python 文档解析服务、Benchmark 工具链，以及围绕检索、上下文管理、Memory 和评测的设计文档。
 
-从根目录 `docs/` 的现有文档来看，这个仓库当前主要围绕以下几条主线展开：
+## 项目概览
 
-- 一个具有流式输出、工具调用闭环和多轮执行能力的 Agent
-- 一套面向长对话的分层上下文管理与压缩机制
-- 一条基于 PostgreSQL 的知识存储、稀疏/稠密检索与融合链路
-- 一个把原始文档解析成 RAG 友好 Markdown 的 docreader 服务
-- 一套可导包、可跑分、可产出报告的 benchmark 流水线
-- 一套面向前端体验的聊天会话精确回放机制
+这个仓库的目标不是只做一个“能检索”的 RAG Demo，而是把文档导入、异步解析、检索问答、会话上下文、长期记忆、评测闭环和可观测性串成一条可持续演进的工程链路。
+
+当前仓库适合以下场景：
+
+- 作为内部知识库问答与 Agent 检索实验平台
+- 作为文档导入、切分、检索、问答的一体化联调环境
+- 作为 Benchmark package 构建、导入、跑分与 RAGAS 评测的实验底座
+
+## 当前功能
+
+### 1. 知识库管理
+
+- 支持知识库创建、查询、更新、删除，以及失败数据清理。
+- 支持查看知识库下的文档、文档详情、分块结果和关联图片内容。
+- 支持面向多知识库隔离的问答与检索场景，适合做不同数据域的并行验证。
+
+### 2. 文档导入与解析
+
+- 支持文件上传入库，并通过异步解析任务完成文档清洗与入库流程。
+- 支持解析任务状态查询、失败重试和结果追踪。
+- `docreader_service` 当前支持 `pdf`、`docx`、`txt`、`md`、`csv`、`json`、`html/htm` 等格式，并尽量输出结构化 Markdown 与图片引用。
+
+### 3. 检索与 Agent 问答
+
+- 支持文本/文件导入后的检索与基础 RAG 查询。
+- 支持 Agent SSE 流式问答，并可切换 `OpenAI` 与 `MiniMax` 两种 provider。
+- 支持工具调用、知识库作用域、benchmark build 作用域、memory 开关和 thinking profile 等执行控制，适合做 Agent 行为联调。
+
+### 4. 会话与上下文
+
+- 支持会话创建、列表、删除，以及消息历史查询。
+- 支持 assistant 事件流回放，便于复盘一轮对话中的思考、工具和回答过程。
+- 支持 session context、local execution context 等调试视图，方便观察上下文压缩和单轮执行状态。
+
+### 5. Memory 能力
+
+- 支持浏览和读取 memory 文件，区分 `global`、`fact`、`session_summary`、`session_context` 等范围。
+- 支持 fact operation 审计查询，便于追踪事实写入、更新和验证过程。
+- 适合用于验证“长期记忆 + 会话摘要 + 局部上下文”的组合策略。
+
+### 6. Benchmark 与可观测性
+
+- 支持 benchmark package 导入 build，并提供 build 列表与详情查询。
+- 支持 turn summary 和 retrieval trace 查询，便于以真实后端执行结果作为评测真源。
+- 仓库内提供独立的 benchmark CLI 与 RAGAS 评测链路，可用于构建、导入、跑分和报告输出。
+
+## 系统组成
+
+| 模块 | 作用 |
+| --- | --- |
+| `agentic_rag_app` | Java Spring Boot 主服务，负责知识库、检索、Agent、会话、Memory、Benchmark API 与内置联调页面 |
+| `docreader_service` | Python FastAPI 文档清洗服务，负责多格式文档读取、Markdown 化和图片引用保留 |
+| `agentic_rag_benchmark` | Benchmark 自动化流水线，负责 package 构建、兼容历史题库、真实链路跑分与报告输出 |
+| `docs` | 存放架构说明、SOP、设计记录和联调结论 |
 
 ## 仓库结构
 
-- `agentic_rag_app/`
-  - 主应用，基于 Spring Boot，承担 Agent 执行、知识导入、检索、会话、记忆和 API 能力
-- `docreader_service/`
-  - 文档解析服务，负责把 PDF/DOCX 等输入统一转成适合 RAG 的 Markdown 与图片引用
-- `agentic_rag_benchmark/`
-  - benchmark 工具链，负责标准 package 构建、导入、运行和报告输出
-- `agentic_rag_ragas/`
-  - RAGAS 相关评测资源与运行支持
-- `docs/`
-  - 项目架构说明、SOP、联调结论和使用说明
-- `scripts/`
-  - 本地联调、服务拉起和辅助脚本
-- `memory/`
-  - 运行期记忆文件目录
-
-## 核心能力
-
-### 1. Agent 执行闭环
-
-项目里的 Agent 不是一次性问答器，而是一个“模型流式输出 -> 工具调用 -> 工具结果回填 -> 下一轮继续推理”的执行循环。核心能力包括：
-
-- 流式读取 LLM 输出
-- 区分正文、思考内容和工具调用
-- 把工具结果重新写回上下文
-- 在多轮 loop 中持续推进直到收尾
-
-对应文档：
-
-- [`docs/agent-stepwise-thinking-sop.md`](docs/agent-stepwise-thinking-sop.md)
-
-### 2. 分层上下文管理
-
-上下文不是简单无限追加，而是拆成三层协作：
-
-- 会话级上下文：负责跨轮 continuity
-- 单轮执行上下文：负责当前轮真实执行
-- 存储级兜底裁剪：负责防止历史无限膨胀
-
-这套设计的重点是把“跨轮保留的结果”和“当前轮执行轨迹”分开，既尽量保住连续性，也减少工具噪声污染下一轮。
-
-对应文档：
-
-- [`docs/context-management-layered-compression-sop.md`](docs/context-management-layered-compression-sop.md)
-
-### 3. 存储与检索架构
-
-项目当前采用“文件存储 + PostgreSQL”双层架构：
-
-- 原始文件与图片资源落文件系统或对象存储
-- 结构化元数据、分块文本、embedding 和检索索引落 PostgreSQL
-
-检索链路同时覆盖：
-
-- 稀疏检索：全文检索、关键词模糊检索
-- 稠密检索：pgvector 向量检索
-- 融合与排序：RRF、rerank，以及后续 MMR 设计方向
-
-对应文档：
-
-- [`docs/storage-retrieval-architecture.md`](docs/storage-retrieval-architecture.md)
-- [`docs/hybrid-retrieval-rerank-mmr-sop.md`](docs/hybrid-retrieval-rerank-mmr-sop.md)
-
-### 4. 文档解析与 RAG 友好输出
-
-`docreader_service` 的目标不是像阅读器一样复刻版式，而是尽量保持文字、表格、图片的阅读顺序，并输出统一 Markdown 契约，便于后续切块、向量化和检索。
-
-核心约束包括：
-
-- PDF 按页面阅读顺序组织元素
-- DOCX 按文档流顺序组织元素
-- 表格统一转 Markdown table
-- 图片内容通过 `imageRefs` 单独返回
-
-对应文档：
-
-- [`docs/docreader-element-order-sop.md`](docs/docreader-element-order-sop.md)
-
-### 5. Benchmark 与评测流水线
-
-仓库内置 benchmark 流水线，支持：
-
-- 拉起本地依赖与服务
-- 从原始文档构建标准 benchmark package
-- 导入 `agentic_rag_app`
-- 触发真实 benchmark 运行
-- 生成报告与 RAGAS 结果
-
-对应文档：
-
-- [`docs/benchmark-pipeline.md`](docs/benchmark-pipeline.md)
-
-### 6. 聊天会话精确回放
-
-为了改善前端多轮体验，项目引入了“最近活跃复用 + 精确回放”机制，用 replay 事件流恢复 assistant 侧的真实在线时序，尽量避免刷新后历史碎片化。
-
-对应文档：
-
-- [`docs/chat-session-replay.md`](docs/chat-session-replay.md)
-
-## 快速启动
-
-如果你只是想先把整套本地依赖拉起来，当前文档给出的统一入口是：
-
-```bash
-./scripts/restart_all.sh
+```text
+.
+├── agentic_rag_app/          # Java 主服务
+├── docreader_service/        # Python 文档解析服务
+├── agentic_rag_benchmark/    # Benchmark 工具链
+├── docs/                     # 架构、SOP 与设计文档
+├── scripts/                  # 启停、E2E、初始化脚本
+├── docker-compose.yml        # 推荐启动方式
+├── docker-compose.README.md  # Compose 补充说明
+└── local-dev.README.md       # 本地无 Docker 启动说明
 ```
 
-这个脚本会启动本地联调依赖和核心服务。根据 benchmark 文档，常见健康检查包括：
+## 快速开始
+
+推荐优先使用 Docker Compose 跑通整套服务，本地无容器开发再看补充说明。
+
+### 1. 准备环境变量
+
+至少配置一组可用的 LLM Key，用于 Agent 问答和相关能力验证。
 
 ```bash
-curl http://127.0.0.1:8090/healthz
-curl http://127.0.0.1:8081/actuator/health
+cp .env.example .env
 ```
 
-更完整的 package 构建、导入、benchmark 运行说明请直接看：
+`.env` 中常见配置包括：
 
-- [`docs/benchmark-pipeline.md`](docs/benchmark-pipeline.md)
+- `OPENAI_API_KEY`
+- `MINIMAX_API_KEY`
+- `DOCREADER_CALLBACK_SECRET`
+- `MINIO_ACCESS_KEY`
+- `MINIO_SECRET_KEY`
 
-## 建议阅读顺序
+### 2. 启动整套服务
 
-如果你是第一次接手这个仓库，推荐按下面顺序阅读：
+```bash
+docker compose up --build -d
+```
 
-1. [`docs/storage-retrieval-architecture.md`](docs/storage-retrieval-architecture.md)
-2. [`docs/hybrid-retrieval-rerank-mmr-sop.md`](docs/hybrid-retrieval-rerank-mmr-sop.md)
-3. [`docs/agent-stepwise-thinking-sop.md`](docs/agent-stepwise-thinking-sop.md)
-4. [`docs/context-management-layered-compression-sop.md`](docs/context-management-layered-compression-sop.md)
-5. [`docs/docreader-element-order-sop.md`](docs/docreader-element-order-sop.md)
-6. [`docs/chat-session-replay.md`](docs/chat-session-replay.md)
-7. [`docs/benchmark-pipeline.md`](docs/benchmark-pipeline.md)
+默认会启动以下服务：
 
-## 文档索引
+- `agentic-rag-app`: `http://localhost:8081`
+- `docreader`: `http://localhost:8090`
+- `postgres`: `localhost:5432`
+- `redis`: compose 内部使用，不默认暴露到宿主机
+- `minio`: `http://localhost:9000`
+- `minio console`: `http://localhost:9001`
 
-根目录 `docs/README.md` 提供了简要索引：
+### 3. 基础检查
 
-- [`docs/README.md`](docs/README.md)
+```bash
+curl http://localhost:8090/healthz
+./scripts/e2e_async_ingest.sh
+```
 
-当前主要文档：
+### 4. 访问内置联调页面
 
-- [`docs/agent-stepwise-thinking-sop.md`](docs/agent-stepwise-thinking-sop.md)
-- [`docs/context-management-layered-compression-sop.md`](docs/context-management-layered-compression-sop.md)
-- [`docs/docreader-element-order-sop.md`](docs/docreader-element-order-sop.md)
-- [`docs/hybrid-retrieval-rerank-mmr-sop.md`](docs/hybrid-retrieval-rerank-mmr-sop.md)
-- [`docs/storage-retrieval-architecture.md`](docs/storage-retrieval-architecture.md)
-- [`docs/chat-session-replay.md`](docs/chat-session-replay.md)
-- [`docs/benchmark-pipeline.md`](docs/benchmark-pipeline.md)
+启动后可以直接访问以下页面做联调与观察：
+
+- `http://localhost:8081/`
+- `http://localhost:8081/chat.html`
+- `http://localhost:8081/knowledge.html`
+- `http://localhost:8081/memory.html`
+
+补充说明：
+
+- Docker 启动细节见 [docker-compose.README.md](docker-compose.README.md)
+- 本地无 Docker 启动见 [local-dev.README.md](local-dev.README.md)
+
+## 常见工作流
+
+### 1. 启动整套服务
+
+用 `docker compose up --build -d` 启动 Java 主服务、docreader、Postgres、Redis 和 MinIO，然后通过内置页面或 API 做联调。
+
+### 2. 上传文档并完成解析
+
+先创建知识库，再上传文件进入异步解析链路；解析完成后查看文档、分块和图片结果。具体联调可结合 [docker-compose.README.md](docker-compose.README.md) 与 [docreader_service/README.md](docreader_service/README.md)。
+
+### 3. 发起一次 Agent 问答 / 跑一次 benchmark
+
+服务启动后可以直接做流式问答联调；需要评测时，可用 `agentic_rag_benchmark` 构建或导入标准 package，再跑真实链路 benchmark 并输出报告。详见 [agentic_rag_benchmark/README.md](agentic_rag_benchmark/README.md)。
+
+## 文档导航
+
+### 架构与存储检索
+
+- [存储与检索整体架构](docs/storage-retrieval-architecture.md)
+
+### 上下文与会话机制
+
+- [聊天会话回放方案](docs/chat-session-replay.md)
+- [分层上下文压缩机制](docs/context-management-layered-compression-sop.md)
+- [Agent 分步思考方案](docs/agent-stepwise-thinking-sop.md)
+
+### Memory
+
+- [Memory Fact 操作校验](docs/memory-fact-operation-verification.md)
+- [Memory Fact 操作可视化](docs/memory-fact-operation-visualization.md)
+
+### 检索策略与 SOP
+
+- [混合检索、Rerank 与 MMR](docs/hybrid-retrieval-rerank-mmr-sop.md)
+- [DocReader 元素顺序规范](docs/docreader-element-order-sop.md)
+
+### Benchmark
+
+- [Benchmark 流水线说明](docs/benchmark-pipeline.md)
+- [Benchmark 工具链 README](agentic_rag_benchmark/README.md)
+
+### 本地开发与 Docker
+
+- [Docker Compose 快速说明](docker-compose.README.md)
+- [本地无 Docker 运行说明](local-dev.README.md)
+- [文档目录索引](docs/README.md)
+- [DocReader 服务说明](docreader_service/README.md)
+
+## 当前状态与边界
+
+- 这是一个偏内部协作和联调的工程仓库，首页重点是帮助团队成员快速建立全局认知，而不是替代专项设计文档。
+- 当前主链路已经覆盖知识库管理、文档导入解析、检索问答、会话回放、Memory 浏览和 Benchmark 评测。
+- 详细接口契约、上下文机制、检索策略和 benchmark 规范仍以 `docs/` 与子模块 README 为准。
+- 根目录 README 保持“项目首页”定位，不承载完整环境变量手册、接口手册或所有实现细节。
