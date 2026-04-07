@@ -558,7 +558,7 @@ def resolve_package_path(config: ConsoleConfig, package_path: str) -> Path:
 
 def list_package_records(config: ConsoleConfig) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
-    manifest_name = STANDARD_PACKAGE_FILES["suite_manifest"]
+    manifest_name = STANDARD_PACKAGE_FILES["gold_package_manifest"]
     for manifest_path in sorted(config.packages_dir.rglob(manifest_name)):
         package_dir = manifest_path.parent
         try:
@@ -572,7 +572,7 @@ def list_package_records(config: ConsoleConfig) -> List[Dict[str, Any]]:
                 "createdAt": loaded.manifest.created_at,
                 "generatorVersion": loaded.manifest.generator_version,
                 "sampleCount": len(loaded.benchmark_samples),
-                "evidenceCount": len(loaded.evidence_units),
+                "goldBlockCount": len(loaded.authoring_blocks),
                 "validationOk": validation.ok,
             }
         except Exception as exc:
@@ -584,7 +584,7 @@ def list_package_records(config: ConsoleConfig) -> List[Dict[str, Any]]:
                 "createdAt": "",
                 "generatorVersion": "",
                 "sampleCount": 0,
-                "evidenceCount": 0,
+                "goldBlockCount": 0,
                 "validationOk": False,
                 "validationError": str(exc),
             }
@@ -607,7 +607,7 @@ def inspect_package_dir(package_dir: Path, preview_limit: int = DEFAULT_PACKAGE_
         }
     doc_counts = {}
     for sample in loaded.benchmark_samples:
-        for ref in sample.gold_evidence_refs:
+        for ref in sample.gold_block_refs:
             doc_counts[ref.doc_path] = doc_counts.get(ref.doc_path, 0) + 1
 
     return {
@@ -615,9 +615,9 @@ def inspect_package_dir(package_dir: Path, preview_limit: int = DEFAULT_PACKAGE_
         "manifest": loaded.manifest.to_dict(),
         "files": file_descriptors,
         "sampleCount": len(loaded.benchmark_samples),
-        "evidenceCount": len(loaded.evidence_units),
+        "goldBlockCount": len(loaded.authoring_blocks),
         "samplePreview": [sample.to_dict() for sample in loaded.benchmark_samples[:preview_limit]],
-        "evidencePreview": [unit.to_dict() for unit in loaded.evidence_units[:preview_limit]],
+        "authoringBlockPreview": [block.to_dict() for block in loaded.authoring_blocks[:preview_limit]],
         "docSampleCounts": doc_counts,
         "reviewMarkdownPreview": review_path.read_text(encoding="utf-8")[:8000],
         "validation": validation_to_dict(validation),
@@ -753,7 +753,7 @@ def run_build_package_job(
                 "suiteVersion": suite_version,
                 "sourceFileCount": len(report.source_files),
                 "normalizedDocumentCount": report.normalized_document_count,
-                "evidenceCount": report.evidence_count,
+                "goldBlockCount": report.authoring_block_count,
                 "sampleCount": report.sample_count,
                 "validation": validation_to_dict(validation),
             },
@@ -892,6 +892,7 @@ def run_benchmark_job(
                 "projectKey": report.project_key,
                 "suiteVersion": report.suite_version,
                 "sampleCount": report.sample_count,
+                "goldBlockCount": report.gold_block_count,
                 "selectedPackagePath": str(selected_package_dir),
                 "buildId": build_id,
                 "provider": provider,
@@ -1021,7 +1022,7 @@ def load_run_report(output_dir: Path) -> Dict[str, Any]:
                 "error": sample.get("error"),
                 "contextOutputChunkCount": count_context_output_hits_from_payload(sample),
                 "groundTruthContexts": sample.get("ground_truth_contexts") or [],
-                "goldEvidenceRefs": sample.get("gold_evidence_refs") or [],
+                "goldBlockRefs": sample.get("gold_block_refs") or [],
                 "ragasScores": ragas_row.get("scores") or {},
                 "ragasRow": ragas_row.get("row") or {},
             }

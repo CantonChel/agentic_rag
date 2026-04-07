@@ -13,6 +13,7 @@ from agentic_rag_benchmark.ragas_runner import evaluate_ragas_for_report
 from agentic_rag_benchmark.report_writer import write_benchmark_outputs
 from agentic_rag_benchmark.runner import RunBenchmarkRequest
 from agentic_rag_benchmark.runner import run_benchmark
+from agentic_rag_benchmark.subset import create_random_subset_package
 from agentic_rag_benchmark.validator import describe_schema
 from agentic_rag_benchmark.validator import validate_legacy_dataset
 from agentic_rag_benchmark.validator import validate_package_dir
@@ -49,6 +50,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--source-root",
         default=None,
         help="Optional root path used to compute relative doc_path values",
+    )
+
+    create_subset = subparsers.add_parser("create-subset", help="Create a random subset from one Gold package")
+    create_subset.add_argument("--package-dir", required=True, help="Path to packages/<project_key>/<suite_version>")
+    create_subset.add_argument("--sample-count", required=True, type=int, help="Random sample count")
+    create_subset.add_argument("--seed", required=True, type=int, help="Random seed")
+    create_subset.add_argument(
+        "--output-root",
+        default=str(Path(__file__).resolve().parents[1]),
+        help="Root directory containing the packages/ folder for subset output",
+    )
+    create_subset.add_argument(
+        "--suite-version-suffix",
+        required=True,
+        help="Suffix appended to the source suite version for subset output",
     )
 
     run_benchmark_parser = subparsers.add_parser("run-benchmark", help="Run benchmark against one imported build")
@@ -108,6 +124,24 @@ def main(argv: list[str] | None = None) -> int:
         ):
             print(line)
         return 0
+    elif args.command == "create-subset":
+        result = create_random_subset_package(
+            package_dir=Path(args.package_dir),
+            sample_count=args.sample_count,
+            seed=args.seed,
+            output_root=Path(args.output_root),
+            suite_version_suffix=args.suite_version_suffix,
+        )
+        for line in (
+            f"[info] Subset package written to: {result.package_dir}",
+            f"[info] Project key: {result.project_key}",
+            f"[info] Suite version: {result.suite_version}",
+            f"[info] Seed: {result.seed}",
+            f"[info] Selected sample count: {result.selected_sample_count}",
+            f"[info] Selected gold block count: {result.selected_gold_block_count}",
+        ):
+            print(line)
+        return 0
     elif args.command == "run-benchmark":
         request = RunBenchmarkRequest(
             package_dir=Path(args.package_dir) if args.package_dir else None,
@@ -129,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
             f"[info] Benchmark input legacy dataset: {request.legacy_dataset or 'n/a'}",
             f"[info] Project key: {report.project_key}",
             f"[info] Suite version: {report.suite_version}",
-            f"[info] Evidence count: {report.evidence_count}",
+            f"[info] Gold block count: {report.gold_block_count}",
             f"[info] Sample count: {report.sample_count}",
             f"[info] Output directory: {artifacts.output_dir}",
             f"[info] RAGAS summary: {ragas_artifacts.summary_path or 'not generated'}",

@@ -51,6 +51,29 @@ class RunnerCliTest(unittest.TestCase):
         self.assertIsNone(args.package_dir)
         self.assertEqual(args.legacy_dataset, "/tmp/legacy/questions.jsonl")
 
+    def test_create_subset_parser_supports_required_arguments(self) -> None:
+        parser = build_parser()
+
+        args = parser.parse_args(
+            [
+                "create-subset",
+                "--package-dir",
+                "/tmp/packages/api_docs/base_v1",
+                "--sample-count",
+                "10",
+                "--seed",
+                "42",
+                "--suite-version-suffix",
+                "smoke_10",
+            ]
+        )
+
+        self.assertEqual(args.command, "create-subset")
+        self.assertEqual(args.package_dir, "/tmp/packages/api_docs/base_v1")
+        self.assertEqual(args.sample_count, 10)
+        self.assertEqual(args.seed, 42)
+        self.assertEqual(args.suite_version_suffix, "smoke_10")
+
 
 if __name__ == "__main__":
     unittest.main()

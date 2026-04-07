@@ -18,13 +18,10 @@ from agentic_rag_benchmark.console_server import inspect_package_dir
 from agentic_rag_benchmark.console_server import list_package_records
 from agentic_rag_benchmark.console_server import load_run_report
 from agentic_rag_benchmark.console_server import normalize_upload_relative_path
-from agentic_rag_benchmark.contracts import BenchmarkSample
-from agentic_rag_benchmark.contracts import EvidenceReference
-from agentic_rag_benchmark.contracts import EvidenceUnit
-from agentic_rag_benchmark.package_spec import build_package_dir
-from agentic_rag_benchmark.package_writer import PackageWriter
 from agentic_rag_benchmark.runner_io import load_benchmark_package
 from agentic_rag_benchmark.subset import create_random_subset_package
+from agentic_rag_benchmark.tests.gold_package_test_utils import GoldPackageSpec
+from agentic_rag_benchmark.tests.gold_package_test_utils import write_gold_package
 
 
 class ConsoleServerTest(unittest.TestCase):
@@ -187,9 +184,11 @@ class ConsoleServerTest(unittest.TestCase):
             self.assertEqual(packages[0]["projectKey"], "api_docs")
             self.assertEqual(packages[0]["suiteVersion"], "base_v1")
             self.assertEqual(packages[0]["sampleCount"], 3)
+            self.assertEqual(packages[0]["goldBlockCount"], 3)
             self.assertEqual(inspection["sampleCount"], 3)
-            self.assertEqual(inspection["evidenceCount"], 3)
+            self.assertEqual(inspection["goldBlockCount"], 3)
             self.assertEqual(len(inspection["samplePreview"]), 1)
+            self.assertEqual(len(inspection["authoringBlockPreview"]), 1)
             self.assertTrue(inspection["validation"]["ok"])
 
     def test_random_subset_package_keeps_sample_evidence_closure(self) -> None:
@@ -206,16 +205,17 @@ class ConsoleServerTest(unittest.TestCase):
             )
 
             loaded_subset = load_benchmark_package(subset.package_dir)
-            selected_evidence_ids = {
-                ref.evidence_id
+            selected_block_ids = {
+                ref.block_id
                 for sample in loaded_subset.benchmark_samples
-                for ref in sample.gold_evidence_refs
+                for ref in sample.gold_block_refs
             }
-            subset_evidence_ids = {item.evidence_id for item in loaded_subset.evidence_units}
+            subset_block_ids = {item.block_id for item in loaded_subset.authoring_blocks}
 
             self.assertEqual(len(loaded_subset.benchmark_samples), 2)
             self.assertEqual(subset.selected_sample_count, 2)
-            self.assertEqual(selected_evidence_ids, subset_evidence_ids)
+            self.assertEqual(selected_block_ids, subset_block_ids)
+            self.assertEqual(subset.selected_gold_block_count, len(subset_block_ids))
 
     def test_load_run_report_merges_summary_and_ragas_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -396,83 +396,47 @@ class ConsoleServerTest(unittest.TestCase):
             self.assertIn("content", upload_path.read_text(encoding="utf-8"))
 
     def _write_package(self, benchmark_root: Path, project_key: str, suite_version: str) -> Path:
-        evidence_units = [
-            EvidenceUnit(
-                evidence_id="e1",
-                doc_path="docs/intro.md",
-                section_key="overview",
-                section_title="Overview",
-                canonical_text="sample context 1",
-                anchor="docs/intro.md#overview",
-                source_hash="hash-1",
-                extractor_version="test",
-            ),
-            EvidenceUnit(
-                evidence_id="e2",
-                doc_path="docs/auth.md",
-                section_key="headers",
-                section_title="Headers",
-                canonical_text="sample context 2",
-                anchor="docs/auth.md#headers",
-                source_hash="hash-2",
-                extractor_version="test",
-            ),
-            EvidenceUnit(
-                evidence_id="e3",
-                doc_path="docs/errors.md",
-                section_key="errors",
-                section_title="Errors",
-                canonical_text="sample context 3",
-                anchor="docs/errors.md#errors",
-                source_hash="hash-3",
-                extractor_version="test",
-            ),
-        ]
-        benchmark_samples = [
-            BenchmarkSample(
-                sample_id="sample_1",
-                question="What is sample context 1?",
-                ground_truth="sample answer 1",
-                ground_truth_contexts=["sample context 1"],
-                gold_evidence_refs=[
-                    EvidenceReference(evidence_id="e1", doc_path="docs/intro.md", section_key="overview")
-                ],
-                tags=["intro"],
-                difficulty="easy",
-                suite_version=suite_version,
-            ),
-            BenchmarkSample(
-                sample_id="sample_2",
-                question="What header is required?",
-                ground_truth="sample answer 2",
-                ground_truth_contexts=["sample context 2"],
-                gold_evidence_refs=[
-                    EvidenceReference(evidence_id="e2", doc_path="docs/auth.md", section_key="headers")
-                ],
-                tags=["auth"],
-                difficulty="medium",
-                suite_version=suite_version,
-            ),
-            BenchmarkSample(
-                sample_id="sample_3",
-                question="What does the error mean?",
-                ground_truth="sample answer 3",
-                ground_truth_contexts=["sample context 3"],
-                gold_evidence_refs=[
-                    EvidenceReference(evidence_id="e3", doc_path="docs/errors.md", section_key="errors")
-                ],
-                tags=["errors"],
-                difficulty="medium",
-                suite_version=suite_version,
-            ),
-        ]
-        package_dir = build_package_dir(benchmark_root, project_key, suite_version)
-        PackageWriter(generator_version="test_console").write_package(
+        package_dir = benchmark_root / "packages" / project_key / suite_version
+        write_gold_package(
             package_dir=package_dir,
             project_key=project_key,
             suite_version=suite_version,
-            evidence_units=evidence_units,
-            benchmark_samples=benchmark_samples,
+            generator_version="test_console",
+            specs=[
+                GoldPackageSpec(
+                    block_id="block-1",
+                    doc_path="docs/intro.md",
+                    section_key="overview",
+                    section_title="Overview",
+                    text="sample context 1",
+                    question="What is sample context 1?",
+                    ground_truth="sample answer 1",
+                    tags=["intro"],
+                    difficulty="easy",
+                ),
+                GoldPackageSpec(
+                    block_id="block-2",
+                    doc_path="docs/auth.md",
+                    section_key="headers",
+                    section_title="Headers",
+                    text="sample context 2",
+                    question="What header is required?",
+                    ground_truth="sample answer 2",
+                    tags=["auth"],
+                    difficulty="medium",
+                ),
+                GoldPackageSpec(
+                    block_id="block-3",
+                    doc_path="docs/errors.md",
+                    section_key="errors",
+                    section_title="Errors",
+                    text="sample context 3",
+                    question="What does the error mean?",
+                    ground_truth="sample answer 3",
+                    tags=["errors"],
+                    difficulty="medium",
+                ),
+            ],
         )
         return package_dir
 
@@ -537,7 +501,7 @@ class ConsoleServerTest(unittest.TestCase):
                             "final_answer": "predicted answer",
                             "finish_reason": "stop",
                             "latency_ms": 88,
-                            "gold_evidence_refs": [{"evidence_id": "e1"}],
+                            "gold_block_refs": [{"block_id": "block-1"}],
                             "ground_truth_contexts": ["sample context"],
                             "retrieval_trace_records": [
                                 {"stage": "context_output", "recordType": "chunk", "chunkText": "sample context"}

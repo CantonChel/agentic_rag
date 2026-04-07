@@ -13,13 +13,14 @@ from typing import Dict
 from typing import List
 from uuid import uuid4
 
-from .progress import ProgressCallback
-from .progress import emit_progress
 from .contracts import BenchmarkSample
 from .contracts import EvidenceReference
+from .contracts import GoldBlockReference
+from .progress import ProgressCallback
+from .progress import emit_progress
+from .runner_client import BenchmarkAppClient
 from .runner_io import LoadedBenchmarkPackage
 from .runner_io import load_benchmark_input
-from .runner_client import BenchmarkAppClient
 
 
 def utcnow_iso() -> str:
@@ -63,7 +64,7 @@ class RunBenchmarkSampleResult:
     question: str
     ground_truth: str
     ground_truth_contexts: List[str]
-    gold_evidence_refs: List[EvidenceReference]
+    gold_block_refs: List[GoldBlockReference]
     provider: str
     build_id: str
     session_id: str
@@ -79,9 +80,20 @@ class RunBenchmarkSampleResult:
     retrieval_trace_records: List[Dict[str, Any]] = field(default_factory=list)
     error: str | None = None
 
+    @property
+    def gold_evidence_refs(self) -> List[EvidenceReference]:
+        return [
+            EvidenceReference(
+                evidence_id=ref.block_id,
+                doc_path=ref.doc_path,
+                section_key=ref.section_key,
+            )
+            for ref in self.gold_block_refs
+        ]
+
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
-        payload["gold_evidence_refs"] = [ref.to_dict() for ref in self.gold_evidence_refs]
+        payload["gold_block_refs"] = [ref.to_dict() for ref in self.gold_block_refs]
         return payload
 
 
@@ -93,10 +105,14 @@ class RunBenchmarkReport:
     project_key: str
     suite_version: str
     sample_count: int
-    evidence_count: int
+    gold_block_count: int
     started_at: str
     completed_at: str
     sample_results: List[RunBenchmarkSampleResult]
+
+    @property
+    def evidence_count(self) -> int:
+        return self.gold_block_count
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -104,7 +120,7 @@ class RunBenchmarkReport:
             "project_key": self.project_key,
             "suite_version": self.suite_version,
             "sample_count": self.sample_count,
-            "evidence_count": self.evidence_count,
+            "gold_block_count": self.gold_block_count,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "sample_results": [sample.to_dict() for sample in self.sample_results],
@@ -225,7 +241,7 @@ def execute_sample(
         question=sample.question,
         ground_truth=sample.ground_truth,
         ground_truth_contexts=list(sample.ground_truth_contexts),
-        gold_evidence_refs=list(sample.gold_evidence_refs),
+        gold_block_refs=list(sample.gold_block_refs),
         provider=request.provider,
         build_id=request.build_id,
         session_id=session_id,
@@ -258,7 +274,7 @@ def build_error_sample_result(
         question=sample.question,
         ground_truth=sample.ground_truth,
         ground_truth_contexts=list(sample.ground_truth_contexts),
-        gold_evidence_refs=list(sample.gold_evidence_refs),
+        gold_block_refs=list(sample.gold_block_refs),
         provider=request.provider,
         build_id=request.build_id,
         session_id=session_id,
@@ -337,7 +353,7 @@ def build_pending_sample_result(
         question=sample.question,
         ground_truth=sample.ground_truth,
         ground_truth_contexts=list(sample.ground_truth_contexts),
-        gold_evidence_refs=list(sample.gold_evidence_refs),
+        gold_block_refs=list(sample.gold_block_refs),
         provider=request.provider,
         build_id=request.build_id,
         session_id=session_id,
@@ -356,7 +372,7 @@ def build_report(
         project_key=loaded.manifest.project_key,
         suite_version=loaded.manifest.suite_version,
         sample_count=len(loaded.benchmark_samples),
-        evidence_count=len(loaded.evidence_units),
+        gold_block_count=len(loaded.authoring_blocks),
         started_at=started_at,
         completed_at=completed_at,
         sample_results=sample_results,

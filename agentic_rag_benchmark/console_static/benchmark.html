@@ -527,7 +527,7 @@
               <div class="preview-tabs">
                 <button id="packagePreviewManifestBtn" class="secondary active" type="button">Manifest</button>
                 <button id="packagePreviewSamplesBtn" class="secondary" type="button">Samples</button>
-                <button id="packagePreviewEvidenceBtn" class="secondary" type="button">Evidence</button>
+                <button id="packagePreviewEvidenceBtn" class="secondary" type="button">Gold Blocks</button>
                 <button id="packagePreviewValidationBtn" class="secondary" type="button">Validation</button>
               </div>
               <div id="packagePreview" class="empty">等待加载...</div>
@@ -714,7 +714,7 @@
         $("packageSummary").innerHTML = `
           <div class="stats">
             <div class="stat"><div class="label">Samples</div><div class="value">${escapeHtml(payload.sampleCount)}</div></div>
-            <div class="stat"><div class="label">Evidence</div><div class="value">${escapeHtml(payload.evidenceCount)}</div></div>
+            <div class="stat"><div class="label">Gold Blocks</div><div class="value">${escapeHtml(payload.goldBlockCount)}</div></div>
             <div class="stat"><div class="label">Project</div><div class="value">${escapeHtml(payload.manifest.project_key)}</div></div>
             <div class="stat"><div class="label">Suite</div><div class="value">${escapeHtml(payload.manifest.suite_version)}</div></div>
           </div>
@@ -730,7 +730,7 @@
             manifest: payload.manifest,
             files: payload.files,
             samplePreview: payload.samplePreview,
-            evidencePreview: payload.evidencePreview,
+            authoringBlockPreview: payload.authoringBlockPreview,
             validation: payload.validation,
           },
           null,
@@ -798,7 +798,7 @@
               (sample) => `
                 <div class="stack-item">
                   <h4>${escapeHtml(sample.sample_id)} · ${escapeHtml(sample.question)}</h4>
-                  <p>Difficulty: ${escapeHtml(sample.difficulty)} · Evidence refs: ${escapeHtml((sample.gold_evidence_refs || []).length)}</p>
+                  <p>Difficulty: ${escapeHtml(sample.difficulty)} · Gold refs: ${escapeHtml((sample.gold_block_refs || []).length)}</p>
                   <span class="snippet">${escapeHtml(truncateText(sample.ground_truth, 180))}</span>
                 </div>
               `
@@ -811,20 +811,20 @@
         }
 
         if (mode === "evidence") {
-          const items = (payload.evidencePreview || [])
+          const items = (payload.authoringBlockPreview || [])
             .map(
               (item) => `
                 <div class="stack-item">
                   <h4>${escapeHtml(item.doc_path)} · ${escapeHtml(item.section_title || item.section_key)}</h4>
-                  <p>Evidence ID: ${escapeHtml(item.evidence_id)}</p>
-                  <span class="snippet">${escapeHtml(truncateText(item.canonical_text, 220))}</span>
+                  <p>Block ID: ${escapeHtml(item.block_id)}</p>
+                  <span class="snippet">${escapeHtml(truncateText(item.text, 220))}</span>
                 </div>
               `
             )
             .join("");
           $("packagePreview").innerHTML = items
-            ? `<div class="stack-list">${items}</div><div class="subtle">只显示前 ${escapeHtml((payload.evidencePreview || []).length)} 条证据预览。</div>`
-            : `<div class="empty">没有证据预览。</div>`;
+            ? `<div class="stack-list">${items}</div><div class="subtle">只显示前 ${escapeHtml((payload.authoringBlockPreview || []).length)} 条 Gold block 预览。</div>`
+            : `<div class="empty">没有 Gold block 预览。</div>`;
           return;
         }
 

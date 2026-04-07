@@ -5,11 +5,12 @@ from pathlib import Path
 from typing import Any
 from typing import Optional
 
-from agentic_rag_benchmark.package_spec import STANDARD_PACKAGE_FILES
 from agentic_rag_benchmark.report_writer import write_benchmark_outputs
 from agentic_rag_benchmark.runner import RunBenchmarkRequest
 from agentic_rag_benchmark.runner import run_benchmark
 from agentic_rag_benchmark.runner_client import AgentStreamCapture
+from agentic_rag_benchmark.tests.gold_package_test_utils import GoldPackageSpec
+from agentic_rag_benchmark.tests.gold_package_test_utils import write_gold_package
 
 
 class FakeBenchmarkAppClient:
@@ -79,6 +80,7 @@ class ReportWriterTest(unittest.TestCase):
             run_meta = json.loads(artifacts.run_meta_path.read_text(encoding="utf-8"))
             self.assertEqual(run_meta["project_key"], "api_docs")
             self.assertEqual(run_meta["build_id"], "build_123")
+            self.assertEqual(run_meta["gold_block_count"], 1)
 
             report_json = json.loads(artifacts.benchmark_report_json_path.read_text(encoding="utf-8"))
             self.assertEqual(report_json["summary"]["success_count"], 1)
@@ -92,6 +94,7 @@ class ReportWriterTest(unittest.TestCase):
             self.assertEqual(report_json["summary"]["retrieval_hit_overview"]["samples_with_context_output"], 1)
             self.assertEqual(report_json["summary"]["retrieval_hit_overview"]["samples_without_context_output"], 0)
             self.assertEqual(len(report_json["samples"]), 1)
+            self.assertEqual(report_json["samples"][0]["gold_block_refs"][0]["block_id"], "block-1")
 
             report_markdown = artifacts.benchmark_report_markdown_path.read_text(encoding="utf-8")
             self.assertIn("## 运行摘要", report_markdown)
@@ -101,6 +104,7 @@ class ReportWriterTest(unittest.TestCase):
             self.assertIn("## finish reason 分布", report_markdown)
             self.assertIn("## 失败样本列表", report_markdown)
             self.assertIn("## 检索命中概览", report_markdown)
+            self.assertIn("gold_block_count: `1`", report_markdown)
 
     def test_write_benchmark_outputs_tracks_samples_without_context_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -129,55 +133,23 @@ class ReportWriterTest(unittest.TestCase):
             self.assertIn("samples_without_context_output: `1` / `1`", report_markdown)
 
     def _write_package(self, package_dir: Path) -> None:
-        manifest = {
-            "package_version": "v1",
-            "project_key": "api_docs",
-            "suite_version": "base_v1",
-            "created_at": "2026-03-28T00:00:00Z",
-            "generator_version": "stage2",
-            "files": dict(STANDARD_PACKAGE_FILES),
-        }
-        evidence = {
-            "evidence_id": "e1",
-            "doc_path": "docs/sample.md",
-            "section_key": "overview",
-            "section_title": "Overview",
-            "canonical_text": "sample context",
-            "anchor": "docs/sample.md#overview",
-            "source_hash": "hash1",
-            "extractor_version": "stage2_v1",
-        }
-        sample = {
-            "sample_id": "sample_1",
-            "question": "What is sample context?",
-            "ground_truth": "sample answer",
-            "ground_truth_contexts": ["sample context"],
-            "gold_evidence_refs": [
-                {
-                    "evidence_id": "e1",
-                    "doc_path": "docs/sample.md",
-                    "section_key": "overview",
-                }
+        write_gold_package(
+            package_dir=package_dir,
+            project_key="api_docs",
+            suite_version="base_v1",
+            specs=[
+                GoldPackageSpec(
+                    block_id="block-1",
+                    doc_path="docs/sample.md",
+                    section_key="overview",
+                    section_title="Overview",
+                    text="sample context",
+                    question="What is sample context?",
+                    ground_truth="sample answer",
+                    tags=["api"],
+                    difficulty="easy",
+                )
             ],
-            "tags": ["api"],
-            "difficulty": "easy",
-            "suite_version": "base_v1",
-        }
-        (package_dir / STANDARD_PACKAGE_FILES["suite_manifest"]).write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        (package_dir / STANDARD_PACKAGE_FILES["evidence_units"]).write_text(
-            json.dumps(evidence, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-        (package_dir / STANDARD_PACKAGE_FILES["benchmark_suite"]).write_text(
-            json.dumps(sample, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-        (package_dir / STANDARD_PACKAGE_FILES["review_markdown"]).write_text(
-            "# Benchmark Review\n",
-            encoding="utf-8",
         )
 
 
