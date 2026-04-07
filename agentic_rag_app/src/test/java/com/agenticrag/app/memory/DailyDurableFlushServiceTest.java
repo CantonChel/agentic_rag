@@ -310,6 +310,137 @@ class DailyDurableFlushServiceTest {
 		Assertions.assertEquals(1, flushIds.size());
 	}
 
+	@Test
+	void flushTreatsIdenticalExactFactAsNoneWhenCompareReturnsAdd() throws Exception {
+		MemoryProperties props = props(tempDir);
+		MemoryFileService fileService = new MemoryFileService(props);
+		MemoryBlockParser blockParser = new MemoryBlockParser(fileService, new ObjectMapper());
+		MemoryFactMarkdownCodec factCodec = new MemoryFactMarkdownCodec();
+		MemoryLlmExtractor extractor = Mockito.mock(MemoryLlmExtractor.class);
+		MemoryFactOperationLogRepository logRepository = auditRepository();
+		MemoryFactOperationLogService logService = auditService(logRepository);
+		MemoryFactKeyFactory keyFactory = new MemoryFactKeyFactory();
+		String factKey = keyFactory.build(MemoryFactBucket.PROJECT_DECISION, "发布计划", "截止日期");
+		Path bucketFile = tempDir.resolve("memory/users/u1/facts/project.decision.md");
+		Files.createDirectories(bucketFile.getParent());
+		String existingContent =
+			"<!-- MEMORY_BLOCK {\"schema\":\"memory.v2\",\"kind\":\"fact\",\"block_id\":\"b1\",\"user_id\":\"u1\",\"session_id\":\"s0\",\"created_at\":\"2026-04-06T00:00:00Z\",\"updated_at\":\"2026-04-06T00:00:00Z\",\"trigger\":\"preflight_compact\",\"bucket\":\"project.decision\",\"fact_key\":\""
+				+ factKey
+				+ "\"} -->\n"
+				+ "- statement: 发布计划的截止日期是本周五\n"
+				+ "- subject: 发布计划\n"
+				+ "- attribute: 截止日期\n"
+				+ "- value: 本周五\n"
+				+ "<!-- /MEMORY_BLOCK -->\n\n";
+		Files.writeString(bucketFile, existingContent, StandardCharsets.UTF_8);
+
+		MemoryFactRecord sameFact = new MemoryFactRecord(
+			MemoryFactBucket.PROJECT_DECISION,
+			"发布计划",
+			"截止日期",
+			"本周五",
+			"发布计划的截止日期是本周五",
+			factKey
+		);
+		Mockito.when(extractor.extractDurableFacts(
+			Mockito.eq("u1"),
+			Mockito.eq("s1"),
+			Mockito.eq("preflight-compact"),
+			Mockito.anyList()
+		)).thenReturn(List.of(sameFact));
+		Mockito.when(extractor.compareFact(Mockito.eq("u1"), Mockito.eq("s1"), Mockito.eq(sameFact), Mockito.anyList()))
+			.thenReturn(new MemoryFactCompareResult(MemoryFactCompareResult.Decision.ADD, -1));
+
+		DailyDurableFlushService service = new DailyDurableFlushService(
+			props,
+			extractor,
+			fileService,
+			blockParser,
+			factCodec,
+			logService
+		);
+		service.flush("u1::s1", sampleMessages());
+
+		Assertions.assertEquals(existingContent, Files.readString(bucketFile, StandardCharsets.UTF_8));
+		MemoryFactOperationLogEntity entity = captureSingleAudit(logRepository);
+		Assertions.assertEquals(MemoryFactCompareResult.Decision.NONE, entity.getDecision());
+		Assertions.assertEquals(MemoryFactOperationWriteOutcome.SKIPPED_NONE, entity.getWriteOutcome());
+		Assertions.assertEquals("b1", entity.getMatchedBlockId());
+		Assertions.assertNull(entity.getTargetBlockId());
+	}
+
+	@Test
+	void flushUpdateRemovesDuplicateExactFactBlocks() throws Exception {
+		MemoryProperties props = props(tempDir);
+		MemoryFileService fileService = new MemoryFileService(props);
+		MemoryBlockParser blockParser = new MemoryBlockParser(fileService, new ObjectMapper());
+		MemoryFactMarkdownCodec factCodec = new MemoryFactMarkdownCodec();
+		MemoryLlmExtractor extractor = Mockito.mock(MemoryLlmExtractor.class);
+		MemoryFactOperationLogRepository logRepository = auditRepository();
+		MemoryFactOperationLogService logService = auditService(logRepository);
+		MemoryFactKeyFactory keyFactory = new MemoryFactKeyFactory();
+		String factKey = keyFactory.build(MemoryFactBucket.PROJECT_DECISION, "发布计划", "截止日期");
+		Path bucketFile = tempDir.resolve("memory/users/u1/facts/project.decision.md");
+		Files.createDirectories(bucketFile.getParent());
+		Files.writeString(
+			bucketFile,
+			"<!-- MEMORY_BLOCK {\"schema\":\"memory.v2\",\"kind\":\"fact\",\"block_id\":\"b1\",\"user_id\":\"u1\",\"session_id\":\"s0\",\"created_at\":\"2026-04-06T00:00:00Z\",\"updated_at\":\"2026-04-06T00:00:00Z\",\"trigger\":\"preflight_compact\",\"bucket\":\"project.decision\",\"fact_key\":\""
+				+ factKey
+				+ "\"} -->\n"
+				+ "- statement: 发布计划的截止日期是本周五\n"
+				+ "- subject: 发布计划\n"
+				+ "- attribute: 截止日期\n"
+				+ "- value: 本周五\n"
+				+ "<!-- /MEMORY_BLOCK -->\n\n"
+				+ "<!-- MEMORY_BLOCK {\"schema\":\"memory.v2\",\"kind\":\"fact\",\"block_id\":\"b2\",\"user_id\":\"u1\",\"session_id\":\"s0\",\"created_at\":\"2026-04-06T00:01:00Z\",\"updated_at\":\"2026-04-06T00:01:00Z\",\"trigger\":\"preflight_compact\",\"bucket\":\"project.decision\",\"fact_key\":\""
+				+ factKey
+				+ "\"} -->\n"
+				+ "- statement: 发布计划的截止日期是本周五\n"
+				+ "- subject: 发布计划\n"
+				+ "- attribute: 截止日期\n"
+				+ "- value: 本周五\n"
+				+ "<!-- /MEMORY_BLOCK -->\n\n",
+			StandardCharsets.UTF_8
+		);
+
+		MemoryFactRecord updatedFact = new MemoryFactRecord(
+			MemoryFactBucket.PROJECT_DECISION,
+			"发布计划",
+			"截止日期",
+			"下周一",
+			"发布计划的截止日期改为下周一",
+			factKey
+		);
+		Mockito.when(extractor.extractDurableFacts(
+			Mockito.eq("u1"),
+			Mockito.eq("s1"),
+			Mockito.eq("preflight-compact"),
+			Mockito.anyList()
+		)).thenReturn(List.of(updatedFact));
+		Mockito.when(extractor.compareFact(Mockito.eq("u1"), Mockito.eq("s1"), Mockito.eq(updatedFact), Mockito.anyList()))
+			.thenReturn(new MemoryFactCompareResult(MemoryFactCompareResult.Decision.UPDATE, 0));
+
+		DailyDurableFlushService service = new DailyDurableFlushService(
+			props,
+			extractor,
+			fileService,
+			blockParser,
+			factCodec,
+			logService
+		);
+		service.flush("u1::s1", sampleMessages());
+
+		String content = Files.readString(bucketFile, StandardCharsets.UTF_8);
+		Assertions.assertEquals(1, countOccurrences(content, "<!-- MEMORY_BLOCK "));
+		Assertions.assertTrue(content.contains("\"block_id\":\"b1\""));
+		Assertions.assertFalse(content.contains("\"block_id\":\"b2\""));
+		Assertions.assertTrue(content.contains("- value: 下周一"));
+		MemoryFactOperationLogEntity entity = captureSingleAudit(logRepository);
+		Assertions.assertEquals(MemoryFactCompareResult.Decision.UPDATE, entity.getDecision());
+		Assertions.assertEquals("b1", entity.getMatchedBlockId());
+		Assertions.assertEquals("b1", entity.getTargetBlockId());
+	}
+
 	private List<ChatMessage> sampleMessages() {
 		return Arrays.asList(
 			new SystemMessage("system"),

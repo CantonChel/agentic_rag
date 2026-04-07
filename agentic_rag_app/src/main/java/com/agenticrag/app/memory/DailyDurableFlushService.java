@@ -119,6 +119,7 @@ public class DailyDurableFlushService {
 			if (compareResult == null) {
 				compareResult = new MemoryFactCompareResult(MemoryFactCompareResult.Decision.NONE, -1);
 			}
+			compareResult = reconcileCompareResult(fact, candidateIndexes, blocks, compareResult);
 			MatchedCandidate matchedCandidate = resolveMatchedCandidate(compareResult, candidateIndexes, blocks);
 			Instant createdAt = Instant.now();
 			if (compareResult.getDecision() == MemoryFactCompareResult.Decision.NONE) {
@@ -148,6 +149,7 @@ public class DailyDurableFlushService {
 					StoredFactBlock existing = blocks.get(targetIndex);
 					StoredFactBlock updated = buildStoredBlock(userId, sessionId, fact, now, existing.metadata);
 					blocks.set(targetIndex, updated);
+					removeDuplicateExactBlocks(fact, candidateIndexes, blocks, targetIndex);
 					dirty = true;
 					pendingAuditRecords.add(new PendingAuditRecord(
 						createdAt,
@@ -211,8 +213,10 @@ public class DailyDurableFlushService {
 			}
 			if (fact.getFactKey().equals(block.metadata.getFactKey())) {
 				exact.add(i);
-				return exact;
 			}
+		}
+		if (!exact.isEmpty()) {
+			return exact;
 		}
 
 		int limit = properties.getMaxFactCandidates() > 0 ? properties.getMaxFactCandidates() : 2;
@@ -401,6 +405,127 @@ public class DailyDurableFlushService {
 		return value == null ? "" : value.trim();
 	}
 
+	private MemoryFactCompareResult reconcileCompareResult(
+		MemoryFactRecord incoming,
+		List<Integer> candidateIndexes,
+		List<StoredFactBlock> blocks,
+		MemoryFactCompareResult compareResult
+	) {
+		if (incoming == null || candidateIndexes == null || candidateIndexes.isEmpty() || blocks == null || blocks.isEmpty()) {
+			return compareResult;
+		}
+		List<Integer> exactIndexes = resolveExactFactKeyIndexes(incoming, candidateIndexes, blocks);
+		if (exactIndexes.isEmpty()) {
+			return compareResult;
+		}
+		int identicalIndex = findIdenticalExactCandidateIndex(incoming, exactIndexes, blocks);
+		if (identicalIndex >= 0) {
+			return new MemoryFactCompareResult(MemoryFactCompareResult.Decision.NONE, identicalIndex);
+		}
+		if (compareResult == null) {
+			return new MemoryFactCompareResult(MemoryFactCompareResult.Decision.UPDATE, 0);
+		}
+		if (compareResult.getDecision() == MemoryFactCompareResult.Decision.ADD) {
+			return new MemoryFactCompareResult(MemoryFactCompareResult.Decision.UPDATE, 0);
+		}
+		if (compareResult.getDecision() == MemoryFactCompareResult.Decision.UPDATE
+			&& compareResult.getMatchIndex() >= 0
+			&& compareResult.getMatchIndex() < candidateIndexes.size()) {
+			return compareResult;
+		}
+		return new MemoryFactCompareResult(MemoryFactCompareResult.Decision.UPDATE, 0);
+	}
+
+	private List<Integer> resolveExactFactKeyIndexes(
+		MemoryFactRecord incoming,
+		List<Integer> candidateIndexes,
+		List<StoredFactBlock> blocks
+	) {
+		List<Integer> exactIndexes = new ArrayList<>();
+		if (incoming == null || candidateIndexes == null || blocks == null) {
+			return exactIndexes;
+		}
+		for (Integer candidateIndex : candidateIndexes) {
+			if (candidateIndex == null || candidateIndex.intValue() < 0 || candidateIndex.intValue() >= blocks.size()) {
+				continue;
+			}
+			StoredFactBlock block = blocks.get(candidateIndex.intValue());
+			if (block == null || block.metadata == null) {
+				continue;
+			}
+			if (safe(incoming.getFactKey()).equals(safe(block.metadata.getFactKey()))) {
+				exactIndexes.add(candidateIndex.intValue());
+			}
+		}
+		return exactIndexes;
+	}
+
+	private int findIdenticalExactCandidateIndex(
+		MemoryFactRecord incoming,
+		List<Integer> exactIndexes,
+		List<StoredFactBlock> blocks
+	) {
+		if (incoming == null || exactIndexes == null || blocks == null) {
+			return -1;
+		}
+		for (int i = 0; i < exactIndexes.size(); i++) {
+			int blockIndex = exactIndexes.get(i).intValue();
+			if (blockIndex < 0 || blockIndex >= blocks.size()) {
+				continue;
+			}
+			StoredFactBlock block = blocks.get(blockIndex);
+			if (block == null || block.fact == null) {
+				continue;
+			}
+			if (isSameExactFact(incoming, block.fact)) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	private boolean isSameExactFact(MemoryFactRecord incoming, MemoryFactRecord stored) {
+		if (incoming == null || stored == null) {
+			return false;
+		}
+		if (incoming.getBucket() != stored.getBucket()) {
+			return false;
+		}
+		return normalizedEquals(incoming.getSubject(), stored.getSubject())
+			&& normalizedEquals(incoming.getAttribute(), stored.getAttribute())
+			&& normalizedEquals(incoming.getValue(), stored.getValue());
+	}
+
+	private void removeDuplicateExactBlocks(
+		MemoryFactRecord incoming,
+		List<Integer> candidateIndexes,
+		List<StoredFactBlock> blocks,
+		int keepIndex
+	) {
+		List<Integer> exactIndexes = resolveExactFactKeyIndexes(incoming, candidateIndexes, blocks);
+		if (exactIndexes.size() <= 1) {
+			return;
+		}
+		List<Integer> indexesToRemove = new ArrayList<>();
+		for (Integer exactIndex : exactIndexes) {
+			if (exactIndex == null) {
+				continue;
+			}
+			int index = exactIndex.intValue();
+			if (index == keepIndex) {
+				continue;
+			}
+			indexesToRemove.add(index);
+		}
+		indexesToRemove.sort(Comparator.reverseOrder());
+		for (Integer index : indexesToRemove) {
+			if (index == null || index.intValue() < 0 || index.intValue() >= blocks.size()) {
+				continue;
+			}
+			blocks.remove(index.intValue());
+		}
+	}
+
 	private MatchedCandidate resolveMatchedCandidate(
 		MemoryFactCompareResult compareResult,
 		List<Integer> candidateIndexes,
@@ -411,7 +536,6 @@ public class DailyDurableFlushService {
 		}
 		int matchedCandidateIndex = -1;
 		if (compareResult != null
-			&& compareResult.getDecision() == MemoryFactCompareResult.Decision.UPDATE
 			&& compareResult.getMatchIndex() >= 0
 			&& compareResult.getMatchIndex() < candidateIndexes.size()) {
 			matchedCandidateIndex = compareResult.getMatchIndex();
