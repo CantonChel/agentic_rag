@@ -2,6 +2,9 @@ package com.agenticrag.app.memory;
 
 import com.agenticrag.app.chat.message.ChatMessage;
 import com.agenticrag.app.chat.message.ChatMessageType;
+import com.agenticrag.app.memory.audit.MemoryFactOperationDecisionSource;
+import com.agenticrag.app.memory.audit.MemoryFactOperationLogService;
+import com.agenticrag.app.memory.audit.MemoryFactOperationWriteOutcome;
 import com.agenticrag.app.session.SessionScope;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -10,7 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.time.OffsetDateTime;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -24,25 +27,30 @@ import org.springframework.stereotype.Service;
 @Service
 public class DailyDurableFlushService {
 	private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+	private static final String FLUSH_REASON = "preflight-compact";
+	private static final String FACT_TRIGGER = "preflight_compact";
 
 	private final MemoryProperties properties;
 	private final MemoryLlmExtractor memoryLlmExtractor;
 	private final MemoryFileService memoryFileService;
 	private final MemoryBlockParser memoryBlockParser;
 	private final MemoryFactMarkdownCodec factMarkdownCodec;
+	private final MemoryFactOperationLogService memoryFactOperationLogService;
 
 	public DailyDurableFlushService(
 		MemoryProperties properties,
 		MemoryLlmExtractor memoryLlmExtractor,
 		MemoryFileService memoryFileService,
 		MemoryBlockParser memoryBlockParser,
-		MemoryFactMarkdownCodec factMarkdownCodec
+		MemoryFactMarkdownCodec factMarkdownCodec,
+		MemoryFactOperationLogService memoryFactOperationLogService
 	) {
 		this.properties = properties;
 		this.memoryLlmExtractor = memoryLlmExtractor;
 		this.memoryFileService = memoryFileService;
 		this.memoryBlockParser = memoryBlockParser;
 		this.factMarkdownCodec = factMarkdownCodec;
+		this.memoryFactOperationLogService = memoryFactOperationLogService;
 	}
 
 	public void flush(String scopedSessionId, List<ChatMessage> messages) {
@@ -58,10 +66,11 @@ public class DailyDurableFlushService {
 		if (lines.isEmpty()) {
 			return;
 		}
-		List<MemoryFactRecord> facts = memoryLlmExtractor.extractDurableFacts(userId, sessionId, "preflight-compact", lines);
+		List<MemoryFactRecord> facts = memoryLlmExtractor.extractDurableFacts(userId, sessionId, FLUSH_REASON, lines);
 		if (facts == null || facts.isEmpty()) {
 			return;
 		}
+		String flushId = UUID.randomUUID().toString();
 		Map<MemoryFactBucket, List<MemoryFactRecord>> grouped = new LinkedHashMap<>();
 		for (MemoryFactRecord fact : facts) {
 			if (fact == null || fact.getBucket() == null || fact.getFactKey() == null || fact.getFactKey().trim().isEmpty()) {
@@ -70,17 +79,25 @@ public class DailyDurableFlushService {
 			grouped.computeIfAbsent(fact.getBucket(), ignored -> new ArrayList<>()).add(fact);
 		}
 		for (Map.Entry<MemoryFactBucket, List<MemoryFactRecord>> entry : grouped.entrySet()) {
-			upsertBucketFacts(userId, sessionId, entry.getKey(), entry.getValue());
+			upsertBucketFacts(flushId, userId, sessionId, entry.getKey(), entry.getValue());
 		}
 	}
 
-	private void upsertBucketFacts(String userId, String sessionId, MemoryFactBucket bucket, List<MemoryFactRecord> facts) {
+	private void upsertBucketFacts(
+		String flushId,
+		String userId,
+		String sessionId,
+		MemoryFactBucket bucket,
+		List<MemoryFactRecord> facts
+	) {
 		if (bucket == null || facts == null || facts.isEmpty()) {
 			return;
 		}
 		Path file = memoryFileService.factsDir(userId).resolve(bucket.fileName());
+		String filePath = memoryFileService.relPath(file);
 		List<StoredFactBlock> blocks = loadBlocks(userId, file);
 		boolean dirty = false;
+		List<PendingAuditRecord> pendingAuditRecords = new ArrayList<>();
 		for (MemoryFactRecord fact : facts) {
 			if (fact == null) {
 				continue;
@@ -93,32 +110,95 @@ public class DailyDurableFlushService {
 				}
 				candidateFacts.add(blocks.get(index.intValue()).fact);
 			}
+			MemoryFactOperationDecisionSource decisionSource = candidateFacts.isEmpty()
+				? MemoryFactOperationDecisionSource.DIRECT_ADD_NO_CANDIDATES
+				: MemoryFactOperationDecisionSource.LLM_COMPARE;
 			MemoryFactCompareResult compareResult = candidateFacts.isEmpty()
 				? new MemoryFactCompareResult(MemoryFactCompareResult.Decision.ADD, -1)
 				: memoryLlmExtractor.compareFact(userId, sessionId, fact, candidateFacts);
-			if (compareResult == null || compareResult.getDecision() == MemoryFactCompareResult.Decision.NONE) {
+			if (compareResult == null) {
+				compareResult = new MemoryFactCompareResult(MemoryFactCompareResult.Decision.NONE, -1);
+			}
+			MatchedCandidate matchedCandidate = resolveMatchedCandidate(compareResult, candidateIndexes, blocks);
+			Instant createdAt = Instant.now();
+			if (compareResult.getDecision() == MemoryFactCompareResult.Decision.NONE) {
+				appendAuditRecord(
+					flushId,
+					userId,
+					sessionId,
+					filePath,
+					bucket,
+					compareResult.getDecision(),
+					decisionSource,
+					MemoryFactOperationWriteOutcome.SKIPPED_NONE,
+					candidateFacts,
+					matchedCandidate,
+					null,
+					fact,
+					createdAt
+				);
 				continue;
 			}
-			String now = OffsetDateTime.now().toString();
+			String now = createdAt.toString();
 			if (compareResult.getDecision() == MemoryFactCompareResult.Decision.UPDATE
 				&& compareResult.getMatchIndex() >= 0
 				&& compareResult.getMatchIndex() < candidateIndexes.size()) {
 				int targetIndex = candidateIndexes.get(compareResult.getMatchIndex()).intValue();
 				if (targetIndex >= 0 && targetIndex < blocks.size()) {
 					StoredFactBlock existing = blocks.get(targetIndex);
-					blocks.set(targetIndex, buildStoredBlock(userId, sessionId, fact, now, existing.metadata));
+					StoredFactBlock updated = buildStoredBlock(userId, sessionId, fact, now, existing.metadata);
+					blocks.set(targetIndex, updated);
 					dirty = true;
+					pendingAuditRecords.add(new PendingAuditRecord(
+						createdAt,
+						compareResult.getDecision(),
+						decisionSource,
+						candidateFacts,
+						matchedCandidate != null ? matchedCandidate : new MatchedCandidate(targetIndex, existing),
+						updated.metadata != null ? updated.metadata.getBlockId() : null,
+						fact
+					));
 					continue;
 				}
 			}
 			if (compareResult.getDecision() == MemoryFactCompareResult.Decision.ADD
 				|| compareResult.getDecision() == MemoryFactCompareResult.Decision.UPDATE) {
-				blocks.add(buildStoredBlock(userId, sessionId, fact, now, null));
+				StoredFactBlock added = buildStoredBlock(userId, sessionId, fact, now, null);
+				blocks.add(added);
 				dirty = true;
+				pendingAuditRecords.add(new PendingAuditRecord(
+					createdAt,
+					compareResult.getDecision(),
+					decisionSource,
+					candidateFacts,
+					matchedCandidate,
+					added.metadata != null ? added.metadata.getBlockId() : null,
+					fact
+				));
 			}
 		}
-		if (dirty) {
-			rewriteFile(file, blocks);
+		if (!pendingAuditRecords.isEmpty()) {
+			boolean applied = dirty && rewriteFile(file, blocks);
+			MemoryFactOperationWriteOutcome writeOutcome = applied
+				? MemoryFactOperationWriteOutcome.APPLIED
+				: MemoryFactOperationWriteOutcome.WRITE_FAILED;
+			for (PendingAuditRecord pending : pendingAuditRecords) {
+				appendAuditRecord(
+					flushId,
+					userId,
+					sessionId,
+					filePath,
+					bucket,
+					pending.decision(),
+					pending.decisionSource(),
+					writeOutcome,
+					pending.candidateFacts(),
+					pending.matchedCandidate(),
+					pending.targetBlockId(),
+					pending.incomingFact(),
+					pending.createdAt()
+				);
+			}
 		}
 	}
 
@@ -215,7 +295,11 @@ public class DailyDurableFlushService {
 		return out;
 	}
 
-	private void rewriteFile(Path file, List<StoredFactBlock> blocks) {
+	protected boolean rewriteFile(Path file, List<StoredFactBlock> blocks) {
+		return writeMarkdown(file, renderMarkdown(blocks));
+	}
+
+	private String renderMarkdown(List<StoredFactBlock> blocks) {
 		StringBuilder markdown = new StringBuilder();
 		for (StoredFactBlock block : blocks) {
 			if (block == null || block.metadata == null) {
@@ -223,19 +307,25 @@ public class DailyDurableFlushService {
 			}
 			markdown.append(memoryBlockParser.renderBlock(block.metadata, block.body));
 		}
+		return markdown.toString();
+	}
+
+	protected boolean writeMarkdown(Path file, String markdown) {
 		try {
 			Files.createDirectories(file.getParent());
 			Path tempFile = Files.createTempFile(file.getParent(), file.getFileName().toString(), ".tmp");
 			Files.writeString(
 				tempFile,
-				markdown.toString(),
+				markdown == null ? "" : markdown,
 				StandardCharsets.UTF_8,
 				StandardOpenOption.WRITE,
 				StandardOpenOption.TRUNCATE_EXISTING
 			);
 			moveAtomically(tempFile, file);
+			return true;
 		} catch (IOException ignored) {
 			// avoid blocking chat flow on durable memory write failure
+			return false;
 		}
 	}
 
@@ -311,7 +401,83 @@ public class DailyDurableFlushService {
 		return value == null ? "" : value.trim();
 	}
 
+	private MatchedCandidate resolveMatchedCandidate(
+		MemoryFactCompareResult compareResult,
+		List<Integer> candidateIndexes,
+		List<StoredFactBlock> blocks
+	) {
+		if (candidateIndexes == null || candidateIndexes.isEmpty() || blocks == null || blocks.isEmpty()) {
+			return null;
+		}
+		int matchedCandidateIndex = -1;
+		if (compareResult != null
+			&& compareResult.getDecision() == MemoryFactCompareResult.Decision.UPDATE
+			&& compareResult.getMatchIndex() >= 0
+			&& compareResult.getMatchIndex() < candidateIndexes.size()) {
+			matchedCandidateIndex = compareResult.getMatchIndex();
+		} else if (candidateIndexes.size() == 1) {
+			matchedCandidateIndex = 0;
+		}
+		if (matchedCandidateIndex < 0) {
+			return null;
+		}
+		int blockIndex = candidateIndexes.get(matchedCandidateIndex).intValue();
+		if (blockIndex < 0 || blockIndex >= blocks.size()) {
+			return null;
+		}
+		return new MatchedCandidate(blockIndex, blocks.get(blockIndex));
+	}
+
+	private void appendAuditRecord(
+		String flushId,
+		String userId,
+		String sessionId,
+		String filePath,
+		MemoryFactBucket bucket,
+		MemoryFactCompareResult.Decision decision,
+		MemoryFactOperationDecisionSource decisionSource,
+		MemoryFactOperationWriteOutcome writeOutcome,
+		List<MemoryFactRecord> candidateFacts,
+		MatchedCandidate matchedCandidate,
+		String targetBlockId,
+		MemoryFactRecord incomingFact,
+		Instant createdAt
+	) {
+		memoryFactOperationLogService.append(new MemoryFactOperationLogService.AppendRequest(
+			flushId,
+			userId,
+			sessionId,
+			FACT_TRIGGER,
+			filePath,
+			bucket,
+			decision,
+			decisionSource,
+			writeOutcome,
+			candidateFacts != null ? candidateFacts.size() : 0,
+			matchedCandidate != null && matchedCandidate.block() != null && matchedCandidate.block().metadata != null
+				? matchedCandidate.block().metadata.getBlockId()
+				: null,
+			targetBlockId,
+			incomingFact,
+			matchedCandidate != null && matchedCandidate.block() != null ? matchedCandidate.block().fact : null,
+			candidateFacts,
+			createdAt
+		));
+	}
+
 	private record StoredFactBlock(MemoryBlockMetadata metadata, String body, MemoryFactRecord fact) {}
 
 	private record ScoredCandidate(int index, int score) {}
+
+	private record PendingAuditRecord(
+		Instant createdAt,
+		MemoryFactCompareResult.Decision decision,
+		MemoryFactOperationDecisionSource decisionSource,
+		List<MemoryFactRecord> candidateFacts,
+		MatchedCandidate matchedCandidate,
+		String targetBlockId,
+		MemoryFactRecord incomingFact
+	) {}
+
+	private record MatchedCandidate(int blockIndex, StoredFactBlock block) {}
 }
