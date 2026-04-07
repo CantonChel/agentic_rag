@@ -347,6 +347,242 @@
         padding: 20px;
       }
 
+      .detail-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .detail-section {
+        border: 1px solid rgba(111, 92, 72, 0.14);
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.78);
+        padding: 18px;
+      }
+
+      .detail-section-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 16px;
+        margin-bottom: 14px;
+      }
+
+      .detail-section-title {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 700;
+      }
+
+      .detail-section-subtitle {
+        margin: 6px 0 0;
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .section-empty {
+        border: 1px dashed rgba(111, 92, 72, 0.22);
+        border-radius: 18px;
+        padding: 18px;
+        color: var(--muted);
+        background: rgba(255, 252, 247, 0.82);
+        line-height: 1.7;
+      }
+
+      .timeline-list {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .timeline-group {
+        border: 1px solid rgba(111, 92, 72, 0.12);
+        border-radius: 20px;
+        background: rgba(247, 242, 233, 0.72);
+        padding: 16px;
+      }
+
+      .timeline-group-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: start;
+        margin-bottom: 14px;
+      }
+
+      .timeline-group-title {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .timeline-group-meta {
+        margin: 6px 0 0;
+        font-size: 12px;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+
+      .timeline-group-count {
+        padding: 5px 11px;
+        border-radius: 999px;
+        background: rgba(15, 118, 110, 0.1);
+        color: var(--brand-strong);
+        font-size: 12px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .timeline-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .timeline-card {
+        border: 1px solid rgba(111, 92, 72, 0.14);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.9);
+        padding: 14px 15px;
+      }
+
+      .timeline-card-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 12px;
+      }
+
+      .timeline-card-title {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .timeline-card-meta {
+        margin: 6px 0 0;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .timeline-card-badges {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: end;
+        gap: 8px;
+      }
+
+      .timeline-card-body {
+        margin-top: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .fact-line {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.7;
+        color: var(--text);
+      }
+
+      .fact-line-label {
+        color: var(--muted);
+        font-weight: 700;
+        margin-right: 6px;
+      }
+
+      .fact-token {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 28px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+      }
+
+      .tone-add {
+        background: rgba(15, 118, 110, 0.12);
+        color: var(--brand-strong);
+      }
+
+      .tone-update {
+        background: rgba(217, 119, 6, 0.14);
+        color: #a05700;
+      }
+
+      .tone-none {
+        background: rgba(100, 116, 139, 0.16);
+        color: #475569;
+      }
+
+      .tone-applied {
+        background: rgba(34, 197, 94, 0.14);
+        color: #166534;
+      }
+
+      .tone-skipped-none {
+        background: rgba(148, 163, 184, 0.18);
+        color: #475569;
+      }
+
+      .tone-write-failed {
+        background: rgba(220, 38, 38, 0.14);
+        color: #b91c1c;
+      }
+
+      .timeline-json {
+        margin-top: 10px;
+        border-top: 1px dashed rgba(111, 92, 72, 0.18);
+        padding-top: 10px;
+      }
+
+      .timeline-json-toggle {
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--brand-strong);
+        user-select: none;
+      }
+
+      .timeline-json-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .timeline-json-card {
+        border-radius: 16px;
+        border: 1px solid rgba(111, 92, 72, 0.12);
+        background: rgba(249, 246, 239, 0.9);
+        padding: 12px;
+      }
+
+      .timeline-json-title {
+        margin: 0 0 8px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .timeline-json-pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "SFMono-Regular", "Menlo", "Monaco", "Cascadia Mono", "Consolas", monospace;
+        font-size: 12px;
+        line-height: 1.65;
+        color: #241d17;
+      }
+
       .empty-state {
         min-height: 420px;
         border: 1px dashed rgba(111, 92, 72, 0.26);
@@ -467,6 +703,20 @@
 
         .field-row {
           flex-direction: column;
+        }
+
+        .detail-section-head,
+        .timeline-group-head,
+        .timeline-card-head {
+          flex-direction: column;
+        }
+
+        .timeline-card-badges {
+          justify-content: start;
+        }
+
+        .timeline-json-grid {
+          grid-template-columns: 1fr;
         }
       }
     </style>
@@ -699,6 +949,249 @@
         detailBody.appendChild(empty);
       }
 
+      function createSection(title, subtitle) {
+        const section = document.createElement('section');
+        section.className = 'detail-section';
+
+        const head = document.createElement('div');
+        head.className = 'detail-section-head';
+
+        const titleWrap = document.createElement('div');
+        const titleEl = document.createElement('h3');
+        titleEl.className = 'detail-section-title';
+        titleEl.textContent = title;
+        titleWrap.appendChild(titleEl);
+
+        if (subtitle) {
+          const subtitleEl = document.createElement('p');
+          subtitleEl.className = 'detail-section-subtitle';
+          subtitleEl.textContent = subtitle;
+          titleWrap.appendChild(subtitleEl);
+        }
+
+        head.appendChild(titleWrap);
+        section.appendChild(head);
+        return { section, head };
+      }
+
+      function createSectionEmpty(message) {
+        const empty = document.createElement('div');
+        empty.className = 'section-empty';
+        empty.textContent = message;
+        return empty;
+      }
+
+      function factSummary(fact) {
+        if (!fact) return '暂无';
+        if (fact.statement) return fact.statement;
+        const subject = fact.subject || 'unknown';
+        const attribute = fact.attribute || 'unknown';
+        if (fact.value) {
+          return subject + ' / ' + attribute + ' = ' + fact.value;
+        }
+        return subject + ' / ' + attribute;
+      }
+
+      function prettyJson(value) {
+        if (value == null) return 'null';
+        try {
+          return JSON.stringify(value, null, 2);
+        } catch (_) {
+          return String(value);
+        }
+      }
+
+      function createToken(text, tone) {
+        const token = document.createElement('span');
+        token.className = 'fact-token tone-' + tone;
+        token.textContent = text;
+        return token;
+      }
+
+      function appendFactLine(container, label, value) {
+        const line = document.createElement('p');
+        line.className = 'fact-line';
+
+        const labelEl = document.createElement('span');
+        labelEl.className = 'fact-line-label';
+        labelEl.textContent = label;
+        line.appendChild(labelEl);
+
+        const text = document.createElement('span');
+        text.textContent = value;
+        line.appendChild(text);
+
+        container.appendChild(line);
+      }
+
+      function groupOperations(operations) {
+        const groups = [];
+        const byFlush = new Map();
+        for (const operation of operations || []) {
+          const flushId = operation.flushId || 'unknown-flush';
+          if (!byFlush.has(flushId)) {
+            const group = {
+              flushId,
+              createdAt: operation.createdAt,
+              sessionId: operation.sessionId,
+              trigger: operation.trigger,
+              items: []
+            };
+            byFlush.set(flushId, group);
+            groups.push(group);
+          }
+          byFlush.get(flushId).items.push(operation);
+        }
+        return groups;
+      }
+
+      function renderOperationCard(operation) {
+        const card = document.createElement('article');
+        card.className = 'timeline-card';
+
+        const head = document.createElement('div');
+        head.className = 'timeline-card-head';
+
+        const info = document.createElement('div');
+        const title = document.createElement('h4');
+        title.className = 'timeline-card-title';
+        title.textContent = factSummary(operation.incomingFact);
+        info.appendChild(title);
+
+        const meta = document.createElement('p');
+        meta.className = 'timeline-card-meta';
+        meta.textContent = [
+          operation.decisionSource || 'UNKNOWN_SOURCE',
+          formatTime(operation.createdAt)
+        ].filter(Boolean).join(' · ');
+        info.appendChild(meta);
+
+        const badges = document.createElement('div');
+        badges.className = 'timeline-card-badges';
+        badges.appendChild(createToken(operation.decision || 'UNKNOWN', String(operation.decision || 'none').toLowerCase()));
+        badges.appendChild(createToken(
+          operation.writeOutcome || 'UNKNOWN',
+          String(operation.writeOutcome || 'write-failed').toLowerCase().replace(/_/g, '-')
+        ));
+
+        head.appendChild(info);
+        head.appendChild(badges);
+        card.appendChild(head);
+
+        const body = document.createElement('div');
+        body.className = 'timeline-card-body';
+        appendFactLine(body, '新事实', factSummary(operation.incomingFact));
+        appendFactLine(body, '旧事实', operation.matchedFact ? factSummary(operation.matchedFact) : '无');
+        appendFactLine(body, '候选数', String(operation.candidateCount || 0));
+        appendFactLine(body, '命中 block', operation.matchedBlockId || '无');
+        appendFactLine(body, '写入 block', operation.targetBlockId || '无');
+        card.appendChild(body);
+
+        const detail = document.createElement('details');
+        detail.className = 'timeline-json';
+        const summary = document.createElement('summary');
+        summary.className = 'timeline-json-toggle';
+        summary.textContent = '查看结构化详情';
+        detail.appendChild(summary);
+
+        const grid = document.createElement('div');
+        grid.className = 'timeline-json-grid';
+        for (const block of [
+          { title: 'incomingFact', value: operation.incomingFact || {} },
+          { title: 'matchedFact', value: operation.matchedFact || null },
+          { title: 'candidateFacts', value: operation.candidateFacts || [] }
+        ]) {
+          const item = document.createElement('div');
+          item.className = 'timeline-json-card';
+
+          const itemTitle = document.createElement('h5');
+          itemTitle.className = 'timeline-json-title';
+          itemTitle.textContent = block.title;
+          item.appendChild(itemTitle);
+
+          const pre = document.createElement('pre');
+          pre.className = 'timeline-json-pre';
+          pre.textContent = prettyJson(block.value);
+          item.appendChild(pre);
+
+          grid.appendChild(item);
+        }
+        detail.appendChild(grid);
+        card.appendChild(detail);
+
+        return card;
+      }
+
+      function renderFactTimelineSection(file, operationsState) {
+        const { section, head } = createSection(
+          '事实修改时间线',
+          '按 flushId 分组，展示 durable fact replace 的 ADD / UPDATE / NONE 判定与写入结果。'
+        );
+
+        if (operationsState.status === 'success') {
+          const badge = document.createElement('div');
+          badge.className = 'timeline-group-count';
+          badge.textContent = (operationsState.items || []).length + ' 条记录';
+          head.appendChild(badge);
+        }
+
+        if (operationsState.status === 'error') {
+          section.appendChild(createSectionEmpty('时间线加载失败，请稍后刷新重试。'));
+          return section;
+        }
+
+        const operations = operationsState.items || [];
+        if (!operations.length) {
+          section.appendChild(createSectionEmpty('这个 fact 文件还没有审计记录。下一次 durable fact replace 命中这里后，会在这里出现操作时间线。'));
+          return section;
+        }
+
+        const list = document.createElement('div');
+        list.className = 'timeline-list';
+
+        for (const group of groupOperations(operations)) {
+          const groupEl = document.createElement('section');
+          groupEl.className = 'timeline-group';
+
+          const groupHead = document.createElement('div');
+          groupHead.className = 'timeline-group-head';
+
+          const info = document.createElement('div');
+          const title = document.createElement('h4');
+          title.className = 'timeline-group-title';
+          title.textContent = 'Flush ' + group.flushId;
+          info.appendChild(title);
+
+          const meta = document.createElement('p');
+          meta.className = 'timeline-group-meta';
+          meta.textContent = [
+            formatTime(group.createdAt),
+            group.sessionId ? 'sessionId: ' + group.sessionId : '',
+            group.trigger ? 'trigger: ' + group.trigger : ''
+          ].filter(Boolean).join(' · ');
+          info.appendChild(meta);
+
+          const count = document.createElement('div');
+          count.className = 'timeline-group-count';
+          count.textContent = group.items.length + ' 条判定';
+
+          groupHead.appendChild(info);
+          groupHead.appendChild(count);
+          groupEl.appendChild(groupHead);
+
+          const cards = document.createElement('div');
+          cards.className = 'timeline-cards';
+          for (const operation of group.items) {
+            cards.appendChild(renderOperationCard(operation));
+          }
+          groupEl.appendChild(cards);
+          list.appendChild(groupEl);
+        }
+
+        section.appendChild(list);
+        return section;
+      }
+
       function renderFileDetail(file) {
         detailKicker.textContent = file.kind || 'memory';
         detailTitle.textContent = file.path || file.id || 'memory';
@@ -713,6 +1206,33 @@
         pre.className = 'content-pre';
         pre.textContent = file.content || '';
         detailBody.appendChild(pre);
+      }
+
+      function renderFactDetail(file, operationsState) {
+        detailKicker.textContent = file.kind || 'fact';
+        detailTitle.textContent = file.path || file.id || 'fact';
+        detailMeta.textContent = [
+          file.path || file.id || 'unknown',
+          formatBytes(file.size),
+          formatTime(file.updatedAt)
+        ].filter(Boolean).join(' · ');
+
+        detailBody.innerHTML = '';
+        const stack = document.createElement('div');
+        stack.className = 'detail-stack';
+
+        const sourceSection = createSection(
+          '当前 md 真源',
+          '这里展示 durable fact 当前真实写入到磁盘中的 markdown 内容。'
+        ).section;
+        const pre = document.createElement('pre');
+        pre.className = 'content-pre';
+        pre.textContent = file.content || '';
+        sourceSection.appendChild(pre);
+        stack.appendChild(sourceSection);
+
+        stack.appendChild(renderFactTimelineSection(file, operationsState));
+        detailBody.appendChild(stack);
       }
 
       function renderSessionContextDetail(detail) {
@@ -777,6 +1297,15 @@
         return response.json();
       }
 
+      async function openFactOperations(path, limit = 50) {
+        const query = new URLSearchParams({ userId: state.userId, path, limit: String(limit) });
+        const response = await fetch('/api/memory/fact-operations?' + query.toString());
+        if (!response.ok) {
+          throw new Error('open fact operations failed: ' + response.status);
+        }
+        return response.json();
+      }
+
       async function selectItem(item) {
         state.selection = item;
         if (item.scope === 'session_context') {
@@ -788,6 +1317,17 @@
         try {
           if (item.scope === 'session_context') {
             renderSessionContextDetail(await openSessionContext(item.sessionId));
+          } else if (item.scope === 'facts') {
+            const results = await Promise.allSettled([
+              openFile(item.id),
+              openFactOperations(item.id, 80)
+            ]);
+            if (results[0].status !== 'fulfilled') {
+              throw new Error('open fact file failed');
+            }
+            renderFactDetail(results[0].value, results[1].status === 'fulfilled'
+              ? { status: 'success', items: results[1].value }
+              : { status: 'error', items: [] });
           } else {
             renderFileDetail(await openFile(item.id));
           }
