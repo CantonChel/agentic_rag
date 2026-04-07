@@ -17,6 +17,8 @@ import com.agenticrag.app.rag.embedding.RagEmbeddingProperties;
 import com.agenticrag.app.rag.embedding.SiliconFlowEmbeddingProperties;
 import com.agenticrag.app.rag.retriever.ChunkIndexer;
 import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.splitter.RecursiveCharacterTextSplitterProperties;
+import com.agenticrag.app.rag.splitter.TextSplitter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,13 +27,12 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import org.springframework.core.env.Environment;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 @Service
 public class BenchmarkBuildImportService {
-	static final String DEFAULT_CHUNK_STRATEGY_VERSION = "evidence_unit_identity_v1";
-
 	private final PortableBenchmarkPackageReader packageReader;
 	private final BenchmarkBuildService benchmarkBuildService;
 	private final BenchmarkKnowledgeBaseMapper knowledgeBaseMapper;
@@ -44,6 +45,9 @@ public class BenchmarkBuildImportService {
 	private final RagEmbeddingProperties ragEmbeddingProperties;
 	private final OpenAiEmbeddingProperties openAiEmbeddingProperties;
 	private final SiliconFlowEmbeddingProperties siliconFlowEmbeddingProperties;
+	private final RecursiveCharacterTextSplitterProperties splitterProperties;
+	private final TextSplitter textSplitter;
+	private final Environment environment;
 	private final List<ChunkIndexer> chunkIndexers;
 
 	public BenchmarkBuildImportService(
@@ -59,6 +63,9 @@ public class BenchmarkBuildImportService {
 		RagEmbeddingProperties ragEmbeddingProperties,
 		OpenAiEmbeddingProperties openAiEmbeddingProperties,
 		SiliconFlowEmbeddingProperties siliconFlowEmbeddingProperties,
+		RecursiveCharacterTextSplitterProperties splitterProperties,
+		TextSplitter textSplitter,
+		Environment environment,
 		List<ChunkIndexer> chunkIndexers
 	) {
 		this.packageReader = packageReader;
@@ -73,6 +80,9 @@ public class BenchmarkBuildImportService {
 		this.ragEmbeddingProperties = ragEmbeddingProperties;
 		this.openAiEmbeddingProperties = openAiEmbeddingProperties;
 		this.siliconFlowEmbeddingProperties = siliconFlowEmbeddingProperties;
+		this.splitterProperties = splitterProperties;
+		this.textSplitter = textSplitter;
+		this.environment = environment;
 		this.chunkIndexers = chunkIndexers;
 	}
 
@@ -81,15 +91,22 @@ public class BenchmarkBuildImportService {
 		PortableBenchmarkPackage benchmarkPackage = packageReader.readPackage(resolvedDir);
 		String embeddingModelName = resolveEmbeddingModelName();
 		String sourceSnapshotId = computeSourceSnapshotId(resolvedDir);
+		String runtimeConfigSnapshotId = computeRuntimeConfigSnapshotId(embeddingModelName);
 
 		BenchmarkBuildEntity build = benchmarkBuildService.createPendingBuild(
 			resolvedDir.toString(),
 			benchmarkPackage.getManifest().getProjectKey(),
 			benchmarkPackage.getManifest().getSuiteVersion(),
 			sourceSnapshotId,
-			DEFAULT_CHUNK_STRATEGY_VERSION,
+			runtimeConfigSnapshotId,
 			embeddingModelName,
-			benchmarkPackage.getEvidenceUnits().size(),
+			benchmarkPackage.getSourceManifest().getSourceSetId(),
+			benchmarkPackage.getManifest().getPackageVersion(),
+			benchmarkPackage.getManifest().getGeneratorVersion(),
+			benchmarkPackage.getNormalizedDocuments().size(),
+			0,
+			benchmarkPackage.getAuthoringBlocks().size(),
+			benchmarkPackage.getAuthoringBlocks().size(),
 			benchmarkPackage.getBenchmarkSamples().size()
 		);
 
@@ -98,6 +115,7 @@ public class BenchmarkBuildImportService {
 			createKnowledgeBase(build);
 
 			BenchmarkKnowledgeBaseMaterialization materialization = knowledgeBaseMapper.materialize(build, benchmarkPackage);
+			build = benchmarkBuildService.updateMaterializationStats(build.getBuildId(), materialization.getChunkEntities().size());
 			knowledgeRepository.saveAll(materialization.getKnowledgeEntities());
 			chunkRepository.saveAll(materialization.getChunkEntities());
 
@@ -183,11 +201,39 @@ public class BenchmarkBuildImportService {
 	}
 
 	private String computeSourceSnapshotId(Path packageDir) {
-		return sha256(readFile(packageDir.resolve(PortableBenchmarkPackageReader.SUITE_MANIFEST_FILE))
+		return sha256(readFile(packageDir.resolve(PortableBenchmarkPackageReader.SOURCE_MANIFEST_FILE))
 			+ "\n--\n"
-			+ readFile(packageDir.resolve(PortableBenchmarkPackageReader.EVIDENCE_UNITS_FILE))
+			+ readFile(packageDir.resolve(PortableBenchmarkPackageReader.NORMALIZED_DOCUMENTS_FILE))
 			+ "\n--\n"
-			+ readFile(packageDir.resolve(PortableBenchmarkPackageReader.BENCHMARK_SUITE_FILE)));
+			+ readFile(packageDir.resolve(PortableBenchmarkPackageReader.AUTHORING_BLOCKS_FILE))
+			+ "\n--\n"
+			+ readFile(packageDir.resolve(PortableBenchmarkPackageReader.BLOCK_LINKS_FILE))
+			+ "\n--\n"
+			+ readFile(packageDir.resolve(PortableBenchmarkPackageReader.BENCHMARK_SAMPLES_FILE))
+			+ "\n--\n"
+			+ readFile(packageDir.resolve(PortableBenchmarkPackageReader.SAMPLE_GENERATION_TRACE_FILE))
+			+ "\n--\n"
+			+ readFile(packageDir.resolve(PortableBenchmarkPackageReader.GOLD_PACKAGE_MANIFEST_FILE)));
+	}
+
+	private String computeRuntimeConfigSnapshotId(String embeddingModelName) {
+		String splitterName = textSplitter != null ? textSplitter.getClass().getSimpleName() : "none";
+		String chunkSize = splitterProperties != null ? String.valueOf(splitterProperties.getChunkSize()) : "0";
+		String chunkOverlap = splitterProperties != null ? String.valueOf(splitterProperties.getChunkOverlap()) : "0";
+		String retrieverPostgresEnabled = property("rag.retriever.postgres.enabled", "false");
+		String vectorStorePostgresEnabled = property("rag.vector-store.postgres.enabled", "false");
+		String indexerNames = chunkIndexers == null
+			? ""
+			: chunkIndexers.stream().filter(indexer -> indexer != null).map(indexer -> indexer.getClass().getSimpleName()).sorted().reduce((a, b) -> a + "," + b).orElse("");
+		return sha256(
+			"splitter=" + splitterName
+				+ "\nchunk_size=" + chunkSize
+				+ "\nchunk_overlap=" + chunkOverlap
+				+ "\nembedding_model=" + embeddingModelName
+				+ "\nretriever_postgres_enabled=" + retrieverPostgresEnabled
+				+ "\nvector_store_postgres_enabled=" + vectorStorePostgresEnabled
+				+ "\nindexers=" + indexerNames
+		);
 	}
 
 	private String readFile(Path path) {
@@ -210,5 +256,9 @@ public class BenchmarkBuildImportService {
 		} catch (Exception e) {
 			throw new IllegalStateException("failed to hash package snapshot", e);
 		}
+	}
+
+	private String property(String key, String defaultValue) {
+		return environment != null ? environment.getProperty(key, defaultValue) : defaultValue;
 	}
 }

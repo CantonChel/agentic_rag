@@ -7,7 +7,7 @@ public class PortableBenchmarkSample {
 	private final String question;
 	private final String groundTruth;
 	private final List<String> groundTruthContexts;
-	private final List<PortableEvidenceReference> goldEvidenceRefs;
+	private final List<PortableGoldBlockReference> goldBlockRefs;
 	private final List<String> tags;
 	private final String difficulty;
 	private final String suiteVersion;
@@ -17,7 +17,7 @@ public class PortableBenchmarkSample {
 		String question,
 		String groundTruth,
 		List<String> groundTruthContexts,
-		List<PortableEvidenceReference> goldEvidenceRefs,
+		List<PortableGoldBlockReference> goldBlockRefs,
 		List<String> tags,
 		String difficulty,
 		String suiteVersion
@@ -26,7 +26,7 @@ public class PortableBenchmarkSample {
 		this.question = question;
 		this.groundTruth = groundTruth;
 		this.groundTruthContexts = groundTruthContexts;
-		this.goldEvidenceRefs = goldEvidenceRefs;
+		this.goldBlockRefs = goldBlockRefs;
 		this.tags = tags;
 		this.difficulty = difficulty;
 		this.suiteVersion = suiteVersion;
@@ -48,8 +48,14 @@ public class PortableBenchmarkSample {
 		return groundTruthContexts;
 	}
 
+	public List<PortableGoldBlockReference> getGoldBlockRefs() {
+		return goldBlockRefs;
+	}
+
 	public List<PortableEvidenceReference> getGoldEvidenceRefs() {
-		return goldEvidenceRefs;
+		return goldBlockRefs.stream()
+			.map(ref -> new PortableEvidenceReference(ref.getBlockId(), ref.getDocPath(), ref.getSectionKey()))
+			.toList();
 	}
 
 	public List<String> getTags() {

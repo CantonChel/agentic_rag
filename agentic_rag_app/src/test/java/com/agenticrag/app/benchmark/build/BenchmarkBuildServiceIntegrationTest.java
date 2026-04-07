@@ -26,8 +26,14 @@ class BenchmarkBuildServiceIntegrationTest {
 			"api_docs",
 			"base_v1",
 			"snapshot-1",
-			"evidence_unit_identity_v1",
+			"runtime-config-1",
 			"text-embedding-3-small",
+			"source-set-1",
+			"v1",
+			"gold_stage1_v1",
+			2,
+			0,
+			12,
 			12,
 			4
 		);
@@ -36,6 +42,9 @@ class BenchmarkBuildServiceIntegrationTest {
 		Assertions.assertEquals("bm-" + entity.getBuildId(), entity.getKnowledgeBaseId());
 		Assertions.assertEquals(BenchmarkBuildStatus.PENDING, entity.getStatus());
 		Assertions.assertEquals(12, entity.getEvidenceCount());
+		Assertions.assertEquals(12, entity.getAuthoringBlockCount());
+		Assertions.assertEquals(2, entity.getNormalizedDocumentCount());
+		Assertions.assertEquals("source-set-1", entity.getSourceSetId());
 		Assertions.assertEquals(4, entity.getSampleCount());
 	}
 
@@ -46,8 +55,14 @@ class BenchmarkBuildServiceIntegrationTest {
 			"api_docs",
 			"base_v1",
 			"snapshot-1",
-			"evidence_unit_identity_v1",
+			"runtime-config-1",
 			"text-embedding-3-small",
+			"source-set-1",
+			"v1",
+			"gold_stage1_v1",
+			2,
+			0,
+			5,
 			5,
 			2
 		);

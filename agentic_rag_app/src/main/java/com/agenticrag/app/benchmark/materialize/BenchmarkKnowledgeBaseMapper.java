@@ -2,14 +2,17 @@ package com.agenticrag.app.benchmark.materialize;
 
 import com.agenticrag.app.benchmark.build.BenchmarkBuildEntity;
 import com.agenticrag.app.benchmark.packageio.PortableBenchmarkPackage;
-import com.agenticrag.app.benchmark.packageio.PortableEvidenceUnit;
+import com.agenticrag.app.benchmark.packageio.PortableNormalizedDocument;
+import com.agenticrag.app.benchmark.packageio.PortableSourceFileRecord;
 import com.agenticrag.app.ingest.entity.ChunkEntity;
 import com.agenticrag.app.ingest.entity.KnowledgeEntity;
 import com.agenticrag.app.ingest.model.ChunkType;
 import com.agenticrag.app.ingest.model.KnowledgeEnableStatus;
 import com.agenticrag.app.ingest.model.KnowledgeParseStatus;
 import com.agenticrag.app.ingest.service.TextSanitizer;
+import com.agenticrag.app.rag.model.Document;
 import com.agenticrag.app.rag.model.TextChunk;
+import com.agenticrag.app.rag.splitter.TextSplitter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -17,21 +20,21 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import org.springframework.stereotype.Component;
 
 @Component
 public class BenchmarkKnowledgeBaseMapper {
 	private final ObjectMapper objectMapper;
 	private final TextSanitizer textSanitizer;
+	private final TextSplitter textSplitter;
 
-	public BenchmarkKnowledgeBaseMapper(ObjectMapper objectMapper, TextSanitizer textSanitizer) {
+	public BenchmarkKnowledgeBaseMapper(ObjectMapper objectMapper, TextSanitizer textSanitizer, TextSplitter textSplitter) {
 		this.objectMapper = objectMapper;
 		this.textSanitizer = textSanitizer;
+		this.textSplitter = textSplitter;
 	}
 
 	public BenchmarkKnowledgeBaseMaterialization materialize(
@@ -45,28 +48,40 @@ public class BenchmarkKnowledgeBaseMapper {
 			throw new IllegalArgumentException("benchmarkPackage is required");
 		}
 
-		Map<String, List<PortableEvidenceUnit>> evidenceByDoc = groupByDocPath(benchmarkPackage.getEvidenceUnits());
+		Map<String, PortableSourceFileRecord> sourceFilesByPath = indexSourceFiles(benchmarkPackage);
 		Instant now = Instant.now();
 		List<KnowledgeEntity> knowledgeEntities = new ArrayList<>();
 		List<ChunkEntity> chunkEntities = new ArrayList<>();
 		List<TextChunk> indexChunks = new ArrayList<>();
 		List<BenchmarkEmbeddingInput> embeddingInputs = new ArrayList<>();
 
-		for (Map.Entry<String, List<PortableEvidenceUnit>> entry : evidenceByDoc.entrySet()) {
-			String docPath = entry.getKey();
-			List<PortableEvidenceUnit> units = entry.getValue();
-			if (units == null || units.isEmpty()) {
+		for (PortableNormalizedDocument document : benchmarkPackage.getNormalizedDocuments()) {
+			if (document == null) {
+				continue;
+			}
+			String docPath = safe(document.getDocPath());
+			String normalizedText = textSanitizer.sanitizeText(safe(document.getNormalizedText()));
+			if (docPath.isEmpty() || normalizedText.isEmpty()) {
 				continue;
 			}
 
 			String knowledgeId = toKnowledgeId(build.getBuildId(), docPath);
-			knowledgeEntities.add(buildKnowledgeEntity(build, docPath, units, knowledgeId, now));
+			knowledgeEntities.add(buildKnowledgeEntity(build, document, knowledgeId, sourceFilesByPath.get(docPath), now));
 
-			for (int i = 0; i < units.size(); i++) {
-				PortableEvidenceUnit unit = units.get(i);
-				String previousChunkId = i > 0 ? units.get(i - 1).getEvidenceId() : null;
-				String nextChunkId = i + 1 < units.size() ? units.get(i + 1).getEvidenceId() : null;
-				ChunkEntity chunk = buildChunkEntity(build, docPath, knowledgeId, unit, i, previousChunkId, nextChunkId, now);
+			List<RuntimeChunkSlice> slices = buildRuntimeChunkSlices(build, document, knowledgeId);
+			for (int i = 0; i < slices.size(); i++) {
+				RuntimeChunkSlice slice = slices.get(i);
+				String previousChunkId = i > 0 ? slices.get(i - 1).chunkId : null;
+				String nextChunkId = i + 1 < slices.size() ? slices.get(i + 1).chunkId : null;
+				ChunkEntity chunk = buildChunkEntity(
+					build,
+					document,
+					knowledgeId,
+					slice,
+					previousChunkId,
+					nextChunkId,
+					now
+				);
 				chunkEntities.add(chunk);
 				Map<String, Object> indexMetadata = parseMetadata(chunk.getMetadataJson());
 				indexChunks.add(new TextChunk(chunk.getChunkId(), knowledgeId, chunk.getContent(), null, indexMetadata));
@@ -77,42 +92,44 @@ public class BenchmarkKnowledgeBaseMapper {
 		return new BenchmarkKnowledgeBaseMaterialization(knowledgeEntities, chunkEntities, indexChunks, embeddingInputs);
 	}
 
-	private Map<String, List<PortableEvidenceUnit>> groupByDocPath(List<PortableEvidenceUnit> evidenceUnits) {
-		Map<String, List<PortableEvidenceUnit>> out = new LinkedHashMap<>();
-		if (evidenceUnits == null) {
+	private Map<String, PortableSourceFileRecord> indexSourceFiles(PortableBenchmarkPackage benchmarkPackage) {
+		Map<String, PortableSourceFileRecord> out = new LinkedHashMap<>();
+		if (benchmarkPackage == null || benchmarkPackage.getSourceManifest() == null || benchmarkPackage.getSourceManifest().getFiles() == null) {
 			return out;
 		}
-		for (PortableEvidenceUnit unit : evidenceUnits) {
-			if (unit == null) {
+		for (PortableSourceFileRecord record : benchmarkPackage.getSourceManifest().getFiles()) {
+			if (record == null) {
 				continue;
 			}
-			String docPath = safe(unit.getDocPath());
+			String docPath = safe(record.getPath());
 			if (docPath.isEmpty()) {
 				continue;
 			}
-			out.computeIfAbsent(docPath, ignored -> new ArrayList<>()).add(unit);
+			out.put(docPath, record);
 		}
 		return out;
 	}
 
 	private KnowledgeEntity buildKnowledgeEntity(
 		BenchmarkBuildEntity build,
-		String docPath,
-		List<PortableEvidenceUnit> units,
+		PortableNormalizedDocument document,
 		String knowledgeId,
+		PortableSourceFileRecord sourceFileRecord,
 		Instant now
 	) {
+		String docPath = safe(document.getDocPath());
+		String normalizedText = textSanitizer.sanitizeText(safe(document.getNormalizedText()));
 		KnowledgeEntity entity = new KnowledgeEntity();
 		entity.setId(knowledgeId);
 		entity.setKnowledgeBaseId(build.getKnowledgeBaseId());
 		entity.setFileName(fileName(docPath));
 		entity.setFileType(fileType(docPath));
 		entity.setFilePath("package://" + safe(build.getProjectKey()) + "/" + safe(build.getSuiteVersion()) + "/" + docPath);
-		entity.setFileSize(documentContent(units).getBytes(StandardCharsets.UTF_8).length);
-		entity.setFileHash(sha256(joinSourceHashes(units)));
+		entity.setFileSize(normalizedText.getBytes(StandardCharsets.UTF_8).length);
+		entity.setFileHash(resolveKnowledgeFileHash(normalizedText, sourceFileRecord));
 		entity.setParseStatus(KnowledgeParseStatus.COMPLETED);
 		entity.setEnableStatus(KnowledgeEnableStatus.ENABLED);
-		entity.setMetadataJson(toJson(buildKnowledgeMetadata(build, docPath)));
+		entity.setMetadataJson(toJson(buildKnowledgeMetadata(build, document)));
 		entity.setCreatedAt(now);
 		entity.setUpdatedAt(now);
 		return entity;
@@ -120,54 +137,58 @@ public class BenchmarkKnowledgeBaseMapper {
 
 	private ChunkEntity buildChunkEntity(
 		BenchmarkBuildEntity build,
-		String docPath,
+		PortableNormalizedDocument document,
 		String knowledgeId,
-		PortableEvidenceUnit unit,
-		int chunkIndex,
+		RuntimeChunkSlice slice,
 		String previousChunkId,
 		String nextChunkId,
 		Instant now
 	) {
+		String docPath = safe(document.getDocPath());
 		ChunkEntity entity = new ChunkEntity();
-		entity.setChunkId(safe(unit.getEvidenceId()));
+		entity.setChunkId(slice.chunkId);
 		entity.setKnowledgeId(knowledgeId);
 		entity.setChunkType(ChunkType.TEXT);
-		entity.setChunkIndex(chunkIndex);
-		entity.setStartAt(null);
-		entity.setEndAt(null);
+		entity.setChunkIndex(slice.chunkIndex);
+		entity.setStartAt(slice.startAt);
+		entity.setEndAt(slice.endAt);
 		entity.setParentChunkId(null);
 		entity.setPreChunkId(previousChunkId);
 		entity.setNextChunkId(nextChunkId);
-		entity.setContent(textSanitizer.sanitizeText(safe(unit.getCanonicalText())));
+		entity.setContent(slice.content);
 		entity.setImageInfoJson(null);
-		entity.setMetadataJson(toJson(buildChunkMetadata(build, docPath, unit)));
+		entity.setMetadataJson(toJson(buildChunkMetadata(build, docPath, slice)));
 		entity.setCreatedAt(now);
 		entity.setUpdatedAt(now);
 		return entity;
 	}
 
-	private Map<String, Object> buildKnowledgeMetadata(BenchmarkBuildEntity build, String docPath) {
+	private Map<String, Object> buildKnowledgeMetadata(BenchmarkBuildEntity build, PortableNormalizedDocument document) {
 		Map<String, Object> metadata = new LinkedHashMap<>();
 		metadata.put("import_source", "benchmark_package");
 		metadata.put("build_id", safe(build.getBuildId()));
+		metadata.put("knowledge_base_id", safe(build.getKnowledgeBaseId()));
 		metadata.put("project_key", safe(build.getProjectKey()));
 		metadata.put("suite_version", safe(build.getSuiteVersion()));
-		metadata.put("doc_path", docPath);
+		metadata.put("source_set_id", safe(build.getSourceSetId()));
+		metadata.put("doc_path", safe(document.getDocPath()));
+		metadata.put("title", safe(document.getTitle()));
+		metadata.put("gold_package_version", safe(build.getGoldPackageVersion()));
 		return metadata;
 	}
 
-	private Map<String, Object> buildChunkMetadata(BenchmarkBuildEntity build, String docPath, PortableEvidenceUnit unit) {
+	private Map<String, Object> buildChunkMetadata(BenchmarkBuildEntity build, String docPath, RuntimeChunkSlice slice) {
 		Map<String, Object> metadata = new LinkedHashMap<>();
-		metadata.put("source", buildSource(docPath, unit.getSectionTitle(), unit.getSectionKey()));
+		metadata.put("source", buildSource(docPath, slice.chunkIndex));
 		metadata.put("build_id", safe(build.getBuildId()));
 		metadata.put("knowledge_base_id", safe(build.getKnowledgeBaseId()));
-		metadata.put("evidence_id", safe(unit.getEvidenceId()));
+		metadata.put("project_key", safe(build.getProjectKey()));
+		metadata.put("suite_version", safe(build.getSuiteVersion()));
+		metadata.put("source_set_id", safe(build.getSourceSetId()));
 		metadata.put("doc_path", docPath);
-		metadata.put("section_key", safe(unit.getSectionKey()));
-		metadata.put("section_title", safe(unit.getSectionTitle()));
-		metadata.put("anchor", safe(unit.getAnchor()));
-		metadata.put("source_hash", safe(unit.getSourceHash()));
-		metadata.put("extractor_version", safe(unit.getExtractorVersion()));
+		metadata.put("chunk_index", slice.chunkIndex);
+		metadata.put("start_at", slice.startAt);
+		metadata.put("end_at", slice.endAt);
 		return metadata;
 	}
 
@@ -184,34 +205,93 @@ public class BenchmarkKnowledgeBaseMapper {
 		}
 	}
 
-	private String documentContent(List<PortableEvidenceUnit> units) {
-		List<String> parts = new ArrayList<>();
-		for (PortableEvidenceUnit unit : units) {
-			String value = textSanitizer.sanitizeText(safe(unit.getCanonicalText()));
-			if (!value.isEmpty()) {
-				parts.add(value);
-			}
+	private String resolveKnowledgeFileHash(String normalizedText, PortableSourceFileRecord sourceFileRecord) {
+		String sourceHash = sourceFileRecord != null ? safe(sourceFileRecord.getSha256()) : "";
+		if (!sourceHash.isEmpty()) {
+			return sourceHash;
 		}
-		return String.join("\n\n", parts);
+		return sha256(normalizedText);
 	}
 
-	private String joinSourceHashes(List<PortableEvidenceUnit> units) {
-		List<String> parts = new ArrayList<>();
-		for (PortableEvidenceUnit unit : units) {
-			String sourceHash = safe(unit.getSourceHash());
-			if (!sourceHash.isEmpty()) {
-				parts.add(sourceHash);
-			}
+	private List<RuntimeChunkSlice> buildRuntimeChunkSlices(
+		BenchmarkBuildEntity build,
+		PortableNormalizedDocument document,
+		String knowledgeId
+	) {
+		String normalizedText = textSanitizer.sanitizeText(safe(document.getNormalizedText()));
+		Document splitterDocument = new Document(knowledgeId, normalizedText, buildDocumentMetadata(build, document));
+		List<TextChunk> splitChunks = textSplitter != null ? textSplitter.split(splitterDocument) : Collections.emptyList();
+		if (splitChunks.isEmpty()) {
+			Map<String, Object> metadata = buildDocumentMetadata(build, document);
+			return List.of(new RuntimeChunkSlice(knowledgeId + ":0", 0, 0, normalizedText.length(), normalizedText, metadata));
 		}
-		return String.join("\n", parts);
+
+		List<RuntimeChunkSlice> out = new ArrayList<>();
+		int previousStart = 0;
+		int previousEnd = 0;
+		int previousLength = 0;
+		for (int i = 0; i < splitChunks.size(); i++) {
+			TextChunk splitChunk = splitChunks.get(i);
+			String content = textSanitizer.sanitizeText(splitChunk != null ? splitChunk.getText() : "");
+			if (content.isEmpty()) {
+				continue;
+			}
+			int startAt = findChunkStart(normalizedText, content, previousStart, previousEnd, previousLength);
+			int endAt = Math.min(normalizedText.length(), startAt + content.length());
+			Map<String, Object> metadata = new LinkedHashMap<>();
+			metadata.putAll(buildDocumentMetadata(build, document));
+			if (splitChunk != null && splitChunk.getMetadata() != null) {
+				metadata.putAll(splitChunk.getMetadata());
+			}
+			out.add(new RuntimeChunkSlice(
+				safe(splitChunk != null ? splitChunk.getChunkId() : knowledgeId + ":" + i),
+				i,
+				startAt,
+				endAt,
+				content,
+				metadata
+			));
+			previousStart = startAt;
+			previousEnd = endAt;
+			previousLength = content.length();
+		}
+		return out;
 	}
 
-	private String buildSource(String docPath, String sectionTitle, String sectionKey) {
-		String anchor = safe(sectionTitle);
-		if (anchor.isEmpty()) {
-			anchor = safe(sectionKey);
+	private Map<String, Object> buildDocumentMetadata(BenchmarkBuildEntity build, PortableNormalizedDocument document) {
+		Map<String, Object> metadata = new LinkedHashMap<>();
+		metadata.put("build_id", safe(build.getBuildId()));
+		metadata.put("knowledge_base_id", safe(build.getKnowledgeBaseId()));
+		metadata.put("project_key", safe(build.getProjectKey()));
+		metadata.put("suite_version", safe(build.getSuiteVersion()));
+		metadata.put("source_set_id", safe(build.getSourceSetId()));
+		metadata.put("doc_path", safe(document.getDocPath()));
+		return metadata;
+	}
+
+	private int findChunkStart(String fullText, String chunkText, int previousStart, int previousEnd, int previousLength) {
+		if (fullText.isEmpty() || chunkText.isEmpty()) {
+			return 0;
 		}
-		return anchor.isEmpty() ? docPath : docPath + "#" + anchor;
+		int overlapWindow = Math.min(Math.max(previousLength, chunkText.length()), 512);
+		int searchFrom = Math.max(0, previousEnd - overlapWindow);
+		int startAt = fullText.indexOf(chunkText, searchFrom);
+		if (startAt >= 0) {
+			return startAt;
+		}
+		startAt = fullText.indexOf(chunkText, Math.max(0, previousStart));
+		if (startAt >= 0) {
+			return startAt;
+		}
+		startAt = fullText.indexOf(chunkText);
+		if (startAt >= 0) {
+			return startAt;
+		}
+		return Math.max(0, Math.min(fullText.length(), previousEnd));
+	}
+
+	private String buildSource(String docPath, int chunkIndex) {
+		return docPath + "#chunk-" + chunkIndex;
 	}
 
 	private String fileName(String docPath) {
@@ -265,5 +345,30 @@ public class BenchmarkKnowledgeBaseMapper {
 
 	private String safe(String value) {
 		return value == null ? "" : value.trim();
+	}
+
+	private static final class RuntimeChunkSlice {
+		private final String chunkId;
+		private final int chunkIndex;
+		private final int startAt;
+		private final int endAt;
+		private final String content;
+		private final Map<String, Object> metadata;
+
+		private RuntimeChunkSlice(
+			String chunkId,
+			int chunkIndex,
+			int startAt,
+			int endAt,
+			String content,
+			Map<String, Object> metadata
+		) {
+			this.chunkId = chunkId;
+			this.chunkIndex = chunkIndex;
+			this.startAt = startAt;
+			this.endAt = endAt;
+			this.content = content;
+			this.metadata = metadata;
+		}
 	}
 }

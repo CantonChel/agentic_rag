@@ -25,6 +25,12 @@ public class BenchmarkBuildService {
 		String sourceSnapshotId,
 		String chunkStrategyVersion,
 		String embeddingModel,
+		String sourceSetId,
+		String goldPackageVersion,
+		String goldGeneratorVersion,
+		int normalizedDocumentCount,
+		int runtimeChunkCount,
+		int authoringBlockCount,
 		int evidenceCount,
 		int sampleCount
 	) {
@@ -39,6 +45,12 @@ public class BenchmarkBuildService {
 		entity.setSourceSnapshotId(normalize(sourceSnapshotId));
 		entity.setChunkStrategyVersion(normalize(chunkStrategyVersion));
 		entity.setEmbeddingModel(normalize(embeddingModel));
+		entity.setSourceSetId(normalize(sourceSetId));
+		entity.setGoldPackageVersion(normalize(goldPackageVersion));
+		entity.setGoldGeneratorVersion(normalize(goldGeneratorVersion));
+		entity.setNormalizedDocumentCount(Math.max(0, normalizedDocumentCount));
+		entity.setRuntimeChunkCount(Math.max(0, runtimeChunkCount));
+		entity.setAuthoringBlockCount(Math.max(0, authoringBlockCount));
 		entity.setEvidenceCount(Math.max(0, evidenceCount));
 		entity.setSampleCount(Math.max(0, sampleCount));
 		entity.setStatus(BenchmarkBuildStatus.PENDING);
@@ -67,6 +79,14 @@ public class BenchmarkBuildService {
 		entity.setErrorMessage(null);
 		entity.setUpdatedAt(now);
 		entity.setFinishedAt(now);
+		return benchmarkBuildRepository.save(entity);
+	}
+
+	@Transactional
+	public BenchmarkBuildEntity updateMaterializationStats(String buildId, int runtimeChunkCount) {
+		BenchmarkBuildEntity entity = requireBuild(buildId);
+		entity.setRuntimeChunkCount(Math.max(0, runtimeChunkCount));
+		entity.setUpdatedAt(Instant.now());
 		return benchmarkBuildRepository.save(entity);
 	}
 
@@ -137,6 +157,12 @@ public class BenchmarkBuildService {
 			entity.getChunkStrategyVersion(),
 			entity.getEmbeddingModel(),
 			entity.getEvidenceCount(),
+			entity.getSourceSetId(),
+			entity.getGoldPackageVersion(),
+			entity.getGoldGeneratorVersion(),
+			entity.getNormalizedDocumentCount(),
+			entity.getRuntimeChunkCount(),
+			entity.getAuthoringBlockCount(),
 			entity.getSampleCount(),
 			entity.getStatus() != null ? entity.getStatus().name().toLowerCase(Locale.ROOT) : null,
 			entity.getErrorMessage(),

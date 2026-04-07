@@ -51,6 +51,24 @@ public class BenchmarkBuildEntity {
 	@Column(nullable = false)
 	private int evidenceCount;
 
+	@Column(nullable = false, length = 128)
+	private String sourceSetId;
+
+	@Column(nullable = false, length = 64)
+	private String goldPackageVersion;
+
+	@Column(nullable = false, length = 128)
+	private String goldGeneratorVersion;
+
+	@Column(nullable = false)
+	private int normalizedDocumentCount;
+
+	@Column(nullable = false)
+	private int runtimeChunkCount;
+
+	@Column(nullable = false)
+	private int authoringBlockCount;
+
 	@Column(nullable = false)
 	private int sampleCount;
 
@@ -140,6 +158,54 @@ public class BenchmarkBuildEntity {
 
 	public void setEvidenceCount(int evidenceCount) {
 		this.evidenceCount = evidenceCount;
+	}
+
+	public String getSourceSetId() {
+		return sourceSetId;
+	}
+
+	public void setSourceSetId(String sourceSetId) {
+		this.sourceSetId = sourceSetId;
+	}
+
+	public String getGoldPackageVersion() {
+		return goldPackageVersion;
+	}
+
+	public void setGoldPackageVersion(String goldPackageVersion) {
+		this.goldPackageVersion = goldPackageVersion;
+	}
+
+	public String getGoldGeneratorVersion() {
+		return goldGeneratorVersion;
+	}
+
+	public void setGoldGeneratorVersion(String goldGeneratorVersion) {
+		this.goldGeneratorVersion = goldGeneratorVersion;
+	}
+
+	public int getNormalizedDocumentCount() {
+		return normalizedDocumentCount;
+	}
+
+	public void setNormalizedDocumentCount(int normalizedDocumentCount) {
+		this.normalizedDocumentCount = normalizedDocumentCount;
+	}
+
+	public int getRuntimeChunkCount() {
+		return runtimeChunkCount;
+	}
+
+	public void setRuntimeChunkCount(int runtimeChunkCount) {
+		this.runtimeChunkCount = runtimeChunkCount;
+	}
+
+	public int getAuthoringBlockCount() {
+		return authoringBlockCount;
+	}
+
+	public void setAuthoringBlockCount(int authoringBlockCount) {
+		this.authoringBlockCount = authoringBlockCount;
 	}
 
 	public int getSampleCount() {
