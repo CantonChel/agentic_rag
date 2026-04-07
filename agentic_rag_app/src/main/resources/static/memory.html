@@ -231,11 +231,24 @@
       }
 
       .scope-group-head {
+        margin-bottom: 0;
+      }
+
+      .scope-group-toggle {
+        width: 100%;
         display: flex;
         justify-content: space-between;
         align-items: center;
         gap: 12px;
-        margin-bottom: 10px;
+        padding: 0;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .scope-group-toggle:hover .scope-name {
+        color: var(--brand-strong);
       }
 
       .scope-name {
@@ -251,6 +264,20 @@
         color: var(--brand-strong);
         font-size: 12px;
         text-align: center;
+      }
+
+      .scope-group-arrow {
+        font-size: 13px;
+        color: var(--muted);
+        transition: transform 0.2s ease;
+      }
+
+      .scope-group.collapsed .scope-group-arrow {
+        transform: rotate(-90deg);
+      }
+
+      .scope-group-body {
+        margin-top: 10px;
       }
 
       .scope-empty {
@@ -665,6 +692,13 @@
         font-size: 14px;
       }
 
+      .session-context-scroll {
+        max-height: min(72vh, 920px);
+        overflow-y: auto;
+        padding-right: 8px;
+        overscroll-behavior: contain;
+      }
+
       @media (max-width: 1080px) {
         .layout {
           grid-template-columns: 1fr;
@@ -793,7 +827,13 @@
         userId: 'anonymous',
         sessionId: '',
         scopes: null,
-        selection: null
+        selection: null,
+        collapsedScopes: {
+          global: true,
+          facts: false,
+          summaries: true,
+          session_context: true
+        }
       };
 
       function formatTime(iso) {
@@ -870,27 +910,62 @@
         return items;
       }
 
-      function renderScopeGroup(title, count, items) {
+      function toggleScopeGroup(scope) {
+        state.collapsedScopes[scope] = !state.collapsedScopes[scope];
+        renderScopeList();
+      }
+
+      function renderScopeGroup(scope, title, count, items) {
         const group = document.createElement('section');
-        group.className = 'scope-group';
+        const collapsed = Boolean(state.collapsedScopes[scope]);
+        group.className = 'scope-group' + (collapsed ? ' collapsed' : '');
 
         const head = document.createElement('div');
         head.className = 'scope-group-head';
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'scope-group-toggle';
+        toggle.addEventListener('click', () => toggleScopeGroup(scope));
+
+        const left = document.createElement('div');
         const name = document.createElement('div');
         name.className = 'scope-name';
         name.textContent = title;
+        left.appendChild(name);
+
+        const right = document.createElement('div');
+        right.style.display = 'flex';
+        right.style.alignItems = 'center';
+        right.style.gap = '8px';
+
         const badge = document.createElement('div');
         badge.className = 'scope-count';
         badge.textContent = String(count);
-        head.appendChild(name);
-        head.appendChild(badge);
+        right.appendChild(badge);
+
+        const arrow = document.createElement('div');
+        arrow.className = 'scope-group-arrow';
+        arrow.textContent = '▾';
+        right.appendChild(arrow);
+
+        toggle.appendChild(left);
+        toggle.appendChild(right);
+        head.appendChild(toggle);
         group.appendChild(head);
+
+        if (collapsed) {
+          return group;
+        }
+
+        const body = document.createElement('div');
+        body.className = 'scope-group-body';
 
         if (!items.length) {
           const empty = document.createElement('div');
           empty.className = 'scope-empty';
           empty.textContent = '暂无内容';
-          group.appendChild(empty);
+          body.appendChild(empty);
+          group.appendChild(body);
           return group;
         }
 
@@ -914,7 +989,8 @@
 
           list.appendChild(button);
         }
-        group.appendChild(list);
+        body.appendChild(list);
+        group.appendChild(body);
         return group;
       }
 
@@ -929,10 +1005,10 @@
         for (const item of allScopeItems()) {
           grouped[item.scope].push(item);
         }
-        scopeList.appendChild(renderScopeGroup('global', grouped.global.length, grouped.global));
-        scopeList.appendChild(renderScopeGroup('facts', grouped.facts.length, grouped.facts));
-        scopeList.appendChild(renderScopeGroup('summaries', grouped.summaries.length, grouped.summaries));
-        scopeList.appendChild(renderScopeGroup('session_context', grouped.session_context.length, grouped.session_context));
+        scopeList.appendChild(renderScopeGroup('global', 'global', grouped.global.length, grouped.global));
+        scopeList.appendChild(renderScopeGroup('facts', 'facts', grouped.facts.length, grouped.facts));
+        scopeList.appendChild(renderScopeGroup('summaries', 'summaries', grouped.summaries.length, grouped.summaries));
+        scopeList.appendChild(renderScopeGroup('session_context', 'session_context', grouped.session_context.length, grouped.session_context));
       }
 
       function renderEmptyDetail(message) {
@@ -1221,6 +1297,8 @@
         const stack = document.createElement('div');
         stack.className = 'detail-stack';
 
+        stack.appendChild(renderFactTimelineSection(file, operationsState));
+
         const sourceSection = createSection(
           '当前 md 真源',
           '这里展示 durable fact 当前真实写入到磁盘中的 markdown 内容。'
@@ -1230,8 +1308,6 @@
         pre.textContent = file.content || '';
         sourceSection.appendChild(pre);
         stack.appendChild(sourceSection);
-
-        stack.appendChild(renderFactTimelineSection(file, operationsState));
         detailBody.appendChild(stack);
       }
 
@@ -1244,6 +1320,8 @@
         ].join(' · ');
 
         detailBody.innerHTML = '';
+        const scroll = document.createElement('div');
+        scroll.className = 'session-context-scroll';
         const list = document.createElement('div');
         list.className = 'message-list';
         for (let i = 0; i < (detail.messages || []).length; i++) {
@@ -1276,7 +1354,8 @@
           renderEmptyDetail('这个 session 当前没有可展示的 projection 快照。');
           return;
         }
-        detailBody.appendChild(list);
+        scroll.appendChild(list);
+        detailBody.appendChild(scroll);
       }
 
       async function openFile(id) {
@@ -1308,6 +1387,7 @@
 
       async function selectItem(item) {
         state.selection = item;
+        state.collapsedScopes[item.scope] = false;
         if (item.scope === 'session_context') {
           state.sessionId = item.sessionId || state.sessionId;
         }
@@ -1352,6 +1432,11 @@
           if (matchingSession) {
             return matchingSession;
           }
+        }
+        const firstFact = items.find(item => item.scope === 'facts');
+        if (firstFact) {
+          state.collapsedScopes.facts = false;
+          return firstFact;
         }
         return items[0];
       }
