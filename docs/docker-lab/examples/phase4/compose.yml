@@ -150,7 +150,7 @@ services:
 
   mock-embedding:
     build:
-      context: ${MOCK_EMBEDDING_BUILD_CONTEXT:-../phase2/mock-embedding}
+      context: ${MOCK_EMBEDDING_BUILD_CONTEXT:-./mock-embedding}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz').read()"]
       interval: 5s
@@ -258,7 +258,7 @@ services:
     ports:
       - "${NGINX_HOST_PORT:-31080}:8080"
     volumes:
-      - ${NGINX_CONFIG_PATH:-../phase3/nginx/nginx.conf}:/etc/nginx/nginx.conf:ro
+      - ${NGINX_CONFIG_PATH:-./nginx/nginx.conf}:/etc/nginx/nginx.conf:ro
     depends_on:
       app-1:
         condition: service_started

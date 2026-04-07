@@ -16,15 +16,9 @@
 
 ## 前置条件
 
-进入阶段 3 前，保留这个目录不要删：
+进入阶段 3 前，建议你已经真正跑通过阶段 2，因为这一阶段是沿着阶段 2 的单机闭环继续往上加的。
 
-- `/home/s/agentic_lab/infra/phase2`
-
-原因：
-
-- 阶段 3 会复用阶段 2 的 `mock-embedding` 目录
-
-在启动阶段 3 之前，先把阶段 2 的容器停掉，但不要删阶段 2 目录：
+如果阶段 2 的容器还在运行，先停掉，避免端口冲突：
 
 ```bash
 cd /home/s/agentic_lab/infra/phase2
@@ -46,7 +40,7 @@ cd /home/s/agentic_lab/infra/phase3
 cp .env.example .env
 ```
 
-## Step 2：确认复用路径
+## Step 2：确认阶段 3 自己带齐了运行文件
 
 ```bash
 rg -n "MOCK_EMBEDDING_BUILD_CONTEXT|NGINX_CONFIG_PATH|APP_1_HOST_PORT|APP_2_HOST_PORT|NGINX_HOST_PORT" .env
@@ -54,13 +48,14 @@ rg -n "MOCK_EMBEDDING_BUILD_CONTEXT|NGINX_CONFIG_PATH|APP_1_HOST_PORT|APP_2_HOST
 
 你会看到：
 
-- `MOCK_EMBEDDING_BUILD_CONTEXT=../phase2/mock-embedding`
+- `MOCK_EMBEDDING_BUILD_CONTEXT=./mock-embedding`
 - `NGINX_CONFIG_PATH=./nginx/nginx.conf`
 
 这表示：
 
-- 阶段 3 继续复用阶段 2 的 mock
+- 阶段 3 目录自己带了一份 `mock-embedding`
 - Nginx 配置由阶段 3 自己提供
+- 你把 `phase3` 整个目录复制到远端后，它就可以单独运行
 
 ## Step 3：检查端口
 

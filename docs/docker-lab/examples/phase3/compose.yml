@@ -67,7 +67,7 @@ services:
 
   mock-embedding:
     build:
-      context: ${MOCK_EMBEDDING_BUILD_CONTEXT:-../phase2/mock-embedding}
+      context: ${MOCK_EMBEDDING_BUILD_CONTEXT:-./mock-embedding}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz').read()"]
       interval: 5s

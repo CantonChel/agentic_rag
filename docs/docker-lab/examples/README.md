@@ -16,11 +16,11 @@
 阶段关系：
 
 - `phase2` 引入单机闭环和 `mock-embedding`
-- `phase3` 复用 `phase2/mock-embedding`
-- `phase4` 复用 `phase2/mock-embedding` 和 `phase3/nginx`
-- `phase5` 复用 `phase2/mock-embedding`、`phase3/nginx` 和 `phase4/redis`
+- `phase3` 在 `phase2` 的概念基础上扩成双实例和 nginx
+- `phase4` 在 `phase3` 的概念基础上把 Redis 升级成主从 + Sentinel
+- `phase5` 在 `phase4` 的概念基础上把 PostgreSQL 升级成主从复制
 
 注意：
 
-- 复用的是目录，不是同时把所有阶段容器都跑起来
+- 每个阶段目录本身就是完整快照，不依赖前一个阶段目录里的文件
 - 进入下一阶段前，先把上一阶段容器 `docker compose down`

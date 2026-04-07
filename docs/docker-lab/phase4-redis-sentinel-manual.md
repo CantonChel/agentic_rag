@@ -20,17 +20,9 @@
 
 ## 前置条件
 
-进入阶段 4 前，保留这些目录不要删：
+进入阶段 4 前，建议你已经跑过阶段 3，因为这一阶段默认你已经理解双实例和统一入口层。
 
-- `/home/s/agentic_lab/infra/phase2`
-- `/home/s/agentic_lab/infra/phase3`
-
-原因：
-
-- 阶段 4 复用阶段 2 的 `mock-embedding`
-- 阶段 4 复用阶段 3 的 `nginx.conf`
-
-在启动阶段 4 之前，先把阶段 3 的容器停掉，但不要删阶段 2 和阶段 3 目录：
+如果阶段 3 的容器还在运行，先停掉，避免端口冲突：
 
 ```bash
 cd /home/s/agentic_lab/infra/phase3
@@ -52,7 +44,7 @@ cd /home/s/agentic_lab/infra/phase4
 cp .env.example .env
 ```
 
-## Step 2：确认复用和 Sentinel 参数
+## Step 2：确认阶段 4 自己带齐了运行文件和 Sentinel 参数
 
 ```bash
 rg -n "MOCK_EMBEDDING_BUILD_CONTEXT|NGINX_CONFIG_PATH|SPRING_REDIS_SENTINEL|REDIS_MASTER_HOST_PORT|REDIS_REPLICA_HOST_PORT|SENTINEL" .env
@@ -60,10 +52,16 @@ rg -n "MOCK_EMBEDDING_BUILD_CONTEXT|NGINX_CONFIG_PATH|SPRING_REDIS_SENTINEL|REDI
 
 重点看：
 
-- `MOCK_EMBEDDING_BUILD_CONTEXT=../phase2/mock-embedding`
-- `NGINX_CONFIG_PATH=../phase3/nginx/nginx.conf`
+- `MOCK_EMBEDDING_BUILD_CONTEXT=./mock-embedding`
+- `NGINX_CONFIG_PATH=./nginx/nginx.conf`
 - `SPRING_REDIS_SENTINEL_MASTER=mymaster`
 - `SPRING_REDIS_SENTINEL_NODES=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379`
+
+这表示：
+
+- 阶段 4 自己带了 `mock-embedding`
+- 阶段 4 自己带了 `nginx.conf`
+- 阶段 4 自己带了 Redis 主从和 Sentinel 配置
 
 ## Step 3：启动阶段 4 拓扑
 

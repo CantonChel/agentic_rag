@@ -58,7 +58,7 @@ services:
       - "${REDIS_MASTER_HOST_PORT:-36379}:6379"
     volumes:
       - phase5_redis_master_data:/data
-      - ${REDIS_MASTER_CONFIG_PATH:-../phase4/redis/redis-master.conf}:/usr/local/etc/redis/redis.conf:ro
+      - ${REDIS_MASTER_CONFIG_PATH:-./redis/redis-master.conf}:/usr/local/etc/redis/redis.conf:ro
 
   redis-replica-1:
     image: redis:7-alpine
@@ -72,7 +72,7 @@ services:
       - "${REDIS_REPLICA_HOST_PORT:-36380}:6379"
     volumes:
       - phase5_redis_replica_1_data:/data
-      - ${REDIS_REPLICA_CONFIG_PATH:-../phase4/redis/redis-replica.conf}:/usr/local/etc/redis/redis.conf:ro
+      - ${REDIS_REPLICA_CONFIG_PATH:-./redis/redis-replica.conf}:/usr/local/etc/redis/redis.conf:ro
     depends_on:
       redis-master:
         condition: service_started
@@ -91,7 +91,7 @@ services:
     ports:
       - "${SENTINEL_1_HOST_PORT:-26379}:26379"
     volumes:
-      - ${REDIS_SENTINEL_CONFIG_PATH:-../phase4/redis/sentinel.conf}:/etc/redis-base/sentinel.conf:ro
+      - ${REDIS_SENTINEL_CONFIG_PATH:-./redis/sentinel.conf}:/etc/redis-base/sentinel.conf:ro
     depends_on:
       redis-master:
         condition: service_started
@@ -112,7 +112,7 @@ services:
     ports:
       - "${SENTINEL_2_HOST_PORT:-26380}:26379"
     volumes:
-      - ${REDIS_SENTINEL_CONFIG_PATH:-../phase4/redis/sentinel.conf}:/etc/redis-base/sentinel.conf:ro
+      - ${REDIS_SENTINEL_CONFIG_PATH:-./redis/sentinel.conf}:/etc/redis-base/sentinel.conf:ro
     depends_on:
       redis-master:
         condition: service_started
@@ -133,7 +133,7 @@ services:
     ports:
       - "${SENTINEL_3_HOST_PORT:-26381}:26379"
     volumes:
-      - ${REDIS_SENTINEL_CONFIG_PATH:-../phase4/redis/sentinel.conf}:/etc/redis-base/sentinel.conf:ro
+      - ${REDIS_SENTINEL_CONFIG_PATH:-./redis/sentinel.conf}:/etc/redis-base/sentinel.conf:ro
     depends_on:
       redis-master:
         condition: service_started
@@ -181,7 +181,7 @@ services:
 
   mock-embedding:
     build:
-      context: ${MOCK_EMBEDDING_BUILD_CONTEXT:-../phase2/mock-embedding}
+      context: ${MOCK_EMBEDDING_BUILD_CONTEXT:-./mock-embedding}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz').read()"]
       interval: 5s
@@ -289,7 +289,7 @@ services:
     ports:
       - "${NGINX_HOST_PORT:-31080}:8080"
     volumes:
-      - ${NGINX_CONFIG_PATH:-../phase3/nginx/nginx.conf}:/etc/nginx/nginx.conf:ro
+      - ${NGINX_CONFIG_PATH:-./nginx/nginx.conf}:/etc/nginx/nginx.conf:ro
     depends_on:
       app-1:
         condition: service_started

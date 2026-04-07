@@ -14,17 +14,9 @@
 
 ## 前置条件
 
-进入阶段 5 前，保留这些目录：
+进入阶段 5 前，建议你已经跑过阶段 4，因为这一阶段默认你已经理解双实例入口和 Redis Sentinel。
 
-- `/home/s/agentic_lab/infra/phase2`
-- `/home/s/agentic_lab/infra/phase3`
-- `/home/s/agentic_lab/infra/phase4`
-
-原因：
-
-- 阶段 5 会继续复用前面阶段的 mock、nginx 和 redis Sentinel 配置
-
-在启动阶段 5 之前，先把阶段 4 的容器停掉，但不要删前面阶段目录：
+如果阶段 4 的容器还在运行，先停掉，避免端口冲突：
 
 ```bash
 cd /home/s/agentic_lab/infra/phase4
@@ -46,7 +38,7 @@ cd /home/s/agentic_lab/infra/phase5
 cp .env.example .env
 ```
 
-## Step 2：确认复用路径和主从参数
+## Step 2：确认阶段 5 自己带齐了运行文件和主从参数
 
 ```bash
 rg -n "MOCK_EMBEDDING_BUILD_CONTEXT|NGINX_CONFIG_PATH|REDIS_MASTER_CONFIG_PATH|PG_PRIMARY|PG_REPLICA|REPLICATION" .env
@@ -54,12 +46,19 @@ rg -n "MOCK_EMBEDDING_BUILD_CONTEXT|NGINX_CONFIG_PATH|REDIS_MASTER_CONFIG_PATH|P
 
 重点看：
 
-- `MOCK_EMBEDDING_BUILD_CONTEXT=../phase2/mock-embedding`
-- `NGINX_CONFIG_PATH=../phase3/nginx/nginx.conf`
-- `REDIS_MASTER_CONFIG_PATH=../phase4/redis/redis-master.conf`
+- `MOCK_EMBEDDING_BUILD_CONTEXT=./mock-embedding`
+- `NGINX_CONFIG_PATH=./nginx/nginx.conf`
+- `REDIS_MASTER_CONFIG_PATH=./redis/redis-master.conf`
 - `PG_PRIMARY_HOST_PORT=35432`
 - `PG_REPLICA_HOST_PORT=36432`
 - `REPLICATION_USER=replicator`
+
+这表示：
+
+- 阶段 5 目录自己带了 `mock-embedding`
+- 阶段 5 目录自己带了 `nginx.conf`
+- 阶段 5 目录自己带了 Redis 配置
+- 阶段 5 目录自己带了 PostgreSQL 主从配置
 
 ## Step 3：启动阶段 5 拓扑
 
