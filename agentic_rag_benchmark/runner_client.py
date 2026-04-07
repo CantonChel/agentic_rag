@@ -97,6 +97,22 @@ class BenchmarkAppClient:
             raise RuntimeError("retrieval trace API returned non-list payload")
         return [item for item in payload if isinstance(item, dict)]
 
+    def get_build_chunk_mappings(self, build_id: str, chunk_id: str | None = None) -> List[dict]:
+        params = {}
+        if chunk_id:
+            params["chunkId"] = chunk_id
+        response = requests.get(
+            f"{self.base_url}/api/benchmark/builds/{build_id}/chunk-mappings",
+            params=params,
+            timeout=self.timeout_seconds,
+            verify=self.verify_ssl,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, list):
+            raise RuntimeError("build chunk mapping API returned non-list payload")
+        return [item for item in payload if isinstance(item, dict)]
+
 
 def normalize_base_url(base_url: str) -> str:
     return base_url[:-1] if base_url.endswith("/") else base_url

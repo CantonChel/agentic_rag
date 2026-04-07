@@ -6,6 +6,8 @@ import com.agenticrag.app.benchmark.build.BenchmarkBuildImportService;
 import com.agenticrag.app.benchmark.build.BenchmarkBuildService;
 import com.agenticrag.app.benchmark.build.BenchmarkBuildStatus;
 import com.agenticrag.app.benchmark.build.BenchmarkBuildView;
+import com.agenticrag.app.benchmark.mapping.BenchmarkBuildChunkMappingService;
+import com.agenticrag.app.benchmark.mapping.BenchmarkBuildChunkMappingView;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
@@ -27,13 +29,16 @@ import reactor.core.scheduler.Schedulers;
 public class BenchmarkBuildController {
 	private final BenchmarkBuildImportService benchmarkBuildImportService;
 	private final BenchmarkBuildService benchmarkBuildService;
+	private final BenchmarkBuildChunkMappingService benchmarkBuildChunkMappingService;
 
 	public BenchmarkBuildController(
 		BenchmarkBuildImportService benchmarkBuildImportService,
-		BenchmarkBuildService benchmarkBuildService
+		BenchmarkBuildService benchmarkBuildService,
+		BenchmarkBuildChunkMappingService benchmarkBuildChunkMappingService
 	) {
 		this.benchmarkBuildImportService = benchmarkBuildImportService;
 		this.benchmarkBuildService = benchmarkBuildService;
+		this.benchmarkBuildChunkMappingService = benchmarkBuildChunkMappingService;
 	}
 
 	@PostMapping(value = "/import-package", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
@@ -66,6 +71,15 @@ public class BenchmarkBuildController {
 	) {
 		return Mono.fromCallable(() -> benchmarkBuildService.findBuildView(buildId)
 			.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "build not found")))
+			.subscribeOn(Schedulers.boundedElastic());
+	}
+
+	@GetMapping(value = "/{buildId}/chunk-mappings", produces = MediaType.APPLICATION_JSON_VALUE)
+	public Mono<List<BenchmarkBuildChunkMappingView>> listChunkMappings(
+		@PathVariable("buildId") String buildId,
+		@RequestParam(value = "chunkId", required = false) String chunkId
+	) {
+		return Mono.fromCallable(() -> benchmarkBuildChunkMappingService.listMappings(buildId, chunkId))
 			.subscribeOn(Schedulers.boundedElastic());
 	}
 

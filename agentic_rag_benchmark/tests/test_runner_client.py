@@ -54,6 +54,21 @@ class RunnerClientTest(unittest.TestCase):
         self.assertEqual(patched_get.call_count, 2)
         patched_sleep.assert_called_once()
 
+    def test_get_build_chunk_mappings_passes_optional_chunk_filter(self) -> None:
+        client = BenchmarkAppClient(base_url="http://127.0.0.1:8081", timeout_seconds=3, verify_ssl=False)
+        response = mock.Mock()
+        response.json.return_value = [{"chunkId": "chunk-1", "goldBlockIds": ["block-1"]}]
+        response.raise_for_status.return_value = None
+
+        with mock.patch("agentic_rag_benchmark.runner_client.requests.get", return_value=response) as patched_get:
+            payload = client.get_build_chunk_mappings("build-1", "chunk-1")
+
+        self.assertEqual(payload[0]["chunkId"], "chunk-1")
+        self.assertEqual(
+            patched_get.call_args.kwargs["params"],
+            {"chunkId": "chunk-1"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

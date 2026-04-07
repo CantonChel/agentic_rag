@@ -7,6 +7,8 @@ import com.agenticrag.app.benchmark.build.BenchmarkBuildImportService;
 import com.agenticrag.app.benchmark.build.BenchmarkBuildService;
 import com.agenticrag.app.benchmark.build.BenchmarkBuildStatus;
 import com.agenticrag.app.benchmark.build.BenchmarkBuildView;
+import com.agenticrag.app.benchmark.mapping.BenchmarkBuildChunkMappingService;
+import com.agenticrag.app.benchmark.mapping.BenchmarkBuildChunkMappingView;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
@@ -30,6 +32,9 @@ class BenchmarkBuildControllerTest {
 
 	@MockBean
 	private BenchmarkBuildService benchmarkBuildService;
+
+	@MockBean
+	private BenchmarkBuildChunkMappingService benchmarkBuildChunkMappingService;
 
 	@Test
 	void importPackageShouldReturnImportedBuildView() {
@@ -105,6 +110,33 @@ class BenchmarkBuildControllerTest {
 			.expectStatus().isNotFound()
 			.expectBody()
 			.jsonPath("$.message").isEqualTo("build not found");
+	}
+
+	@Test
+	void listChunkMappingsShouldReturnFilteredMappings() {
+		BenchmarkBuildChunkMappingView mapping = new BenchmarkBuildChunkMappingView(
+			1L,
+			"build-1",
+			"knowledge-1",
+			"chunk-1",
+			"docs/a.md",
+			0,
+			42,
+			List.of("block-1"),
+			"block-1"
+		);
+		Mockito.when(benchmarkBuildChunkMappingService.listMappings("build-1", "chunk-1")).thenReturn(List.of(mapping));
+
+		webTestClient.get()
+			.uri(uriBuilder -> uriBuilder.path("/api/benchmark/builds/{buildId}/chunk-mappings")
+				.queryParam("chunkId", "chunk-1")
+				.build("build-1"))
+			.exchange()
+			.expectStatus().isOk()
+			.expectBody()
+			.jsonPath("$[0].chunkId").isEqualTo("chunk-1")
+			.jsonPath("$[0].goldBlockIds[0]").isEqualTo("block-1")
+			.jsonPath("$[0].primaryGoldBlockId").isEqualTo("block-1");
 	}
 
 	private BenchmarkBuildImportRequest importRequest(String packagePath) {

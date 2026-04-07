@@ -19,6 +19,7 @@ class FakeBenchmarkAppClient:
         stream_capture: Optional[AgentStreamCapture] = None,
         summary_payload: Optional[dict[str, Any]] = None,
         retrieval_payload: Optional[list[dict[str, Any]]] = None,
+        chunk_mapping_payload: Optional[dict[str, list[dict[str, Any]]]] = None,
     ) -> None:
         self.stream_capture = stream_capture or AgentStreamCapture(
             turn_id="turn-1",
@@ -36,8 +37,11 @@ class FakeBenchmarkAppClient:
             "retrievalTraceIds": ["trace-1"],
         }
         self.retrieval_payload = retrieval_payload if retrieval_payload is not None else [
-            {"traceId": "trace-1", "stage": "context_output", "recordType": "chunk", "chunkId": "e1"}
+            {"traceId": "trace-1", "stage": "context_output", "recordType": "chunk", "chunkId": "chunk-1"}
         ]
+        self.chunk_mapping_payload = chunk_mapping_payload if chunk_mapping_payload is not None else {
+            "chunk-1": [{"chunkId": "chunk-1", "goldBlockIds": ["block-1"], "primaryGoldBlockId": "block-1"}]
+        }
 
     def stream_agent_turn(self, **_: Any) -> AgentStreamCapture:
         return self.stream_capture
@@ -49,6 +53,14 @@ class FakeBenchmarkAppClient:
 
     def get_retrieval_traces(self, trace_id: str) -> list[dict[str, Any]]:
         return [dict(item, traceId=item.get("traceId", trace_id)) for item in self.retrieval_payload]
+
+    def get_build_chunk_mappings(self, build_id: str, chunk_id: str | None = None) -> list[dict[str, Any]]:
+        if chunk_id is None:
+            payload: list[dict[str, Any]] = []
+            for rows in self.chunk_mapping_payload.values():
+                payload.extend(rows)
+            return payload
+        return [dict(item, buildId=build_id) for item in self.chunk_mapping_payload.get(chunk_id, [])]
 
 
 class ReportWriterTest(unittest.TestCase):
@@ -95,6 +107,11 @@ class ReportWriterTest(unittest.TestCase):
             self.assertEqual(report_json["summary"]["retrieval_hit_overview"]["samples_without_context_output"], 0)
             self.assertEqual(len(report_json["samples"]), 1)
             self.assertEqual(report_json["samples"][0]["gold_block_refs"][0]["block_id"], "block-1")
+            self.assertEqual(report_json["samples"][0]["retrieved_chunk_ids"], ["chunk-1"])
+            self.assertEqual(report_json["samples"][0]["retrieved_gold_block_ids_any_stage"], ["block-1"])
+            self.assertEqual(report_json["samples"][0]["retrieved_gold_block_ids_context_output"], ["block-1"])
+            self.assertTrue(report_json["samples"][0]["target_gold_block_hit_any_stage"])
+            self.assertTrue(report_json["samples"][0]["target_gold_block_hit_context_output"])
 
             report_markdown = artifacts.benchmark_report_markdown_path.read_text(encoding="utf-8")
             self.assertIn("## 运行摘要", report_markdown)

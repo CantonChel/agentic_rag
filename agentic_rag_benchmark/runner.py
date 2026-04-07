@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Tuple
 from uuid import uuid4
 
 from .contracts import BenchmarkSample
@@ -78,6 +79,15 @@ class RunBenchmarkSampleResult:
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     retrieval_trace_ids: List[str] = field(default_factory=list)
     retrieval_trace_records: List[Dict[str, Any]] = field(default_factory=list)
+    target_gold_block_ids: List[str] = field(default_factory=list)
+    retrieved_chunk_ids: List[str] = field(default_factory=list)
+    retrieved_gold_block_ids_any_stage: List[str] = field(default_factory=list)
+    retrieved_gold_block_ids_context_output: List[str] = field(default_factory=list)
+    target_gold_block_hit_any_stage: bool | None = None
+    target_gold_block_hit_context_output: bool | None = None
+    matched_stage_set: List[str] = field(default_factory=list)
+    chunk_mapping_status: str = "not_attempted"
+    chunk_mapping_error: str | None = None
     error: str | None = None
 
     @property
@@ -150,6 +160,8 @@ def run_benchmark(
         message=f"Running {total_samples} benchmark samples",
     )
     sample_results = []
+    chunk_mapping_cache: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+    chunk_mapping_unavailable_errors: Dict[str, str] = {}
     for index, sample in enumerate(loaded.benchmark_samples, start=1):
         emit_progress(
             progress_callback,
@@ -159,7 +171,13 @@ def run_benchmark(
             message=f"Running sample {sample.sample_id}",
             details={"sample_id": sample.sample_id},
         )
-        result = execute_sample(sample, request, client)
+        result = execute_sample(
+            sample,
+            request,
+            client,
+            chunk_mapping_cache=chunk_mapping_cache,
+            chunk_mapping_unavailable_errors=chunk_mapping_unavailable_errors,
+        )
         sample_results.append(result)
         emit_progress(
             progress_callback,
@@ -177,6 +195,8 @@ def execute_sample(
     sample: BenchmarkSample,
     request: RunBenchmarkRequest,
     client: Any,
+    chunk_mapping_cache: Dict[Tuple[str, str], List[Dict[str, Any]]],
+    chunk_mapping_unavailable_errors: Dict[str, str],
 ) -> RunBenchmarkSampleResult:
     session_id = build_session_id(request.session_prefix, sample.sample_id)
     try:
@@ -236,6 +256,15 @@ def execute_sample(
         except Exception as exc:
             retrieval_error = f"Failed to fetch retrieval traces: {exc}"
 
+    mapping_analysis = analyze_gold_chunk_hits(
+        sample=sample,
+        build_id=request.build_id,
+        retrieval_trace_records=retrieval_trace_records,
+        client=client,
+        chunk_mapping_cache=chunk_mapping_cache,
+        chunk_mapping_unavailable_errors=chunk_mapping_unavailable_errors,
+    )
+
     return RunBenchmarkSampleResult(
         sample_id=sample.sample_id,
         question=sample.question,
@@ -255,6 +284,15 @@ def execute_sample(
         tool_calls=normalize_object_list(summary.get("toolCalls")),
         retrieval_trace_ids=retrieval_trace_ids,
         retrieval_trace_records=retrieval_trace_records,
+        target_gold_block_ids=mapping_analysis.target_gold_block_ids,
+        retrieved_chunk_ids=mapping_analysis.retrieved_chunk_ids,
+        retrieved_gold_block_ids_any_stage=mapping_analysis.retrieved_gold_block_ids_any_stage,
+        retrieved_gold_block_ids_context_output=mapping_analysis.retrieved_gold_block_ids_context_output,
+        target_gold_block_hit_any_stage=mapping_analysis.target_gold_block_hit_any_stage,
+        target_gold_block_hit_context_output=mapping_analysis.target_gold_block_hit_context_output,
+        matched_stage_set=mapping_analysis.matched_stage_set,
+        chunk_mapping_status=mapping_analysis.chunk_mapping_status,
+        chunk_mapping_error=mapping_analysis.chunk_mapping_error,
         error=retrieval_error or stream_capture.transport_error,
     )
 
@@ -282,6 +320,7 @@ def build_error_sample_result(
         trace_id=trace_id,
         stream_event_count=stream_event_count,
         stream_event_types=stream_event_types,
+        target_gold_block_ids=ordered_unique(ref.block_id for ref in sample.gold_block_refs),
         error=error,
     )
 
@@ -306,6 +345,140 @@ def collect_retrieval_trace_records(client: Any, trace_ids: List[str]) -> List[D
     for trace_id in trace_ids:
         records.extend(client.get_retrieval_traces(trace_id))
     return records
+
+
+@dataclass(frozen=True)
+class ChunkHitAnalysis:
+    target_gold_block_ids: List[str]
+    retrieved_chunk_ids: List[str]
+    retrieved_gold_block_ids_any_stage: List[str]
+    retrieved_gold_block_ids_context_output: List[str]
+    target_gold_block_hit_any_stage: bool | None
+    target_gold_block_hit_context_output: bool | None
+    matched_stage_set: List[str]
+    chunk_mapping_status: str
+    chunk_mapping_error: str | None = None
+
+
+def analyze_gold_chunk_hits(
+    *,
+    sample: BenchmarkSample,
+    build_id: str,
+    retrieval_trace_records: List[Dict[str, Any]],
+    client: Any,
+    chunk_mapping_cache: Dict[Tuple[str, str], List[Dict[str, Any]]],
+    chunk_mapping_unavailable_errors: Dict[str, str],
+) -> ChunkHitAnalysis:
+    target_gold_block_ids = ordered_unique(ref.block_id for ref in sample.gold_block_refs)
+    chunk_records = [
+        record
+        for record in retrieval_trace_records
+        if normalize_optional_text(record.get("recordType")) == "chunk"
+    ]
+    retrieved_chunk_ids = ordered_unique(
+        normalize_optional_text(record.get("chunkId")) for record in chunk_records
+    )
+    if not chunk_records:
+        return ChunkHitAnalysis(
+            target_gold_block_ids=target_gold_block_ids,
+            retrieved_chunk_ids=[],
+            retrieved_gold_block_ids_any_stage=[],
+            retrieved_gold_block_ids_context_output=[],
+            target_gold_block_hit_any_stage=False,
+            target_gold_block_hit_context_output=False,
+            matched_stage_set=[],
+            chunk_mapping_status="available",
+            chunk_mapping_error=None,
+        )
+
+    cached_unavailable_error = chunk_mapping_unavailable_errors.get(build_id)
+    if cached_unavailable_error:
+        return ChunkHitAnalysis(
+            target_gold_block_ids=target_gold_block_ids,
+            retrieved_chunk_ids=retrieved_chunk_ids,
+            retrieved_gold_block_ids_any_stage=[],
+            retrieved_gold_block_ids_context_output=[],
+            target_gold_block_hit_any_stage=None,
+            target_gold_block_hit_context_output=None,
+            matched_stage_set=[],
+            chunk_mapping_status="unavailable",
+            chunk_mapping_error=cached_unavailable_error,
+        )
+
+    mappings_by_chunk: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        for chunk_id in retrieved_chunk_ids:
+            cache_key = (build_id, chunk_id)
+            if cache_key not in chunk_mapping_cache:
+                chunk_mapping_cache[cache_key] = normalize_object_list(
+                    client.get_build_chunk_mappings(build_id, chunk_id)
+                )
+            mappings_by_chunk[chunk_id] = chunk_mapping_cache[cache_key]
+    except Exception as exc:
+        error_message = f"Failed to fetch build chunk mappings: {exc}"
+        chunk_mapping_unavailable_errors[build_id] = error_message
+        return ChunkHitAnalysis(
+            target_gold_block_ids=target_gold_block_ids,
+            retrieved_chunk_ids=retrieved_chunk_ids,
+            retrieved_gold_block_ids_any_stage=[],
+            retrieved_gold_block_ids_context_output=[],
+            target_gold_block_hit_any_stage=None,
+            target_gold_block_hit_context_output=None,
+            matched_stage_set=[],
+            chunk_mapping_status="unavailable",
+            chunk_mapping_error=error_message,
+        )
+
+    target_gold_block_id_set = set(target_gold_block_ids)
+    any_stage_gold_block_ids: List[str] = []
+    context_output_gold_block_ids: List[str] = []
+    matched_stage_set: List[str] = []
+    seen_matched_stages = set()
+    for record in chunk_records:
+        chunk_id = normalize_optional_text(record.get("chunkId"))
+        if not chunk_id:
+            continue
+        stage = normalize_optional_text(record.get("stage")) or "unknown"
+        mapped_gold_block_ids = ordered_unique(
+            gold_block_id
+            for mapping in mappings_by_chunk.get(chunk_id, [])
+            for gold_block_id in normalize_gold_block_ids(mapping)
+        )
+        for gold_block_id in mapped_gold_block_ids:
+            if gold_block_id not in any_stage_gold_block_ids:
+                any_stage_gold_block_ids.append(gold_block_id)
+        if stage == "context_output":
+            for gold_block_id in mapped_gold_block_ids:
+                if gold_block_id not in context_output_gold_block_ids:
+                    context_output_gold_block_ids.append(gold_block_id)
+        if target_gold_block_id_set.intersection(mapped_gold_block_ids) and stage not in seen_matched_stages:
+            seen_matched_stages.add(stage)
+            matched_stage_set.append(stage)
+
+    return ChunkHitAnalysis(
+        target_gold_block_ids=target_gold_block_ids,
+        retrieved_chunk_ids=retrieved_chunk_ids,
+        retrieved_gold_block_ids_any_stage=any_stage_gold_block_ids,
+        retrieved_gold_block_ids_context_output=context_output_gold_block_ids,
+        target_gold_block_hit_any_stage=bool(target_gold_block_id_set.intersection(any_stage_gold_block_ids)),
+        target_gold_block_hit_context_output=bool(target_gold_block_id_set.intersection(context_output_gold_block_ids)),
+        matched_stage_set=matched_stage_set,
+        chunk_mapping_status="available",
+        chunk_mapping_error=None,
+    )
+
+
+def normalize_gold_block_ids(mapping_payload: Dict[str, Any]) -> List[str]:
+    if not isinstance(mapping_payload, dict):
+        return []
+    return ordered_unique(
+        normalize_optional_text(item)
+        for item in (
+            mapping_payload.get("goldBlockIds")
+            if isinstance(mapping_payload.get("goldBlockIds"), list)
+            else mapping_payload.get("gold_block_ids", [])
+        )
+    )
 
 
 def normalize_optional_text(value: Any) -> str | None:
@@ -339,6 +512,18 @@ def normalize_object_list(value: Any) -> List[Dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def ordered_unique(values: Any) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for value in values:
+        normalized = normalize_optional_text(value)
+        if normalized is None or normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out
 
 
 def build_pending_sample_result(

@@ -3,6 +3,7 @@ package com.agenticrag.app.benchmark.build;
 import com.agenticrag.app.benchmark.materialize.BenchmarkEmbeddingInput;
 import com.agenticrag.app.benchmark.materialize.BenchmarkKnowledgeBaseMapper;
 import com.agenticrag.app.benchmark.materialize.BenchmarkKnowledgeBaseMaterialization;
+import com.agenticrag.app.benchmark.mapping.BenchmarkBuildChunkMappingService;
 import com.agenticrag.app.benchmark.packageio.PortableBenchmarkPackage;
 import com.agenticrag.app.benchmark.packageio.PortableBenchmarkPackageReader;
 import com.agenticrag.app.ingest.entity.KnowledgeBaseEntity;
@@ -36,6 +37,7 @@ public class BenchmarkBuildImportService {
 	private final PortableBenchmarkPackageReader packageReader;
 	private final BenchmarkBuildService benchmarkBuildService;
 	private final BenchmarkKnowledgeBaseMapper knowledgeBaseMapper;
+	private final BenchmarkBuildChunkMappingService benchmarkBuildChunkMappingService;
 	private final KnowledgeBaseRepository knowledgeBaseRepository;
 	private final KnowledgeRepository knowledgeRepository;
 	private final ChunkRepository chunkRepository;
@@ -54,6 +56,7 @@ public class BenchmarkBuildImportService {
 		PortableBenchmarkPackageReader packageReader,
 		BenchmarkBuildService benchmarkBuildService,
 		BenchmarkKnowledgeBaseMapper knowledgeBaseMapper,
+		BenchmarkBuildChunkMappingService benchmarkBuildChunkMappingService,
 		KnowledgeBaseRepository knowledgeBaseRepository,
 		KnowledgeRepository knowledgeRepository,
 		ChunkRepository chunkRepository,
@@ -71,6 +74,7 @@ public class BenchmarkBuildImportService {
 		this.packageReader = packageReader;
 		this.benchmarkBuildService = benchmarkBuildService;
 		this.knowledgeBaseMapper = knowledgeBaseMapper;
+		this.benchmarkBuildChunkMappingService = benchmarkBuildChunkMappingService;
 		this.knowledgeBaseRepository = knowledgeBaseRepository;
 		this.knowledgeRepository = knowledgeRepository;
 		this.chunkRepository = chunkRepository;
@@ -118,6 +122,7 @@ public class BenchmarkBuildImportService {
 			build = benchmarkBuildService.updateMaterializationStats(build.getBuildId(), materialization.getChunkEntities().size());
 			knowledgeRepository.saveAll(materialization.getKnowledgeEntities());
 			chunkRepository.saveAll(materialization.getChunkEntities());
+			benchmarkBuildChunkMappingService.rebuildMappings(build, benchmarkPackage, materialization.getChunkEntities());
 
 			List<List<Double>> vectors = embeddingModel.embedTexts(extractEmbeddingTexts(materialization.getEmbeddingInputs()));
 			embeddingRepository.saveAll(materialization.buildEmbeddingEntities(embeddingModelName, vectors, Instant.now()));
@@ -127,6 +132,7 @@ public class BenchmarkBuildImportService {
 			return benchmarkBuildService.markReady(build.getBuildId());
 		} catch (Exception e) {
 			cleanupKnowledgeBase(build.getKnowledgeBaseId());
+			benchmarkBuildChunkMappingService.deleteByBuildId(build.getBuildId());
 			benchmarkBuildService.markFailed(build.getBuildId(), e.getMessage());
 			throw e instanceof IllegalStateException ? (IllegalStateException) e : new IllegalStateException("failed to import benchmark package", e);
 		}
