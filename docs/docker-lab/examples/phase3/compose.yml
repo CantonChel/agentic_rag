@@ -1,0 +1,183 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agentic_rag}
+      POSTGRES_USER: ${POSTGRES_USER:-agentic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentic}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentic} -d ${POSTGRES_DB:-agentic_rag}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "${PG_HOST_PORT:-35432}:5432"
+    volumes:
+      - phase3_pg_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - phase3_redis_data:/data
+
+  minio:
+    image: minio/minio:RELEASE.2025-02-28T09-55-16Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "${MINIO_API_HOST_PORT:-39000}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT:-39001}:9001"
+    volumes:
+      - phase3_minio_data:/data
+
+  docreader:
+    build:
+      context: ${DOCREADER_BUILD_CONTEXT:-../../app/docreader_service}
+    environment:
+      DOCREADER_PORT: 8090
+      DOCREADER_WORKER_COUNT: 2
+      DOCREADER_CALLBACK_SECRET: ${DOCREADER_CALLBACK_SECRET:-lab-docreader-secret}
+      DOCREADER_SIGNATURE_HEADER: X-Docreader-Signature
+      DOCREADER_TIMESTAMP_HEADER: X-Docreader-Timestamp
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-agentic-rag}
+      MINIO_SECURE: "false"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - phase3_knowledge_files:/shared/knowledge-files
+    ports:
+      - "${DOCREADER_HOST_PORT:-39090}:8090"
+    depends_on:
+      minio:
+        condition: service_started
+
+  mock-embedding:
+    build:
+      context: ${MOCK_EMBEDDING_BUILD_CONTEXT:-../phase2/mock-embedding}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz').read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "${MOCK_EMBEDDING_HOST_PORT:-38089}:8080"
+
+  app-1:
+    build:
+      context: ${APP_BUILD_CONTEXT:-../../app/agentic_rag_app}
+    environment:
+      SERVER_PORT: 8081
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-agentic_rag}
+      DB_USER: ${POSTGRES_USER:-agentic}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-agentic}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      INGEST_ASYNC_ENABLED: "true"
+      INGEST_FILE_STORAGE_BACKEND: minio
+      INGEST_FILE_ROOT: /shared/knowledge-files
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-agentic-rag}
+      MINIO_SECURE: "false"
+      DOCREADER_BASE_URL: http://docreader:8090
+      DOCREADER_CALLBACK_BASE_URL: http://nginx:8080
+      DOCREADER_CALLBACK_SECRET: ${DOCREADER_CALLBACK_SECRET:-lab-docreader-secret}
+      RAG_EMBEDDING_PROVIDER: ${RAG_EMBEDDING_PROVIDER:-siliconflow}
+      RAG_EMBEDDING_SILICONFLOW_BASE_URL: ${RAG_EMBEDDING_SILICONFLOW_BASE_URL:-http://mock-embedding:8080/v1}
+      RAG_EMBEDDING_SILICONFLOW_MODEL: ${RAG_EMBEDDING_SILICONFLOW_MODEL:-mock-embedding-16d}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-dummy}
+      RAG_POSTGRES_AUTO_INDEX: ${RAG_POSTGRES_AUTO_INDEX:-true}
+    volumes:
+      - phase3_knowledge_files:/shared/knowledge-files
+      - phase3_app_1_data:/app/data
+    ports:
+      - "${APP_1_HOST_PORT:-38081}:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      docreader:
+        condition: service_started
+      minio:
+        condition: service_started
+      mock-embedding:
+        condition: service_healthy
+
+  app-2:
+    build:
+      context: ${APP_BUILD_CONTEXT:-../../app/agentic_rag_app}
+    environment:
+      SERVER_PORT: 8081
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-agentic_rag}
+      DB_USER: ${POSTGRES_USER:-agentic}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-agentic}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      INGEST_ASYNC_ENABLED: "true"
+      INGEST_FILE_STORAGE_BACKEND: minio
+      INGEST_FILE_ROOT: /shared/knowledge-files
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-agentic-rag}
+      MINIO_SECURE: "false"
+      DOCREADER_BASE_URL: http://docreader:8090
+      DOCREADER_CALLBACK_BASE_URL: http://nginx:8080
+      DOCREADER_CALLBACK_SECRET: ${DOCREADER_CALLBACK_SECRET:-lab-docreader-secret}
+      RAG_EMBEDDING_PROVIDER: ${RAG_EMBEDDING_PROVIDER:-siliconflow}
+      RAG_EMBEDDING_SILICONFLOW_BASE_URL: ${RAG_EMBEDDING_SILICONFLOW_BASE_URL:-http://mock-embedding:8080/v1}
+      RAG_EMBEDDING_SILICONFLOW_MODEL: ${RAG_EMBEDDING_SILICONFLOW_MODEL:-mock-embedding-16d}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-dummy}
+      RAG_POSTGRES_AUTO_INDEX: ${RAG_POSTGRES_AUTO_INDEX:-true}
+    volumes:
+      - phase3_knowledge_files:/shared/knowledge-files
+      - phase3_app_2_data:/app/data
+    ports:
+      - "${APP_2_HOST_PORT:-38082}:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      docreader:
+        condition: service_started
+      minio:
+        condition: service_started
+      mock-embedding:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${NGINX_HOST_PORT:-31080}:8080"
+    volumes:
+      - ${NGINX_CONFIG_PATH:-./nginx/nginx.conf}:/etc/nginx/nginx.conf:ro
+    depends_on:
+      app-1:
+        condition: service_started
+      app-2:
+        condition: service_started
+
+volumes:
+  phase3_pg_data:
+  phase3_redis_data:
+  phase3_minio_data:
+  phase3_knowledge_files:
+  phase3_app_1_data:
+  phase3_app_2_data:
