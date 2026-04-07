@@ -14,10 +14,10 @@ class MemoryGetToolTest {
 	void readsExactMemoryLinesFromReturnedPathAndRange() {
 		ObjectMapper objectMapper = new ObjectMapper();
 		MemoryRecallService memoryRecallService = Mockito.mock(MemoryRecallService.class);
-		Mockito.when(memoryRecallService.get("u1", "memory/users/u1/daily/2026-03-29.md", 12, 13))
+		Mockito.when(memoryRecallService.get("u1", "memory/users/u1/facts/project.reminder.md", 12, 13))
 			.thenReturn(new MemoryReadResult(
-				"memory/users/u1/daily/2026-03-29.md",
-				"daily_durable",
+				"memory/users/u1/facts/project.reminder.md",
+				"fact",
 				"b1",
 				12,
 				13,
@@ -26,7 +26,7 @@ class MemoryGetToolTest {
 
 		MemoryGetTool tool = new MemoryGetTool(objectMapper, memoryRecallService);
 		ObjectNode args = objectMapper.createObjectNode();
-		args.put("path", "memory/users/u1/daily/2026-03-29.md");
+		args.put("path", "memory/users/u1/facts/project.reminder.md");
 		args.put("lineStart", 12);
 		args.put("lineEnd", 13);
 
@@ -34,7 +34,7 @@ class MemoryGetToolTest {
 
 		Assertions.assertNotNull(result);
 		Assertions.assertTrue(result.isSuccess());
-		Assertions.assertTrue(result.getOutput().contains("path: memory/users/u1/daily/2026-03-29.md"));
+		Assertions.assertTrue(result.getOutput().contains("path: memory/users/u1/facts/project.reminder.md"));
 		Assertions.assertTrue(result.getOutput().contains("12 | - 截止日期：周五"));
 		Assertions.assertTrue(result.getOutput().contains("13 | - 偏好：中文"));
 	}
@@ -65,7 +65,7 @@ class MemoryGetToolTest {
 
 		MemoryGetTool tool = new MemoryGetTool(objectMapper, memoryRecallService);
 		ObjectNode args = objectMapper.createObjectNode();
-		args.put("path", "memory/users/u1/daily/2026-03-29.md");
+		args.put("path", "memory/users/u1/facts/project.reminder.md");
 		args.put("lineStart", 5);
 		args.put("lineEnd", 4);
 

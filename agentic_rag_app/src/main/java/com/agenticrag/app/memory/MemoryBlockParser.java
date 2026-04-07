@@ -86,19 +86,21 @@ public class MemoryBlockParser {
 		if (legacyText.isEmpty()) {
 			return Collections.emptyList();
 		}
-		String kind = memoryFileService.kindOf(userId, path);
-		MemoryBlockMetadata metadata = new MemoryBlockMetadata(
-			MemoryBlockMetadata.SCHEMA_V1,
-			"session_archive".equals(kind) ? MemoryBlockMetadata.KIND_SESSION_ARCHIVE : MemoryBlockMetadata.KIND_DURABLE,
-			"legacy-" + shortHash(content),
-			userId,
-			null,
-			null,
-			"legacy",
-			"legacy:" + shortHash(content),
-			null,
-			null
-		);
+			String kind = memoryFileService.kindOf(userId, path);
+			MemoryBlockMetadata metadata = new MemoryBlockMetadata(
+				MemoryBlockMetadata.SCHEMA_V2,
+				"session_summary".equals(kind) ? MemoryBlockMetadata.KIND_SESSION_SUMMARY : MemoryBlockMetadata.KIND_FACT,
+				"legacy-" + shortHash(content),
+				userId,
+				null,
+				null,
+				null,
+				"legacy",
+				null,
+				null,
+				null,
+				null
+			);
 		return Collections.singletonList(new ParsedMemoryBlock(
 			path,
 			memoryFileService.relPath(path),
@@ -138,11 +140,11 @@ public class MemoryBlockParser {
 
 	private String resolveKind(String userId, Path path, MemoryBlockMetadata metadata) {
 		if (metadata != null) {
-			if (MemoryBlockMetadata.KIND_SESSION_ARCHIVE.equals(metadata.getKind())) {
-				return "session_archive";
+			if (MemoryBlockMetadata.KIND_SESSION_SUMMARY.equals(metadata.getKind())) {
+				return "session_summary";
 			}
-			if (MemoryBlockMetadata.KIND_DURABLE.equals(metadata.getKind())) {
-				return "daily_durable";
+			if (MemoryBlockMetadata.KIND_FACT.equals(metadata.getKind())) {
+				return "fact";
 			}
 		}
 		return memoryFileService.kindOf(userId, path);

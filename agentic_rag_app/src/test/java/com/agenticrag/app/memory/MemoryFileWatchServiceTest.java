@@ -16,24 +16,24 @@ class MemoryFileWatchServiceTest {
 	Path tempDir;
 
 	@Test
-	void watchesExistingDailyFilesAndSchedulesUserScopeOnCreateDeleteAndGlobalModify() throws Exception {
+	void watchesExistingFactFilesAndSchedulesUserScopeOnCreateDeleteAndGlobalModify() throws Exception {
 		MemoryProperties properties = properties();
 		MemoryFileService fileService = new MemoryFileService(properties);
 		MemoryIndexScopeService scopeService = new MemoryIndexScopeService(fileService, new ObjectMapper());
 		MemoryIndexManager manager = Mockito.mock(MemoryIndexManager.class);
-		Files.createDirectories(tempDir.resolve("memory/users/u1/daily"));
+		Files.createDirectories(tempDir.resolve("memory/users/u1/facts"));
 		Files.writeString(tempDir.resolve("MEMORY.md"), "global", StandardCharsets.UTF_8);
 
 		MemoryFileWatchService watcher = new MemoryFileWatchService(properties, fileService, scopeService, manager);
 
-		Path daily = tempDir.resolve("memory/users/u1/daily/2026-04-01.md");
-		Files.writeString(daily, "第一版", StandardCharsets.UTF_8);
-		watcher.processPathEvent(daily, java.nio.file.StandardWatchEventKinds.ENTRY_CREATE);
+		Path factFile = tempDir.resolve("memory/users/u1/facts/project.reminder.md");
+		Files.writeString(factFile, "第一版", StandardCharsets.UTF_8);
+		watcher.processPathEvent(factFile, java.nio.file.StandardWatchEventKinds.ENTRY_CREATE);
 		Mockito.verify(manager, Mockito.atLeastOnce()).requestUserScope("u1");
 
 		Thread.sleep(15);
-		Files.deleteIfExists(daily);
-		watcher.processPathEvent(daily, java.nio.file.StandardWatchEventKinds.ENTRY_DELETE);
+		Files.deleteIfExists(factFile);
+		watcher.processPathEvent(factFile, java.nio.file.StandardWatchEventKinds.ENTRY_DELETE);
 		Mockito.verify(manager, Mockito.atLeast(2)).requestUserScope("u1");
 
 		Files.writeString(tempDir.resolve("MEMORY.md"), "global updated", StandardCharsets.UTF_8);
@@ -50,12 +50,12 @@ class MemoryFileWatchServiceTest {
 
 		MemoryFileWatchService watcher = new MemoryFileWatchService(properties, fileService, scopeService, manager);
 
-		Path dailyDir = tempDir.resolve("memory/users/u2/daily");
-		Files.createDirectories(dailyDir);
-		watcher.processPathEvent(dailyDir, java.nio.file.StandardWatchEventKinds.ENTRY_CREATE);
+		Path factsDir = tempDir.resolve("memory/users/u2/facts");
+		Files.createDirectories(factsDir);
+		watcher.processPathEvent(factsDir, java.nio.file.StandardWatchEventKinds.ENTRY_CREATE);
 		Thread.sleep(15);
-		Files.writeString(dailyDir.resolve("2026-04-01.md"), "新目录里的记忆", StandardCharsets.UTF_8);
-		watcher.processPathEvent(dailyDir.resolve("2026-04-01.md"), java.nio.file.StandardWatchEventKinds.ENTRY_CREATE);
+		Files.writeString(factsDir.resolve("project.reminder.md"), "新目录里的记忆", StandardCharsets.UTF_8);
+		watcher.processPathEvent(factsDir.resolve("project.reminder.md"), java.nio.file.StandardWatchEventKinds.ENTRY_CREATE);
 		Mockito.verify(manager, Mockito.atLeastOnce()).requestUserScope("u2");
 
 		watcher.processOverflow();
@@ -76,7 +76,7 @@ class MemoryFileWatchServiceTest {
 		Files.writeString(cacheFile, "{}", StandardCharsets.UTF_8);
 		watcher.processPathEvent(cacheFile, java.nio.file.StandardWatchEventKinds.ENTRY_CREATE);
 
-		Path textFile = tempDir.resolve("memory/users/u1/daily/notes.txt");
+		Path textFile = tempDir.resolve("memory/users/u1/facts/notes.txt");
 		Files.createDirectories(textFile.getParent());
 		Files.writeString(textFile, "不是 markdown", StandardCharsets.UTF_8);
 		watcher.processPathEvent(textFile, java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY);

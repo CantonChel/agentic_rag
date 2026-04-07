@@ -18,11 +18,11 @@ class MemoryBlockParserTest {
 		MemoryProperties props = props(tempDir);
 		MemoryFileService fileService = new MemoryFileService(props);
 		MemoryBlockParser parser = new MemoryBlockParser(fileService, new ObjectMapper());
-		Path file = tempDir.resolve("memory/users/u1/daily/2026-03-29.md");
+		Path file = tempDir.resolve("memory/users/u1/facts/project.reminder.md");
 		Files.createDirectories(file.getParent());
 		Files.writeString(
 			file,
-			"<!-- MEMORY_BLOCK {\"schema\":\"memory.v1\",\"kind\":\"durable\",\"block_id\":\"b1\",\"user_id\":\"u1\",\"session_id\":\"s1\",\"created_at\":\"2026-03-29T00:00:00Z\",\"trigger\":\"preflight_compact\",\"dedupe_key\":\"d1\"} -->\n"
+			"<!-- MEMORY_BLOCK {\"schema\":\"memory.v2\",\"kind\":\"fact\",\"block_id\":\"b1\",\"user_id\":\"u1\",\"session_id\":\"s1\",\"created_at\":\"2026-03-29T00:00:00Z\",\"updated_at\":\"2026-03-29T00:00:00Z\",\"trigger\":\"preflight_compact\",\"bucket\":\"project.reminder\",\"fact_key\":\"k1\"} -->\n"
 				+ "- 第一条记忆\n"
 				+ "- 第二条记忆\n"
 				+ "<!-- /MEMORY_BLOCK -->\n",
@@ -32,7 +32,7 @@ class MemoryBlockParserTest {
 		List<ParsedMemoryBlock> blocks = parser.parse("u1", file);
 		Assertions.assertEquals(1, blocks.size());
 		Assertions.assertEquals("b1", blocks.get(0).getMetadata().getBlockId());
-		Assertions.assertEquals("daily_durable", blocks.get(0).getKind());
+		Assertions.assertEquals("fact", blocks.get(0).getKind());
 		Assertions.assertEquals(2, blocks.get(0).getStartLine());
 		Assertions.assertEquals(3, blocks.get(0).getEndLine());
 	}
@@ -42,14 +42,14 @@ class MemoryBlockParserTest {
 		MemoryProperties props = props(tempDir);
 		MemoryFileService fileService = new MemoryFileService(props);
 		MemoryBlockParser parser = new MemoryBlockParser(fileService, new ObjectMapper());
-		Path file = tempDir.resolve("memory/users/u1/sessions/2026-03-29-old.md");
+		Path file = tempDir.resolve("memory/users/u1/summaries/2026-03-29-old.md");
 		Files.createDirectories(file.getParent());
 		Files.writeString(file, "# Legacy\n- old content\n", StandardCharsets.UTF_8);
 
 		List<ParsedMemoryBlock> blocks = parser.parse("u1", file);
 		Assertions.assertEquals(1, blocks.size());
 		Assertions.assertTrue(blocks.get(0).isLegacy());
-		Assertions.assertEquals("session_archive", blocks.get(0).getKind());
+		Assertions.assertEquals("session_summary", blocks.get(0).getKind());
 		Assertions.assertTrue(blocks.get(0).getMetadata().getBlockId().startsWith("legacy-"));
 	}
 

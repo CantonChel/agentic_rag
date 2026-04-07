@@ -1,0 +1,1491 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>记忆总览</title>
+    <style>
+      :root {
+        --bg: #f3efe6;
+        --panel: rgba(255, 252, 247, 0.94);
+        --panel-strong: rgba(250, 245, 236, 0.98);
+        --line: rgba(111, 92, 72, 0.16);
+        --text: #2e241c;
+        --muted: #7f6b59;
+        --brand: #0f766e;
+        --brand-strong: #115e59;
+        --accent: #d97706;
+        --shadow: 0 20px 60px rgba(58, 44, 28, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Avenir Next", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(15, 118, 110, 0.18), transparent 32%),
+          radial-gradient(circle at right 20%, rgba(217, 119, 6, 0.18), transparent 28%),
+          linear-gradient(135deg, #f7f1e7 0%, #efe6d7 100%);
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .shell {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .header {
+        padding: 28px 32px 18px;
+      }
+
+      .header-card {
+        max-width: 1360px;
+        margin: 0 auto;
+        padding: 22px 26px;
+        border: 1px solid rgba(255, 255, 255, 0.42);
+        border-radius: 28px;
+        background: linear-gradient(135deg, rgba(255, 250, 243, 0.94), rgba(245, 238, 225, 0.9));
+        box-shadow: var(--shadow);
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        align-items: center;
+      }
+
+      .title-wrap {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+      }
+
+      .title-mark {
+        width: 58px;
+        height: 58px;
+        border-radius: 18px;
+        background: linear-gradient(145deg, #0f766e, #115e59);
+        color: #f8fafc;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        font-weight: 700;
+      }
+
+      .title-text h1 {
+        margin: 0;
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .title-text p {
+        margin: 8px 0 0;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .header-actions {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .nav-link {
+        padding: 11px 16px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.72);
+        text-decoration: none;
+        font-weight: 600;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      }
+
+      .nav-link:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 24px rgba(17, 94, 89, 0.12);
+        background: rgba(255, 255, 255, 0.92);
+      }
+
+      .layout {
+        width: min(1360px, calc(100% - 40px));
+        margin: 0 auto 28px;
+        display: grid;
+        grid-template-columns: 360px minmax(0, 1fr);
+        gap: 18px;
+        align-items: start;
+      }
+
+      .panel {
+        border-radius: 28px;
+        border: 1px solid rgba(255, 255, 255, 0.46);
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(14px);
+      }
+
+      .sidebar {
+        padding: 20px;
+        position: sticky;
+        top: 16px;
+      }
+
+      .panel-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+
+      .panel-title {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .panel-subtitle {
+        margin: 6px 0 0;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .control-card {
+        padding: 16px;
+        border-radius: 22px;
+        background: var(--panel-strong);
+        border: 1px solid var(--line);
+        margin-bottom: 18px;
+      }
+
+      .field-label {
+        display: block;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+
+      .field-row {
+        display: flex;
+        gap: 10px;
+      }
+
+      .input {
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: #fffdf9;
+        color: var(--text);
+        font-size: 14px;
+      }
+
+      .btn {
+        border: none;
+        border-radius: 14px;
+        padding: 12px 16px;
+        cursor: pointer;
+        font-weight: 700;
+        font-size: 14px;
+        transition: transform 0.2s ease, opacity 0.2s ease;
+      }
+
+      .btn:hover {
+        transform: translateY(-1px);
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, var(--brand), var(--brand-strong));
+        color: #f8fafc;
+      }
+
+      .hint {
+        margin-top: 10px;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .scope-list {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .scope-group {
+        padding: 14px;
+        border-radius: 20px;
+        background: var(--panel-strong);
+        border: 1px solid var(--line);
+      }
+
+      .scope-group-head {
+        margin-bottom: 0;
+      }
+
+      .scope-group-toggle {
+        width: 100%;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 0;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .scope-group-toggle:hover .scope-name {
+        color: var(--brand-strong);
+      }
+
+      .scope-name {
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .scope-count {
+        min-width: 30px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(15, 118, 110, 0.1);
+        color: var(--brand-strong);
+        font-size: 12px;
+        text-align: center;
+      }
+
+      .scope-group-arrow {
+        font-size: 13px;
+        color: var(--muted);
+        transition: transform 0.2s ease;
+      }
+
+      .scope-group.collapsed .scope-group-arrow {
+        transform: rotate(-90deg);
+      }
+
+      .scope-group-body {
+        margin-top: 10px;
+      }
+
+      .scope-empty {
+        color: var(--muted);
+        font-size: 13px;
+        padding: 6px 2px;
+      }
+
+      .scope-items {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .scope-item {
+        width: 100%;
+        text-align: left;
+        border: 1px solid rgba(111, 92, 72, 0.14);
+        background: rgba(255, 255, 255, 0.62);
+        border-radius: 16px;
+        padding: 12px 13px;
+        cursor: pointer;
+        transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+      }
+
+      .scope-item:hover {
+        background: rgba(255, 255, 255, 0.92);
+        transform: translateX(2px);
+      }
+
+      .scope-item.active {
+        border-color: rgba(15, 118, 110, 0.45);
+        background: rgba(15, 118, 110, 0.12);
+      }
+
+      .scope-item-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      .scope-item-meta {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .detail {
+        min-height: 72vh;
+        padding: 24px;
+      }
+
+      .detail-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        align-items: start;
+        margin-bottom: 18px;
+      }
+
+      .detail-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(217, 119, 6, 0.12);
+        color: #9a4d00;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .detail-title {
+        margin: 12px 0 0;
+        font-size: 26px;
+        line-height: 1.2;
+      }
+
+      .detail-meta {
+        margin: 12px 0 0;
+        color: var(--muted);
+        line-height: 1.7;
+        font-size: 14px;
+      }
+
+      .detail-body {
+        min-height: 480px;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.54);
+        padding: 20px;
+      }
+
+      .detail-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .detail-section {
+        border: 1px solid rgba(111, 92, 72, 0.14);
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.78);
+        padding: 18px;
+      }
+
+      .detail-section-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 16px;
+        margin-bottom: 14px;
+      }
+
+      .detail-section-title {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 700;
+      }
+
+      .detail-section-subtitle {
+        margin: 6px 0 0;
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .section-empty {
+        border: 1px dashed rgba(111, 92, 72, 0.22);
+        border-radius: 18px;
+        padding: 18px;
+        color: var(--muted);
+        background: rgba(255, 252, 247, 0.82);
+        line-height: 1.7;
+      }
+
+      .timeline-list {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .timeline-group {
+        border: 1px solid rgba(111, 92, 72, 0.12);
+        border-radius: 20px;
+        background: rgba(247, 242, 233, 0.72);
+        padding: 16px;
+      }
+
+      .timeline-group-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: start;
+        margin-bottom: 14px;
+      }
+
+      .timeline-group-title {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .timeline-group-meta {
+        margin: 6px 0 0;
+        font-size: 12px;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+
+      .timeline-group-count {
+        padding: 5px 11px;
+        border-radius: 999px;
+        background: rgba(15, 118, 110, 0.1);
+        color: var(--brand-strong);
+        font-size: 12px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .timeline-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .timeline-card {
+        border: 1px solid rgba(111, 92, 72, 0.14);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.9);
+        padding: 14px 15px;
+      }
+
+      .timeline-card-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 12px;
+      }
+
+      .timeline-card-title {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .timeline-card-meta {
+        margin: 6px 0 0;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .timeline-card-badges {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: end;
+        gap: 8px;
+      }
+
+      .timeline-card-body {
+        margin-top: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .fact-line {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.7;
+        color: var(--text);
+      }
+
+      .fact-line-label {
+        color: var(--muted);
+        font-weight: 700;
+        margin-right: 6px;
+      }
+
+      .fact-token {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 28px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+      }
+
+      .tone-add {
+        background: rgba(15, 118, 110, 0.12);
+        color: var(--brand-strong);
+      }
+
+      .tone-update {
+        background: rgba(217, 119, 6, 0.14);
+        color: #a05700;
+      }
+
+      .tone-none {
+        background: rgba(100, 116, 139, 0.16);
+        color: #475569;
+      }
+
+      .tone-applied {
+        background: rgba(34, 197, 94, 0.14);
+        color: #166534;
+      }
+
+      .tone-skipped-none {
+        background: rgba(148, 163, 184, 0.18);
+        color: #475569;
+      }
+
+      .tone-write-failed {
+        background: rgba(220, 38, 38, 0.14);
+        color: #b91c1c;
+      }
+
+      .timeline-json {
+        margin-top: 10px;
+        border-top: 1px dashed rgba(111, 92, 72, 0.18);
+        padding-top: 10px;
+      }
+
+      .timeline-json-toggle {
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--brand-strong);
+        user-select: none;
+      }
+
+      .timeline-json-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .timeline-json-card {
+        border-radius: 16px;
+        border: 1px solid rgba(111, 92, 72, 0.12);
+        background: rgba(249, 246, 239, 0.9);
+        padding: 12px;
+      }
+
+      .timeline-json-title {
+        margin: 0 0 8px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .timeline-json-pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "SFMono-Regular", "Menlo", "Monaco", "Cascadia Mono", "Consolas", monospace;
+        font-size: 12px;
+        line-height: 1.65;
+        color: #241d17;
+      }
+
+      .empty-state {
+        min-height: 420px;
+        border: 1px dashed rgba(111, 92, 72, 0.26);
+        border-radius: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 12px;
+        color: var(--muted);
+        text-align: center;
+        padding: 36px 20px;
+      }
+
+      .empty-icon {
+        width: 68px;
+        height: 68px;
+        border-radius: 22px;
+        background: rgba(15, 118, 110, 0.1);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+      }
+
+      .content-pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "SFMono-Regular", "Menlo", "Monaco", "Cascadia Mono", "Consolas", monospace;
+        font-size: 13px;
+        line-height: 1.75;
+        color: #241d17;
+      }
+
+      .message-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .message-card {
+        border-radius: 18px;
+        border: 1px solid rgba(111, 92, 72, 0.14);
+        background: rgba(255, 255, 255, 0.86);
+        padding: 14px 16px;
+      }
+
+      .message-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .message-type {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 78px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        background: rgba(15, 118, 110, 0.12);
+        color: var(--brand-strong);
+      }
+
+      .message-index {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .message-content {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.7;
+        font-size: 14px;
+      }
+
+      .session-context-scroll {
+        max-height: min(72vh, 920px);
+        overflow-y: auto;
+        padding-right: 8px;
+        overscroll-behavior: contain;
+      }
+
+      @media (max-width: 1080px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar {
+          position: static;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .header {
+          padding: 18px 14px 12px;
+        }
+
+        .header-card {
+          padding: 18px;
+          border-radius: 22px;
+          flex-direction: column;
+          align-items: start;
+        }
+
+        .layout {
+          width: min(100% - 20px, 1360px);
+          gap: 14px;
+        }
+
+        .detail,
+        .sidebar {
+          padding: 18px;
+        }
+
+        .detail-title {
+          font-size: 22px;
+        }
+
+        .field-row {
+          flex-direction: column;
+        }
+
+        .detail-section-head,
+        .timeline-group-head,
+        .timeline-card-head {
+          flex-direction: column;
+        }
+
+        .timeline-card-badges {
+          justify-content: start;
+        }
+
+        .timeline-json-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="header">
+        <div class="header-card">
+          <div class="title-wrap">
+            <div class="title-mark">M</div>
+            <div class="title-text">
+              <h1>记忆总览</h1>
+              <p>统一查看 `global`、`facts`、`summaries` 与 `session_context` 四个 scope。</p>
+            </div>
+          </div>
+          <div class="header-actions">
+            <a class="nav-link" id="backToChatLink" href="/chat.html">返回聊天</a>
+            <a class="nav-link" href="/index.html">回到首页</a>
+          </div>
+        </div>
+      </header>
+
+      <main class="layout">
+        <aside class="panel sidebar">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">Scope 导航</h2>
+              <p class="panel-subtitle">左侧按 scope 分组，右侧展示详情。</p>
+            </div>
+          </div>
+
+          <div class="control-card">
+            <label class="field-label" for="userIdInput">User ID</label>
+            <div class="field-row">
+              <input class="input" id="userIdInput" type="text" placeholder="anonymous" />
+              <button class="btn btn-primary" id="refreshBtn" type="button">刷新</button>
+            </div>
+            <div class="hint" id="statusText">准备加载记忆数据。</div>
+          </div>
+
+          <div class="scope-list" id="scopeList"></div>
+        </aside>
+
+        <section class="panel detail">
+          <div class="detail-header">
+            <div>
+              <div class="detail-kicker" id="detailKicker">scope</div>
+              <h2 class="detail-title" id="detailTitle">选择一项记忆</h2>
+              <p class="detail-meta" id="detailMeta">支持查看 markdown 真源文件和当前 session projection 快照。</p>
+            </div>
+          </div>
+          <div class="detail-body" id="detailBody">
+            <div class="empty-state">
+              <div class="empty-icon">🧠</div>
+              <div>左侧选择一个 scope 条目后，这里会显示完整内容。</div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const userIdInput = document.getElementById('userIdInput');
+      const refreshBtn = document.getElementById('refreshBtn');
+      const scopeList = document.getElementById('scopeList');
+      const statusText = document.getElementById('statusText');
+      const detailKicker = document.getElementById('detailKicker');
+      const detailTitle = document.getElementById('detailTitle');
+      const detailMeta = document.getElementById('detailMeta');
+      const detailBody = document.getElementById('detailBody');
+      const backToChatLink = document.getElementById('backToChatLink');
+
+      const state = {
+        userId: 'anonymous',
+        sessionId: '',
+        scopes: null,
+        selection: null,
+        collapsedScopes: {
+          global: true,
+          facts: false,
+          summaries: true,
+          session_context: true
+        }
+      };
+
+      function formatTime(iso) {
+        if (!iso) return '';
+        const date = new Date(iso);
+        if (Number.isNaN(date.getTime())) return iso;
+        return date.toLocaleString();
+      }
+
+      function formatBytes(value) {
+        const size = Number(value || 0);
+        if (!Number.isFinite(size) || size <= 0) return '0 B';
+        if (size < 1024) return size + ' B';
+        if (size < 1024 * 1024) return (size / 1024).toFixed(1) + ' KB';
+        return (size / (1024 * 1024)).toFixed(1) + ' MB';
+      }
+
+      function currentUserId() {
+        return (userIdInput.value || '').trim() || 'anonymous';
+      }
+
+      function buildChatUrl() {
+        const query = new URLSearchParams({ userId: state.userId || 'anonymous' });
+        if (state.sessionId) {
+          query.set('sessionId', state.sessionId);
+        }
+        return '/chat.html?' + query.toString();
+      }
+
+      function syncQuery() {
+        const query = new URLSearchParams({ userId: state.userId || 'anonymous' });
+        if (state.sessionId) {
+          query.set('sessionId', state.sessionId);
+        }
+        window.history.replaceState({}, '', '/memory.html?' + query.toString());
+        backToChatLink.href = buildChatUrl();
+      }
+
+      function setStatus(message) {
+        statusText.textContent = message;
+      }
+
+      function scopeKey(item) {
+        return item.scope + ':' + (item.id || item.sessionId || '');
+      }
+
+      function fileNameOf(path) {
+        if (!path) return '';
+        const parts = String(path).split('/');
+        return parts[parts.length - 1] || path;
+      }
+
+      function allScopeItems() {
+        if (!state.scopes) return [];
+        const items = [];
+        for (const file of state.scopes.globalFiles || []) {
+          items.push({ scope: 'global', id: file.id, label: file.path || file.id, meta: file.kind, raw: file });
+        }
+        for (const file of state.scopes.factFiles || []) {
+          items.push({ scope: 'facts', id: file.id, label: fileNameOf(file.path || file.id), meta: file.path || file.id, raw: file });
+        }
+        for (const file of state.scopes.summaryFiles || []) {
+          items.push({ scope: 'summaries', id: file.id, label: fileNameOf(file.path || file.id), meta: formatTime(file.updatedAt), raw: file });
+        }
+        for (const sessionContext of state.scopes.sessionContexts || []) {
+          items.push({
+            scope: 'session_context',
+            sessionId: sessionContext.sessionId,
+            label: sessionContext.sessionId || 'unknown',
+            meta: (sessionContext.messageCount || 0) + ' 条消息 · ' + formatTime(sessionContext.updatedAt),
+            raw: sessionContext
+          });
+        }
+        return items;
+      }
+
+      function toggleScopeGroup(scope) {
+        state.collapsedScopes[scope] = !state.collapsedScopes[scope];
+        renderScopeList();
+      }
+
+      function renderScopeGroup(scope, title, count, items) {
+        const group = document.createElement('section');
+        const collapsed = Boolean(state.collapsedScopes[scope]);
+        group.className = 'scope-group' + (collapsed ? ' collapsed' : '');
+
+        const head = document.createElement('div');
+        head.className = 'scope-group-head';
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'scope-group-toggle';
+        toggle.addEventListener('click', () => toggleScopeGroup(scope));
+
+        const left = document.createElement('div');
+        const name = document.createElement('div');
+        name.className = 'scope-name';
+        name.textContent = title;
+        left.appendChild(name);
+
+        const right = document.createElement('div');
+        right.style.display = 'flex';
+        right.style.alignItems = 'center';
+        right.style.gap = '8px';
+
+        const badge = document.createElement('div');
+        badge.className = 'scope-count';
+        badge.textContent = String(count);
+        right.appendChild(badge);
+
+        const arrow = document.createElement('div');
+        arrow.className = 'scope-group-arrow';
+        arrow.textContent = '▾';
+        right.appendChild(arrow);
+
+        toggle.appendChild(left);
+        toggle.appendChild(right);
+        head.appendChild(toggle);
+        group.appendChild(head);
+
+        if (collapsed) {
+          return group;
+        }
+
+        const body = document.createElement('div');
+        body.className = 'scope-group-body';
+
+        if (!items.length) {
+          const empty = document.createElement('div');
+          empty.className = 'scope-empty';
+          empty.textContent = '暂无内容';
+          body.appendChild(empty);
+          group.appendChild(body);
+          return group;
+        }
+
+        const list = document.createElement('div');
+        list.className = 'scope-items';
+        for (const item of items) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'scope-item' + (state.selection && scopeKey(state.selection) === scopeKey(item) ? ' active' : '');
+          button.addEventListener('click', () => selectItem(item));
+
+          const titleEl = document.createElement('div');
+          titleEl.className = 'scope-item-title';
+          titleEl.textContent = item.label || 'unknown';
+          button.appendChild(titleEl);
+
+          const metaEl = document.createElement('div');
+          metaEl.className = 'scope-item-meta';
+          metaEl.textContent = item.meta || '';
+          button.appendChild(metaEl);
+
+          list.appendChild(button);
+        }
+        body.appendChild(list);
+        group.appendChild(body);
+        return group;
+      }
+
+      function renderScopeList() {
+        scopeList.innerHTML = '';
+        const grouped = {
+          global: [],
+          facts: [],
+          summaries: [],
+          session_context: []
+        };
+        for (const item of allScopeItems()) {
+          grouped[item.scope].push(item);
+        }
+        scopeList.appendChild(renderScopeGroup('global', 'global', grouped.global.length, grouped.global));
+        scopeList.appendChild(renderScopeGroup('facts', 'facts', grouped.facts.length, grouped.facts));
+        scopeList.appendChild(renderScopeGroup('summaries', 'summaries', grouped.summaries.length, grouped.summaries));
+        scopeList.appendChild(renderScopeGroup('session_context', 'session_context', grouped.session_context.length, grouped.session_context));
+      }
+
+      function renderEmptyDetail(message) {
+        detailBody.innerHTML = '';
+        const empty = document.createElement('div');
+        empty.className = 'empty-state';
+        const icon = document.createElement('div');
+        icon.className = 'empty-icon';
+        icon.textContent = '🧠';
+        const text = document.createElement('div');
+        text.textContent = message;
+        empty.appendChild(icon);
+        empty.appendChild(text);
+        detailBody.appendChild(empty);
+      }
+
+      function createSection(title, subtitle) {
+        const section = document.createElement('section');
+        section.className = 'detail-section';
+
+        const head = document.createElement('div');
+        head.className = 'detail-section-head';
+
+        const titleWrap = document.createElement('div');
+        const titleEl = document.createElement('h3');
+        titleEl.className = 'detail-section-title';
+        titleEl.textContent = title;
+        titleWrap.appendChild(titleEl);
+
+        if (subtitle) {
+          const subtitleEl = document.createElement('p');
+          subtitleEl.className = 'detail-section-subtitle';
+          subtitleEl.textContent = subtitle;
+          titleWrap.appendChild(subtitleEl);
+        }
+
+        head.appendChild(titleWrap);
+        section.appendChild(head);
+        return { section, head };
+      }
+
+      function createSectionEmpty(message) {
+        const empty = document.createElement('div');
+        empty.className = 'section-empty';
+        empty.textContent = message;
+        return empty;
+      }
+
+      function factSummary(fact) {
+        if (!fact) return '暂无';
+        if (fact.statement) return fact.statement;
+        const subject = fact.subject || 'unknown';
+        const attribute = fact.attribute || 'unknown';
+        if (fact.value) {
+          return subject + ' / ' + attribute + ' = ' + fact.value;
+        }
+        return subject + ' / ' + attribute;
+      }
+
+      function prettyJson(value) {
+        if (value == null) return 'null';
+        try {
+          return JSON.stringify(value, null, 2);
+        } catch (_) {
+          return String(value);
+        }
+      }
+
+      function createToken(text, tone) {
+        const token = document.createElement('span');
+        token.className = 'fact-token tone-' + tone;
+        token.textContent = text;
+        return token;
+      }
+
+      function appendFactLine(container, label, value) {
+        const line = document.createElement('p');
+        line.className = 'fact-line';
+
+        const labelEl = document.createElement('span');
+        labelEl.className = 'fact-line-label';
+        labelEl.textContent = label;
+        line.appendChild(labelEl);
+
+        const text = document.createElement('span');
+        text.textContent = value;
+        line.appendChild(text);
+
+        container.appendChild(line);
+      }
+
+      function groupOperations(operations) {
+        const groups = [];
+        const byFlush = new Map();
+        for (const operation of operations || []) {
+          const flushId = operation.flushId || 'unknown-flush';
+          if (!byFlush.has(flushId)) {
+            const group = {
+              flushId,
+              createdAt: operation.createdAt,
+              sessionId: operation.sessionId,
+              trigger: operation.trigger,
+              items: []
+            };
+            byFlush.set(flushId, group);
+            groups.push(group);
+          }
+          byFlush.get(flushId).items.push(operation);
+        }
+        return groups;
+      }
+
+      function renderOperationCard(operation) {
+        const card = document.createElement('article');
+        card.className = 'timeline-card';
+
+        const head = document.createElement('div');
+        head.className = 'timeline-card-head';
+
+        const info = document.createElement('div');
+        const title = document.createElement('h4');
+        title.className = 'timeline-card-title';
+        title.textContent = factSummary(operation.incomingFact);
+        info.appendChild(title);
+
+        const meta = document.createElement('p');
+        meta.className = 'timeline-card-meta';
+        meta.textContent = [
+          operation.decisionSource || 'UNKNOWN_SOURCE',
+          formatTime(operation.createdAt)
+        ].filter(Boolean).join(' · ');
+        info.appendChild(meta);
+
+        const badges = document.createElement('div');
+        badges.className = 'timeline-card-badges';
+        badges.appendChild(createToken(operation.decision || 'UNKNOWN', String(operation.decision || 'none').toLowerCase()));
+        badges.appendChild(createToken(
+          operation.writeOutcome || 'UNKNOWN',
+          String(operation.writeOutcome || 'write-failed').toLowerCase().replace(/_/g, '-')
+        ));
+
+        head.appendChild(info);
+        head.appendChild(badges);
+        card.appendChild(head);
+
+        const body = document.createElement('div');
+        body.className = 'timeline-card-body';
+        appendFactLine(body, '新事实', factSummary(operation.incomingFact));
+        appendFactLine(body, '旧事实', operation.matchedFact ? factSummary(operation.matchedFact) : '无');
+        appendFactLine(body, '候选数', String(operation.candidateCount || 0));
+        appendFactLine(body, '命中 block', operation.matchedBlockId || '无');
+        appendFactLine(body, '写入 block', operation.targetBlockId || '无');
+        card.appendChild(body);
+
+        const detail = document.createElement('details');
+        detail.className = 'timeline-json';
+        const summary = document.createElement('summary');
+        summary.className = 'timeline-json-toggle';
+        summary.textContent = '查看结构化详情';
+        detail.appendChild(summary);
+
+        const grid = document.createElement('div');
+        grid.className = 'timeline-json-grid';
+        for (const block of [
+          { title: 'incomingFact', value: operation.incomingFact || {} },
+          { title: 'matchedFact', value: operation.matchedFact || null },
+          { title: 'candidateFacts', value: operation.candidateFacts || [] }
+        ]) {
+          const item = document.createElement('div');
+          item.className = 'timeline-json-card';
+
+          const itemTitle = document.createElement('h5');
+          itemTitle.className = 'timeline-json-title';
+          itemTitle.textContent = block.title;
+          item.appendChild(itemTitle);
+
+          const pre = document.createElement('pre');
+          pre.className = 'timeline-json-pre';
+          pre.textContent = prettyJson(block.value);
+          item.appendChild(pre);
+
+          grid.appendChild(item);
+        }
+        detail.appendChild(grid);
+        card.appendChild(detail);
+
+        return card;
+      }
+
+      function renderFactTimelineSection(file, operationsState) {
+        const { section, head } = createSection(
+          '事实修改时间线',
+          '按 flushId 分组，展示 durable fact replace 的 ADD / UPDATE / NONE 判定与写入结果。'
+        );
+
+        if (operationsState.status === 'success') {
+          const badge = document.createElement('div');
+          badge.className = 'timeline-group-count';
+          badge.textContent = (operationsState.items || []).length + ' 条记录';
+          head.appendChild(badge);
+        }
+
+        if (operationsState.status === 'error') {
+          section.appendChild(createSectionEmpty('时间线加载失败，请稍后刷新重试。'));
+          return section;
+        }
+
+        const operations = operationsState.items || [];
+        if (!operations.length) {
+          section.appendChild(createSectionEmpty('这个 fact 文件还没有审计记录。下一次 durable fact replace 命中这里后，会在这里出现操作时间线。'));
+          return section;
+        }
+
+        const list = document.createElement('div');
+        list.className = 'timeline-list';
+
+        for (const group of groupOperations(operations)) {
+          const groupEl = document.createElement('section');
+          groupEl.className = 'timeline-group';
+
+          const groupHead = document.createElement('div');
+          groupHead.className = 'timeline-group-head';
+
+          const info = document.createElement('div');
+          const title = document.createElement('h4');
+          title.className = 'timeline-group-title';
+          title.textContent = 'Flush ' + group.flushId;
+          info.appendChild(title);
+
+          const meta = document.createElement('p');
+          meta.className = 'timeline-group-meta';
+          meta.textContent = [
+            formatTime(group.createdAt),
+            group.sessionId ? 'sessionId: ' + group.sessionId : '',
+            group.trigger ? 'trigger: ' + group.trigger : ''
+          ].filter(Boolean).join(' · ');
+          info.appendChild(meta);
+
+          const count = document.createElement('div');
+          count.className = 'timeline-group-count';
+          count.textContent = group.items.length + ' 条判定';
+
+          groupHead.appendChild(info);
+          groupHead.appendChild(count);
+          groupEl.appendChild(groupHead);
+
+          const cards = document.createElement('div');
+          cards.className = 'timeline-cards';
+          for (const operation of group.items) {
+            cards.appendChild(renderOperationCard(operation));
+          }
+          groupEl.appendChild(cards);
+          list.appendChild(groupEl);
+        }
+
+        section.appendChild(list);
+        return section;
+      }
+
+      function renderFileDetail(file) {
+        detailKicker.textContent = file.kind || 'memory';
+        detailTitle.textContent = file.path || file.id || 'memory';
+        detailMeta.textContent = [
+          file.path || file.id || 'unknown',
+          formatBytes(file.size),
+          formatTime(file.updatedAt)
+        ].filter(Boolean).join(' · ');
+
+        detailBody.innerHTML = '';
+        const pre = document.createElement('pre');
+        pre.className = 'content-pre';
+        pre.textContent = file.content || '';
+        detailBody.appendChild(pre);
+      }
+
+      function renderFactDetail(file, operationsState) {
+        detailKicker.textContent = file.kind || 'fact';
+        detailTitle.textContent = file.path || file.id || 'fact';
+        detailMeta.textContent = [
+          file.path || file.id || 'unknown',
+          formatBytes(file.size),
+          formatTime(file.updatedAt)
+        ].filter(Boolean).join(' · ');
+
+        detailBody.innerHTML = '';
+        const stack = document.createElement('div');
+        stack.className = 'detail-stack';
+
+        stack.appendChild(renderFactTimelineSection(file, operationsState));
+
+        const sourceSection = createSection(
+          '当前 md 真源',
+          '这里展示 durable fact 当前真实写入到磁盘中的 markdown 内容。'
+        ).section;
+        const pre = document.createElement('pre');
+        pre.className = 'content-pre';
+        pre.textContent = file.content || '';
+        sourceSection.appendChild(pre);
+        stack.appendChild(sourceSection);
+        detailBody.appendChild(stack);
+      }
+
+      function renderSessionContextDetail(detail) {
+        detailKicker.textContent = 'session_context';
+        detailTitle.textContent = detail.sessionId || 'unknown session';
+        detailMeta.textContent = [
+          (detail.messageCount || 0) + ' 条消息',
+          formatTime(detail.updatedAt)
+        ].join(' · ');
+
+        detailBody.innerHTML = '';
+        const scroll = document.createElement('div');
+        scroll.className = 'session-context-scroll';
+        const list = document.createElement('div');
+        list.className = 'message-list';
+        for (let i = 0; i < (detail.messages || []).length; i++) {
+          const message = detail.messages[i];
+          const card = document.createElement('div');
+          card.className = 'message-card';
+
+          const head = document.createElement('div');
+          head.className = 'message-head';
+
+          const type = document.createElement('div');
+          type.className = 'message-type';
+          type.textContent = message.type || 'UNKNOWN';
+          head.appendChild(type);
+
+          const index = document.createElement('div');
+          index.className = 'message-index';
+          index.textContent = '#' + (i + 1);
+          head.appendChild(index);
+
+          const content = document.createElement('pre');
+          content.className = 'message-content';
+          content.textContent = message.content || '';
+
+          card.appendChild(head);
+          card.appendChild(content);
+          list.appendChild(card);
+        }
+        if (!list.children.length) {
+          renderEmptyDetail('这个 session 当前没有可展示的 projection 快照。');
+          return;
+        }
+        scroll.appendChild(list);
+        detailBody.appendChild(scroll);
+      }
+
+      async function openFile(id) {
+        const query = new URLSearchParams({ userId: state.userId, id });
+        const response = await fetch('/api/memory/file?' + query.toString());
+        if (!response.ok) {
+          throw new Error('open memory file failed: ' + response.status);
+        }
+        return response.json();
+      }
+
+      async function openSessionContext(sessionId) {
+        const query = new URLSearchParams({ userId: state.userId, sessionId });
+        const response = await fetch('/api/memory/session-context?' + query.toString());
+        if (!response.ok) {
+          throw new Error('open session context failed: ' + response.status);
+        }
+        return response.json();
+      }
+
+      async function openFactOperations(path, limit = 50) {
+        const query = new URLSearchParams({ userId: state.userId, path, limit: String(limit) });
+        const response = await fetch('/api/memory/fact-operations?' + query.toString());
+        if (!response.ok) {
+          throw new Error('open fact operations failed: ' + response.status);
+        }
+        return response.json();
+      }
+
+      async function selectItem(item) {
+        state.selection = item;
+        state.collapsedScopes[item.scope] = false;
+        if (item.scope === 'session_context') {
+          state.sessionId = item.sessionId || state.sessionId;
+        }
+        syncQuery();
+        renderScopeList();
+        renderEmptyDetail('正在加载详情...');
+        try {
+          if (item.scope === 'session_context') {
+            renderSessionContextDetail(await openSessionContext(item.sessionId));
+          } else if (item.scope === 'facts') {
+            const results = await Promise.allSettled([
+              openFile(item.id),
+              openFactOperations(item.id, 80)
+            ]);
+            if (results[0].status !== 'fulfilled') {
+              throw new Error('open fact file failed');
+            }
+            renderFactDetail(results[0].value, results[1].status === 'fulfilled'
+              ? { status: 'success', items: results[1].value }
+              : { status: 'error', items: [] });
+          } else {
+            renderFileDetail(await openFile(item.id));
+          }
+        } catch (_) {
+          renderEmptyDetail('详情加载失败，请稍后重试。');
+        }
+      }
+
+      function resolveInitialSelection() {
+        const items = allScopeItems();
+        if (!items.length) {
+          return null;
+        }
+        if (state.selection) {
+          const existing = items.find(item => scopeKey(item) === scopeKey(state.selection));
+          if (existing) {
+            return existing;
+          }
+        }
+        if (state.sessionId) {
+          const matchingSession = items.find(item => item.scope === 'session_context' && item.sessionId === state.sessionId);
+          if (matchingSession) {
+            return matchingSession;
+          }
+        }
+        const firstFact = items.find(item => item.scope === 'facts');
+        if (firstFact) {
+          state.collapsedScopes.facts = false;
+          return firstFact;
+        }
+        return items[0];
+      }
+
+      async function loadScopes() {
+        state.userId = currentUserId();
+        syncQuery();
+        setStatus('正在加载 scope...');
+        renderEmptyDetail('正在加载记忆数据...');
+        try {
+          const query = new URLSearchParams({ userId: state.userId, includeGlobal: 'true' });
+          const response = await fetch('/api/memory/scopes?' + query.toString());
+          if (!response.ok) {
+            throw new Error('load scopes failed: ' + response.status);
+          }
+          state.scopes = await response.json();
+          renderScopeList();
+          const initialSelection = resolveInitialSelection();
+          if (!initialSelection) {
+            detailKicker.textContent = 'scope';
+            detailTitle.textContent = '暂无可展示记忆';
+            detailMeta.textContent = '当前用户下还没有 global / facts / summaries / session_context 数据。';
+            renderEmptyDetail('先去聊天写点记忆，再回来这里看全景。');
+            setStatus('当前用户暂无记忆数据。');
+            return;
+          }
+          await selectItem(initialSelection);
+          setStatus('已加载 ' + state.userId + ' 的记忆 scope。');
+        } catch (_) {
+          scopeList.innerHTML = '';
+          detailKicker.textContent = 'scope';
+          detailTitle.textContent = '记忆加载失败';
+          detailMeta.textContent = '请检查后端服务是否正常运行。';
+          renderEmptyDetail('无法获取 scope 数据，请稍后重试。');
+          setStatus('scope 加载失败。');
+        }
+      }
+
+      refreshBtn.addEventListener('click', loadScopes);
+      userIdInput.addEventListener('change', loadScopes);
+
+      (async function init() {
+        const query = new URLSearchParams(window.location.search);
+        state.userId = (query.get('userId') || '').trim() || 'anonymous';
+        state.sessionId = (query.get('sessionId') || '').trim();
+        userIdInput.value = state.userId;
+        syncQuery();
+        await loadScopes();
+      })();
+    </script>
+  </body>
+</html>
