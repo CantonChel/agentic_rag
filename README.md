@@ -170,6 +170,11 @@ curl http://localhost:8090/healthz
 - [Benchmark 流水线说明](docs/benchmark-pipeline.md)
 - [Benchmark 工具链 README](agentic_rag_benchmark/README.md)
 
+补充说明：
+
+- benchmark 当前已经切到 `Gold package -> runtime build -> chunk mapping -> report` 的分离式链路
+- 如果需要判断“答案结束后有没有命中出题依据”，请优先看 `docs/benchmark-pipeline.md`
+
 ### 本地开发与 Docker
 
 - [Docker Compose 快速说明](docker-compose.README.md)

@@ -1,5 +1,7 @@
 # 第五阶段：Execution Ledger 与单轮受控运行
 
+> 历史说明：本文保留阶段性设计背景。凡涉及旧 `EvidenceUnit` 包、旧四件套 package，或把 authoring block 直接当 runtime chunk 的表述，均以历史方案处理。当前主链请以 `/Users/luolinhao/Documents/trae_projects/agentic_rag/docs/benchmark-pipeline.md` 为准。
+
 ## 目标
 
 第五阶段在第三阶段的 build/knowledgeBase 隔离和第四阶段的 retrieval ledger 之上，再补齐“整轮执行结果”的应用侧真源。

@@ -1023,6 +1023,18 @@ def load_run_report(output_dir: Path) -> Dict[str, Any]:
                 "contextOutputChunkCount": count_context_output_hits_from_payload(sample),
                 "groundTruthContexts": sample.get("ground_truth_contexts") or [],
                 "goldBlockRefs": sample.get("gold_block_refs") or [],
+                "targetGoldBlockIds": sample.get("target_gold_block_ids") or [],
+                "retrievedChunkIds": sample.get("retrieved_chunk_ids") or [],
+                "retrievedGoldBlockIdsAnyStage": sample.get("retrieved_gold_block_ids_any_stage") or [],
+                "retrievedGoldBlockIdsContextOutput": sample.get("retrieved_gold_block_ids_context_output") or [],
+                "targetGoldBlockHitAnyStage": sample.get("target_gold_block_hit_any_stage"),
+                "targetGoldBlockHitContextOutput": sample.get("target_gold_block_hit_context_output"),
+                "matchedStageSet": sample.get("matched_stage_set") or [],
+                "chunkMappingStatus": sample.get("chunk_mapping_status") or "not_attempted",
+                "chunkMappingError": sample.get("chunk_mapping_error"),
+                "toolCalls": sample.get("tool_calls") or [],
+                "retrievalQueries": extract_retrieval_queries(sample),
+                "retrievalTraceRecords": sample.get("retrieval_trace_records") or [],
                 "ragasScores": ragas_row.get("scores") or {},
                 "ragasRow": ragas_row.get("row") or {},
             }
@@ -1210,6 +1222,20 @@ def count_context_output_hits_from_payload(sample_payload: Dict[str, Any]) -> in
         {"retrieval_trace_records": sample_payload.get("retrieval_trace_records") or []},
     )()
     return count_context_output_hits(payload_sample)
+
+
+def extract_retrieval_queries(sample_payload: Dict[str, Any]) -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for record in sample_payload.get("retrieval_trace_records") or []:
+        if not isinstance(record, dict):
+            continue
+        query = str(record.get("query") or "").strip()
+        if not query or query in seen:
+            continue
+        seen.add(query)
+        out.append(query)
+    return out
 
 
 def read_json_file(path: Path) -> Dict[str, Any]:

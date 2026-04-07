@@ -1,5 +1,7 @@
 # 第六阶段：新 Runner、真实评测闭环与旧包退场
 
+> 历史说明：本文保留阶段性设计背景。凡涉及旧 `EvidenceUnit` 包、旧四件套 package，或把 authoring block 直接当 runtime chunk 的表述，均以历史方案处理。当前主链请以 `/Users/luolinhao/Documents/trae_projects/agentic_rag/docs/benchmark-pipeline.md` 为准。
+
 ## 目标
 
 第六阶段把 benchmark 真正跑起来，并把 `agentic_rag_benchmark` 固化为唯一长期入口。

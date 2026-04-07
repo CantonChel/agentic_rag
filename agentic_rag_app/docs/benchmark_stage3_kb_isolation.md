@@ -1,5 +1,7 @@
 # 第三阶段：Build Ledger 与知识库隔离
 
+> 历史说明：本文保留阶段性设计背景。凡涉及旧 `EvidenceUnit` 包、旧四件套 package，或把 authoring block 直接当 runtime chunk 的表述，均以历史方案处理。当前主链请以 `/Users/luolinhao/Documents/trae_projects/agentic_rag/docs/benchmark-pipeline.md` 为准。
+
 ## 目标
 
 第三阶段把 `agentic_rag_benchmark` 产出的标准 package 导入 `agentic_rag_app`，并在应用侧生成独立的 `knowledgeBase`，让评测时可以显式锁定某一个 build 对应的知识库。

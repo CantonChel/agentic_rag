@@ -5,11 +5,12 @@
 当前第六阶段完成后，这个包已经是仓库内唯一的长期 benchmark 入口，负责：
 
 - 复用 `docreader` 做文档标准化
-- 生成稳定 `EvidenceUnit`
-- 生成可迁移的标准 benchmark package
+- 生成 Gold 包八件套
+- 生成可迁移的标准 benchmark package / 子集 package
 - 兼容导入历史 JSONL 题库
 - 调真实 `agentic_rag_app` 单轮链路跑分
 - 读取 `turn summary + retrieval trace` 作为后端真源
+- 通过 `build chunk mapping` 反查命中的 `gold_block_ids`
 - 输出统一的 `json + md + RAGAS` 报告
 
 旧的 `agentic_rag_ragas` 已退场，不再作为默认入口。
@@ -47,18 +48,32 @@ agentic_rag_benchmark/
 
 ## 核心对象
 
-### EvidenceUnit
+### SourceManifest
 
-稳定证据单元。
+标准文件集清单。
 
-- `evidence_id`
+- `source_set_id`
+- `project_key`
+- `source_root`
+- `file_count`
+- `files`
+- `created_at`
+
+### AuthoringBlock
+
+Gold 真源的最小出题单元。
+
+- `block_id`
 - `doc_path`
 - `section_key`
 - `section_title`
-- `canonical_text`
+- `block_type`
+- `heading_level`
+- `text`
 - `anchor`
 - `source_hash`
-- `extractor_version`
+- `start_line`
+- `end_line`
 
 ### BenchmarkSample
 
@@ -68,7 +83,7 @@ agentic_rag_benchmark/
 - `question`
 - `ground_truth`
 - `ground_truth_contexts`
-- `gold_evidence_refs`
+- `gold_block_refs`
 - `tags`
 - `difficulty`
 - `suite_version`
@@ -114,15 +129,20 @@ packages/<project_key>/<suite_version>/
 
 每个 package 固定包含：
 
-- `evidence_units.jsonl`
-- `benchmark_suite.jsonl`
-- `suite_manifest.json`
-- `benchmark_suite.md`
+- `source_manifest.json`
+- `normalized_documents.jsonl`
+- `authoring_blocks.jsonl`
+- `block_links.jsonl`
+- `samples.jsonl`
+- `sample_generation_trace.jsonl`
+- `gold_package_manifest.json`
+- `review.md`
 
 其中：
 
-- `jsonl` 是机器真源
-- `md` 是人工审阅导出
+- `authoring_blocks + gold_block_refs` 是 gold 真源
+- `normalized_documents` 是 app runtime build 的直接输入
+- `review.md` 是人工审阅导出
 
 详细规范见 [portable_package_spec.md](/Users/luolinhao/Documents/trae_projects/agentic_rag/agentic_rag_benchmark/docs/portable_package_spec.md)。
 

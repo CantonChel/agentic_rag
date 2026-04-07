@@ -1,5 +1,7 @@
 # 第四阶段：Retrieval Ledger 与结构化检索 Sidecar
 
+> 历史说明：本文保留阶段性设计背景。凡涉及旧 `EvidenceUnit` 包、旧四件套 package，或把 authoring block 直接当 runtime chunk 的表述，均以历史方案处理。当前主链请以 `/Users/luolinhao/Documents/trae_projects/agentic_rag/docs/benchmark-pipeline.md` 为准。
+
 ## 目标
 
 第四阶段在第三阶段的 `knowledgeBaseId` 隔离基础上，为真实检索链路补齐结构化观测能力：

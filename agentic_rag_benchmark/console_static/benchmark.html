@@ -1161,6 +1161,8 @@
                 <td>${escapeHtml(sample.finishReason || "-")}</td>
                 <td>${escapeHtml(sample.latencyMs ?? "-")}</td>
                 <td>${escapeHtml(sample.contextOutputChunkCount ?? 0)}</td>
+                <td>${escapeHtml(sample.targetGoldBlockHitAnyStage ?? "-")}</td>
+                <td>${escapeHtml(sample.targetGoldBlockHitContextOutput ?? "-")}</td>
                 <td>${escapeHtml(ragasScores.faithfulness ?? "-")}</td>
                 <td>${escapeHtml(ragasScores.context_precision ?? "-")}</td>
                 <td>${escapeHtml(ragasScores.context_recall ?? "-")}</td>
@@ -1178,6 +1180,8 @@
                 <th>Finish Reason</th>
                 <th>Latency</th>
                 <th>Context Chunks</th>
+                <th>Hit Any Stage</th>
+                <th>Hit Context Output</th>
                 <th>Faithfulness</th>
                 <th>Context Precision</th>
                 <th>Context Recall</th>
@@ -1185,6 +1189,69 @@
             </thead>
             <tbody>${rows}</tbody>
           </table>
+        `;
+
+        const detailCards = report.samples
+          .map(
+            (sample) => `
+              <details class="card" style="margin-top: 12px">
+                <summary style="cursor: pointer; font-weight: 600">${escapeHtml(sample.sampleId)} | ${escapeHtml(sample.question)}</summary>
+                <div class="kv" style="margin-top: 12px">
+                  <div>Finish Reason</div><div>${escapeHtml(sample.finishReason || "-")}</div>
+                  <div>Latency</div><div>${escapeHtml(sample.latencyMs ?? "-")}</div>
+                  <div>Chunk Mapping</div><div>${escapeHtml(sample.chunkMappingStatus || "-")}</div>
+                  <div>Matched Stages</div><div>${escapeHtml((sample.matchedStageSet || []).join(", ") || "-")}</div>
+                  <div>Hit Any Stage</div><div>${escapeHtml(sample.targetGoldBlockHitAnyStage ?? "-")}</div>
+                  <div>Hit Context Output</div><div>${escapeHtml(sample.targetGoldBlockHitContextOutput ?? "-")}</div>
+                </div>
+                <div style="margin-top: 12px">
+                  <label>Question</label>
+                  <pre>${escapeHtml(sample.question || "")}</pre>
+                </div>
+                <div style="margin-top: 12px">
+                  <label>Final Answer</label>
+                  <pre>${escapeHtml(sample.finalAnswer || "")}</pre>
+                </div>
+                <div style="margin-top: 12px">
+                  <label>Ground Truth</label>
+                  <pre>${escapeHtml(sample.groundTruth || "")}</pre>
+                </div>
+                <div style="margin-top: 12px">
+                  <label>Gold Block Refs</label>
+                  <pre>${escapeHtml(JSON.stringify(sample.goldBlockRefs || [], null, 2))}</pre>
+                </div>
+                <div class="kv" style="margin-top: 12px">
+                  <div>Target Gold Block IDs</div><div>${escapeHtml((sample.targetGoldBlockIds || []).join(", ") || "-")}</div>
+                  <div>Retrieved Chunk IDs</div><div>${escapeHtml((sample.retrievedChunkIds || []).join(", ") || "-")}</div>
+                  <div>Retrieved Gold IDs Any Stage</div><div>${escapeHtml((sample.retrievedGoldBlockIdsAnyStage || []).join(", ") || "-")}</div>
+                  <div>Retrieved Gold IDs Context Output</div><div>${escapeHtml((sample.retrievedGoldBlockIdsContextOutput || []).join(", ") || "-")}</div>
+                </div>
+                <div style="margin-top: 12px">
+                  <label>Retrieval Queries</label>
+                  <pre>${escapeHtml((sample.retrievalQueries || []).join("\n") || "-")}</pre>
+                </div>
+                <div style="margin-top: 12px">
+                  <label>Tool Calls</label>
+                  <pre>${escapeHtml(JSON.stringify(sample.toolCalls || [], null, 2))}</pre>
+                </div>
+                <div style="margin-top: 12px">
+                  <label>Retrieval Trace Records</label>
+                  <pre>${escapeHtml(JSON.stringify(sample.retrievalTraceRecords || [], null, 2))}</pre>
+                </div>
+                ${
+                  sample.chunkMappingError
+                    ? `<div style="margin-top: 12px"><label>Chunk Mapping Error</label><pre>${escapeHtml(sample.chunkMappingError)}</pre></div>`
+                    : ""
+                }
+              </details>
+            `
+          )
+          .join("");
+        $("reportSamples").innerHTML += `
+          <div style="margin-top: 16px">
+            <label>样本详情</label>
+            ${detailCards}
+          </div>
         `;
       }
 

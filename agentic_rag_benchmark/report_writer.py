@@ -92,6 +92,9 @@ def build_report_summary(sample_results: List[RunBenchmarkSampleResult]) -> Dict
     finish_reason_distribution: Dict[str, int] = {}
     context_output_sample_count = 0
     context_output_chunk_count = 0
+    target_hit_any_stage_count = 0
+    target_hit_context_output_count = 0
+    mapping_unavailable_count = 0
 
     for sample in sample_results:
         finish_reason = sample.finish_reason or "unknown"
@@ -101,6 +104,12 @@ def build_report_summary(sample_results: List[RunBenchmarkSampleResult]) -> Dict
         if context_hits > 0:
             context_output_sample_count += 1
             context_output_chunk_count += context_hits
+        if sample.target_gold_block_hit_any_stage is True:
+            target_hit_any_stage_count += 1
+        if sample.target_gold_block_hit_context_output is True:
+            target_hit_context_output_count += 1
+        if sample.chunk_mapping_status == "unavailable":
+            mapping_unavailable_count += 1
 
     average_latency_ms = round(sum(latency_values) / len(latency_values), 2) if latency_values else None
     success_rate = round((success_count / sample_count) * 100, 2) if sample_count else 0.0
@@ -120,6 +129,11 @@ def build_report_summary(sample_results: List[RunBenchmarkSampleResult]) -> Dict
             "samples_with_context_output": context_output_sample_count,
             "samples_without_context_output": samples_without_context_output,
             "context_output_chunk_count": context_output_chunk_count,
+        },
+        "gold_runtime_hit_overview": {
+            "samples_with_target_hit_any_stage": target_hit_any_stage_count,
+            "samples_with_target_hit_context_output": target_hit_context_output_count,
+            "samples_with_mapping_unavailable": mapping_unavailable_count,
         },
     }
 
@@ -201,6 +215,7 @@ def build_markdown_report(
         lines.append("- 无")
 
     retrieval_hit_overview = summary["retrieval_hit_overview"]
+    gold_runtime_hit_overview = summary["gold_runtime_hit_overview"]
     lines.extend(
         [
             "",
@@ -208,6 +223,13 @@ def build_markdown_report(
             f"- samples_with_context_output: `{retrieval_hit_overview['samples_with_context_output']}` / `{len(sample_results)}`",
             f"- samples_without_context_output: `{retrieval_hit_overview['samples_without_context_output']}` / `{len(sample_results)}`",
             f"- context_output_chunk_count: `{retrieval_hit_overview['context_output_chunk_count']}`",
+            "",
+            "## Gold/Runtime 命中分析说明",
+            "- gold 真源来自 `gold_block_refs`，runtime 真源来自 build 导入后真实切分的 `chunkId`。",
+            "- 命中判断依赖 build 级 `chunk mapping`，不要求 gold block 和 runtime chunk 使用同一套切分。",
+            f"- samples_with_target_hit_any_stage: `{gold_runtime_hit_overview['samples_with_target_hit_any_stage']}` / `{len(sample_results)}`",
+            f"- samples_with_target_hit_context_output: `{gold_runtime_hit_overview['samples_with_target_hit_context_output']}` / `{len(sample_results)}`",
+            f"- samples_with_mapping_unavailable: `{gold_runtime_hit_overview['samples_with_mapping_unavailable']}` / `{len(sample_results)}`",
         ]
     )
     return "\n".join(lines) + "\n"
