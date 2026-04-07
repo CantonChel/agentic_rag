@@ -51,22 +51,23 @@ public class BenchmarkBuildEntity {
 	@Column(nullable = false)
 	private int evidenceCount;
 
-	@Column(nullable = false, length = 128)
-	private String sourceSetId;
+	// Defaults keep Hibernate's ddl-auto=update compatible with pre-stage3 rows.
+	@Column(nullable = false, length = 128, columnDefinition = "varchar(128) default ''")
+	private String sourceSetId = "";
 
-	@Column(nullable = false, length = 64)
-	private String goldPackageVersion;
+	@Column(nullable = false, length = 64, columnDefinition = "varchar(64) default ''")
+	private String goldPackageVersion = "";
 
-	@Column(nullable = false, length = 128)
-	private String goldGeneratorVersion;
+	@Column(nullable = false, length = 128, columnDefinition = "varchar(128) default ''")
+	private String goldGeneratorVersion = "";
 
-	@Column(nullable = false)
+	@Column(nullable = false, columnDefinition = "integer default 0")
 	private int normalizedDocumentCount;
 
-	@Column(nullable = false)
+	@Column(nullable = false, columnDefinition = "integer default 0")
 	private int runtimeChunkCount;
 
-	@Column(nullable = false)
+	@Column(nullable = false, columnDefinition = "integer default 0")
 	private int authoringBlockCount;
 
 	@Column(nullable = false)
