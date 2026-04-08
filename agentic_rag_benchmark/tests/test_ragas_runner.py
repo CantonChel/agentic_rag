@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from agentic_rag_benchmark.ragas_runner import build_ragas_rows
 from agentic_rag_benchmark.ragas_runner import build_ragas_summary
+from agentic_rag_benchmark.ragas_runner import DirectMetricRowResult
 from agentic_rag_benchmark.ragas_runner import evaluate_ragas_for_report
 from agentic_rag_benchmark.ragas_runner import is_context_metric_eligible_row
 from agentic_rag_benchmark.ragas_runner import prepare_ragas_rows
@@ -628,6 +629,96 @@ class RagasRunnerTest(unittest.TestCase):
         self.assertIn("row failed", result.failure_message)
         self.assertEqual(result.diagnostics[0]["status"], "row_evaluation_error")
         self.assertIn("row failed", result.diagnostics[0]["message"])
+
+    def test_score_metric_rows_direct_keeps_timeout_as_diagnostic_instead_of_raising(self) -> None:
+        rows = [
+            {
+                "sample_id": "sample_1",
+                "question": "What is the answer?",
+                "answer": "predicted answer",
+                "ground_truth": "gold answer",
+                "contexts": ["ctx"],
+            }
+        ]
+
+        def fake_ragas_evaluate(*args, **kwargs):
+            raise AssertionError("Direct metric scoring should bypass ragas.evaluate")
+
+        fake_ragas_evaluate.__module__ = "ragas.evaluation"
+
+        with patch("agentic_rag_benchmark.ragas_runner.prepare_metric_for_direct_scoring"), patch(
+            "agentic_rag_benchmark.ragas_runner.run_direct_metric_row_scores",
+            return_value=[
+                DirectMetricRowResult(
+                    sample_id="sample_1",
+                    question="What is the answer?",
+                    value=None,
+                    error_message=None,
+                )
+            ],
+        ), patch(
+            "agentic_rag_benchmark.ragas_runner.run_direct_metric_row_score",
+            side_effect=TimeoutError("RAGAS row faithfulness timed out after 60 seconds."),
+        ):
+            result = score_metric_rows(
+                evaluate=fake_ragas_evaluate,
+                dataset_factory=lambda items: list(items),
+                metric_name="faithfulness",
+                metric=object(),
+                rows=rows,
+                ragas_llm=object(),
+                row_diagnostics_enabled=True,
+                row_diagnostics_limit=20,
+                timeout_seconds=60,
+                row_timeout_seconds=60,
+                max_concurrency=1,
+            )
+
+        self.assertEqual(result.scored_row_count, 0)
+        self.assertEqual(result.recovered_row_count, 0)
+        self.assertIn("timed out after 60 seconds", result.failure_message)
+        self.assertEqual(result.diagnostics[0]["status"], "row_evaluation_error")
+        self.assertIn("timed out after 60 seconds", result.diagnostics[0]["message"])
+
+    def test_score_metric_rows_direct_keeps_initial_timeout_as_failure_instead_of_raising(self) -> None:
+        rows = [
+            {
+                "sample_id": "sample_1",
+                "question": "What is the answer?",
+                "answer": "predicted answer",
+                "ground_truth": "gold answer",
+                "contexts": ["ctx"],
+            }
+        ]
+
+        def fake_ragas_evaluate(*args, **kwargs):
+            raise AssertionError("Direct metric scoring should bypass ragas.evaluate")
+
+        fake_ragas_evaluate.__module__ = "ragas.evaluation"
+
+        with patch("agentic_rag_benchmark.ragas_runner.prepare_metric_for_direct_scoring"), patch(
+            "agentic_rag_benchmark.ragas_runner.run_direct_metric_row_score",
+            side_effect=TimeoutError("RAGAS row faithfulness timed out after 60 seconds."),
+        ):
+            result = score_metric_rows(
+                evaluate=fake_ragas_evaluate,
+                dataset_factory=lambda items: list(items),
+                metric_name="faithfulness",
+                metric=object(),
+                rows=rows,
+                ragas_llm=object(),
+                row_diagnostics_enabled=False,
+                row_diagnostics_limit=0,
+                timeout_seconds=60,
+                row_timeout_seconds=60,
+                max_concurrency=1,
+            )
+
+        self.assertEqual(result.scored_row_count, 0)
+        self.assertEqual(result.recovered_row_count, 0)
+        self.assertIn("timed out after 60 seconds", result.failure_message)
+        self.assertEqual(result.diagnostics[0]["status"], "row_evaluation_error")
+        self.assertIn("timed out after 60 seconds", result.diagnostics[0]["message"])
 
     def _build_report(self, root: Path) -> RunBenchmarkReport:
         request = RunBenchmarkRequest(

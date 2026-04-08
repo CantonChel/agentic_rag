@@ -238,9 +238,20 @@ export DEEPSEEK_MODEL="deepseek-chat"
 `python -m agentic_rag_benchmark.cli ...` 和 `python -m agentic_rag_benchmark.console_server`
 会自动向上查找最近的 `.env` 并补齐缺失配置；已经显式导出的非空环境变量不会被覆盖。
 
-当前环境实际安装的是 `ragas==0.1.22`。你在新版 docs 里看到的 `aevaluate()` /
-`evaluate(..., allow_nest_asyncio=False)` 不属于这个版本的公开 API，所以 runner 这边为了稳定性会优先走
-`ragas Metric.ascore()` 这条公共打分路径，评分公式和 prompt 仍然来自 ragas 本身。
+当前 benchmark 环境固定安装的是 `ragas==0.4.3`，与本地 `ragas` 仓库当前发布代际一致
+（本地仓库是 `v0.4.3-8-g298b682`，也就是 `v0.4.3` 标签之后又有少量未发布提交）。
+
+runner 侧已经切到 `ragas.metrics.collections` + `ragas.llms.llm_factory()` 这套 v0.4 API：
+
+- judge LLM 通过 `AsyncOpenAI(...) + llm_factory(model, client=...)` 创建
+- `context_precision / context_recall / faithfulness` 使用 v0.4 collections metrics
+- 评分公式、statement 拆分和 judge prompt 仍然来自 ragas 本身
+
+为了保留我们现有的逐行 timeout、diagnostics 和产物写出能力，runner 仍然优先走
+`Metric.ascore()` 的 row 级编排，而不是把整个控制流完全交给 `aevaluate()`；也就是说：
+
+- 分数逻辑来自 ragas
+- 输入标准化、超时控制、失败收口、报告落盘由 benchmark 负责
 
 为了降低中文 Markdown 长答案和高 context 数量带来的超时，runner 额外支持以下 RAGAS 输入控制项：
 
@@ -257,11 +268,14 @@ export DEEPSEEK_MODEL="deepseek-chat"
 - `RAGAS_MAX_GROUND_TRUTH_CHARS`
   默认 `0`，表示不截断 ground truth。
 - `RAGAS_FAITHFULNESS_VARIANT`
-  默认 `default`。可选 `hhem`，会尝试使用 ragas 自带的 `FaithulnesswithHHEM` 变体。
+  默认 `default`。可选 `hhem`，会尝试使用 ragas 自带的 `FaithfulnesswithHHEM` 变体。
 - `RAGAS_HHEM_DEVICE`
   仅在 `RAGAS_FAITHFULNESS_VARIANT=hhem` 时生效，默认 `cpu`。
 - `RAGAS_HHEM_BATCH_SIZE`
   仅在 `RAGAS_FAITHFULNESS_VARIANT=hhem` 时生效，默认 `10`。
+- `RAGAS_INSTRUCTOR_MODE`
+  默认 `auto`。通常留空即可；只有对某些非标准 OpenAI-Compatible 后端做兼容时，才需要显式设为
+  `json` / `md_json` / `json_schema` / `tools`。
 
 每次跑完后，这些输入处理信息会写入 `ragas_summary.json` 的 `input_preparation` 字段，方便区分“原始 benchmark 结果”和“传给 ragas judge 的标准化输入”。
 

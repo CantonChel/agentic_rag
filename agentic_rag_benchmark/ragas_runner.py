@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import inspect
 import json
 import math
 import os
@@ -43,6 +44,7 @@ DEFAULT_RAGAS_NORMALIZE_CJK_SENTENCE_PUNCTUATION = True
 DEFAULT_RAGAS_FAITHFULNESS_VARIANT = "default"
 DEFAULT_RAGAS_HHEM_DEVICE = "cpu"
 DEFAULT_RAGAS_HHEM_BATCH_SIZE = 10
+DEFAULT_RAGAS_INSTRUCTOR_MODE = "auto"
 DEFAULT_JUDGE_BASE_URL = "https://api.deepseek.com/v1"
 DEFAULT_JUDGE_MODEL = "deepseek-chat"
 
@@ -172,10 +174,10 @@ def run_ragas_evaluation(
         raise RuntimeError("No valid rows available for RAGAS")
 
     try:
-        from datasets import Dataset
-        from langchain_openai import ChatOpenAI
+        import ragas
+        from openai import AsyncOpenAI
         from ragas import evaluate
-        from ragas.llms import LangchainLLMWrapper
+        from ragas.llms import llm_factory
     except ImportError as exc:
         raise RuntimeError("RAGAS dependencies missing. Install benchmark requirements first.") from exc
 
@@ -215,20 +217,24 @@ def run_ragas_evaluation(
             "RAGAS judge API key is empty. Set RAGAS_JUDGE_API_KEY, DEEPSEEK_API_KEY, or MINIMAX_API_KEY."
         )
 
-    judge_llm = ChatOpenAI(
-        model=judge_model,
+    judge_client = AsyncOpenAI(
         api_key=judge_api_key,
         base_url=judge_base_url,
-        temperature=0,
         timeout=judge_timeout_seconds,
         max_retries=judge_max_retries,
     )
-    ragas_llm = LangchainLLMWrapper(judge_llm)
+    ragas_llm = build_ragas_llm(
+        llm_factory=llm_factory,
+        judge_client=judge_client,
+        judge_model=judge_model,
+        judge_base_url=judge_base_url,
+    )
 
     metric_specs, metric_warnings = build_metric_specs(prepared_rows, ragas_llm)
     warnings: List[str] = []
     warnings.extend(build_ragas_input_preparation_warnings(input_preparation))
     warnings.extend(metric_warnings)
+    warnings.append(f"ragas runtime version: {getattr(ragas, '__version__', 'unknown')}")
 
     per_sample_rows = [dict(row) for row in prepared_rows]
     metrics_requested = [spec.name for spec in metric_specs]
@@ -273,7 +279,7 @@ def run_ragas_evaluation(
 
         evaluation = score_metric_rows(
             evaluate=evaluate,
-            dataset_factory=Dataset.from_list,
+            dataset_factory=lambda items: items,
             metric_name=spec.name,
             metric=spec.metric,
             rows=eligible_rows,
@@ -366,9 +372,45 @@ class MetricRowGap:
     initial_message: str
 
 
+def build_ragas_llm(
+    llm_factory: Callable[..., Any],
+    judge_client: Any,
+    judge_model: str,
+    judge_base_url: str,
+) -> Any:
+    mode = select_ragas_instructor_mode(judge_base_url)
+    kwargs: Dict[str, Any] = {
+        "provider": "openai",
+        "client": judge_client,
+        "temperature": 0,
+    }
+    if mode is not None:
+        kwargs["mode"] = mode
+    return llm_factory(judge_model, **kwargs)
+
+
+def select_ragas_instructor_mode(judge_base_url: str) -> Any:
+    import instructor
+
+    configured = read_first_non_empty_env(
+        "RAGAS_INSTRUCTOR_MODE",
+        default=DEFAULT_RAGAS_INSTRUCTOR_MODE,
+    ).strip().lower()
+    if configured in {"", "auto"}:
+        return None
+
+    mode_mapping = {
+        "json": instructor.Mode.JSON,
+        "md_json": instructor.Mode.MD_JSON,
+        "json_schema": instructor.Mode.JSON_SCHEMA,
+        "tools": instructor.Mode.TOOLS,
+    }
+    return mode_mapping.get(configured, instructor.Mode.MD_JSON)
+
+
 def build_metric_specs(rows: List[Dict[str, Any]], ragas_llm: Any) -> Tuple[List[MetricSpec], List[str]]:
-    from ragas.metrics import ContextPrecision
-    from ragas.metrics import ContextRecall
+    from ragas.metrics.collections import ContextPrecision
+    from ragas.metrics.collections import ContextRecall
 
     warnings: List[str] = []
     metric_specs: List[MetricSpec] = []
@@ -395,7 +437,7 @@ def build_metric_specs(rows: List[Dict[str, Any]], ragas_llm: Any) -> Tuple[List
 
 
 def build_faithfulness_metric(ragas_llm: Any) -> Tuple[Any, List[str]]:
-    from ragas.metrics import Faithfulness
+    from ragas.metrics.collections import Faithfulness
 
     variant = read_first_non_empty_env(
         "RAGAS_FAITHFULNESS_VARIANT",
@@ -408,9 +450,9 @@ def build_faithfulness_metric(ragas_llm: Any) -> Tuple[Any, List[str]]:
         device = read_first_non_empty_env("RAGAS_HHEM_DEVICE", default=DEFAULT_RAGAS_HHEM_DEVICE)
         batch_size = read_positive_int_env("RAGAS_HHEM_BATCH_SIZE", DEFAULT_RAGAS_HHEM_BATCH_SIZE)
         try:
-            from ragas.metrics import FaithulnesswithHHEM
+            from ragas.metrics import FaithfulnesswithHHEM
 
-            return FaithulnesswithHHEM(llm=ragas_llm, device=device, batch_size=batch_size), [
+            return FaithfulnesswithHHEM(llm=ragas_llm, device=device, batch_size=batch_size), [
                 f"faithfulness metric variant: hhem (device={device}, batch_size={batch_size})"
             ]
         except Exception as exc:
@@ -700,6 +742,8 @@ def collect_numeric_score_keys(per_sample_rows: List[Dict[str, Any]], preferred_
 def coerce_float(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
         return None
+    if hasattr(value, "value") and not isinstance(value, (int, float, str)):
+        return coerce_float(getattr(value, "value"))
     if isinstance(value, (int, float)):
         return float(value)
     text = str(value).strip()
@@ -888,7 +932,6 @@ def score_metric_rows_direct(
     diagnostics: List[Dict[str, str]] = []
     row_results_by_sample_id = {item.sample_id: item for item in row_results if item.sample_id}
     row_gaps = collect_metric_row_gaps(rows, values_by_sample_id, phase_label="Batch")
-    failed_sample_ids = {item.sample_id for item in row_results if item.error_message}
 
     if not row_gaps:
         scored_row_count = sum(1 for row in rows if is_finite_number(values_by_sample_id.get(normalize_sample_id(row))))
@@ -914,13 +957,22 @@ def score_metric_rows_direct(
                 )
                 continue
 
-            rerun = run_direct_metric_row_score(
-                metric_name=metric_name,
-                metric=metric,
-                row=gap.row,
-                row_timeout_seconds=effective_row_timeout,
-                timeout_seconds=min(effective_row_timeout, timeout_seconds),
-            )
+            try:
+                rerun = run_direct_metric_row_score(
+                    metric_name=metric_name,
+                    metric=metric,
+                    row=gap.row,
+                    row_timeout_seconds=effective_row_timeout,
+                    timeout_seconds=min(effective_row_timeout, timeout_seconds),
+                )
+            except Exception as exc:
+                rerun = DirectMetricRowResult(
+                    sample_id=gap.sample_id,
+                    question=gap.question,
+                    value=None,
+                    error_message=str(exc),
+                )
+            row_results_by_sample_id[gap.sample_id] = rerun
             if is_finite_number(rerun.value):
                 values_by_sample_id[gap.sample_id] = rerun.value
                 recovered_row_count += 1
@@ -938,10 +990,9 @@ def score_metric_rows_direct(
     if scored_row_count <= 0:
         failure_messages = sorted(
             {
-                (row_results_by_sample_id.get(sample_id).error_message or "").strip()
-                for sample_id in failed_sample_ids
-                if row_results_by_sample_id.get(sample_id) is not None
-                and str(row_results_by_sample_id.get(sample_id).error_message or "").strip()
+                (result.error_message or "").strip()
+                for result in row_results_by_sample_id.values()
+                if str(result.error_message or "").strip()
             }
         )
         if failure_messages:
@@ -1050,15 +1101,22 @@ def run_direct_metric_row_scores(
             )
             continue
 
-        results.append(
-            run_direct_metric_row_score(
+        try:
+            result = run_direct_metric_row_score(
                 metric_name=metric_name,
                 metric=metric,
                 row=dict(row),
                 row_timeout_seconds=remaining_seconds,
                 timeout_seconds=remaining_seconds,
             )
-        )
+        except Exception as exc:
+            result = DirectMetricRowResult(
+                sample_id=sample_id,
+                question=question,
+                value=None,
+                error_message=str(exc),
+            )
+        results.append(result)
     return results
 
 
@@ -1096,9 +1154,13 @@ async def score_direct_metric_row_async(
     sample_id = normalize_sample_id(row)
     question = str(row.get("question") or "").strip()
     try:
-        score = await metric.ascore(
-            dict(row),
-            callbacks=[],
+        score = await asyncio.wait_for(
+            call_metric_ascore(
+                metric_name=metric_name,
+                metric=metric,
+                row=dict(row),
+                row_timeout_seconds=row_timeout_seconds,
+            ),
             timeout=row_timeout_seconds if row_timeout_seconds > 0 else None,
         )
         return DirectMetricRowResult(
@@ -1114,6 +1176,52 @@ async def score_direct_metric_row_async(
             value=None,
             error_message=str(exc),
         )
+
+
+async def call_metric_ascore(
+    metric_name: str,
+    metric: Any,
+    row: Dict[str, Any],
+    row_timeout_seconds: int,
+) -> Any:
+    ascore = getattr(metric, "ascore")
+    signature = inspect.signature(ascore)
+    parameter_names = list(signature.parameters.keys())
+
+    if any(name in parameter_names for name in {"user_input", "response", "retrieved_contexts", "reference"}):
+        kwargs: Dict[str, Any] = {}
+        if "user_input" in parameter_names:
+            kwargs["user_input"] = str(row.get("question") or "")
+        if "response" in parameter_names:
+            kwargs["response"] = str(row.get("answer") or "")
+        if "retrieved_contexts" in parameter_names:
+            kwargs["retrieved_contexts"] = list(row.get("contexts") or [])
+        if "reference" in parameter_names:
+            kwargs["reference"] = str(row.get("ground_truth") or "")
+        if "timeout" in parameter_names:
+            kwargs["timeout"] = row_timeout_seconds if row_timeout_seconds > 0 else None
+        if "callbacks" in parameter_names:
+            kwargs["callbacks"] = []
+        return await ascore(**kwargs)
+
+    if "row" in parameter_names:
+        kwargs = {"row": dict(row)}
+        if "callbacks" in parameter_names:
+            kwargs["callbacks"] = []
+        if "timeout" in parameter_names:
+            kwargs["timeout"] = row_timeout_seconds if row_timeout_seconds > 0 else None
+        return await ascore(**kwargs)
+
+    kwargs = {}
+    if "callbacks" in parameter_names:
+        kwargs["callbacks"] = []
+    if "timeout" in parameter_names:
+        kwargs["timeout"] = row_timeout_seconds if row_timeout_seconds > 0 else None
+
+    expects_positional_row = bool(parameter_names) and parameter_names[0] not in {"callbacks", "timeout"}
+    if expects_positional_row:
+        return await ascore(dict(row), **kwargs)
+    return await ascore(**kwargs)
 
 
 def collect_metric_row_gaps(
