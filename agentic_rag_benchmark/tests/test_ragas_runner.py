@@ -1,6 +1,8 @@
+import asyncio
 import os
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,6 +11,7 @@ from agentic_rag_benchmark.ragas_runner import build_ragas_rows
 from agentic_rag_benchmark.ragas_runner import build_ragas_summary
 from agentic_rag_benchmark.ragas_runner import evaluate_ragas_for_report
 from agentic_rag_benchmark.ragas_runner import is_context_metric_eligible_row
+from agentic_rag_benchmark.ragas_runner import prepare_ragas_rows
 from agentic_rag_benchmark.ragas_runner import read_first_non_empty_env
 from agentic_rag_benchmark.ragas_runner import score_metric_rows
 from agentic_rag_benchmark.runner import RunBenchmarkReport
@@ -159,6 +162,33 @@ class RagasRunnerTest(unittest.TestCase):
             self.assertNotIn("nan", csv_text.lower())
             self.assertIn("sample_1,What is the answer?,predicted answer,gold answer,\"[\"\"final context A\"\"]\",,0.5", csv_text)
 
+    def test_evaluate_ragas_for_report_removes_stale_error_file_on_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            report = self._build_report(root)
+            stale_error = root / "ragas_error.json"
+            stale_error.write_text("{\"message\":\"old\"}", encoding="utf-8")
+
+            artifacts = evaluate_ragas_for_report(
+                report,
+                root,
+                evaluator=lambda rows: (
+                    {
+                        "record_count": 1,
+                        "metrics": ["faithfulness"],
+                        "scores": {"faithfulness": 0.9},
+                        "judge_provider": "fake",
+                        "judge_model": "fake-model",
+                        "judge_base_url": "http://fake",
+                    },
+                    [{"sample_id": "sample_1", "faithfulness": 0.9}],
+                ),
+            )
+
+            self.assertIsNone(artifacts.error_path)
+            self.assertFalse(stale_error.exists())
+            self.assertTrue((root / "ragas_summary.json").exists())
+
     def test_evaluate_ragas_for_report_writes_error_payload_when_evaluation_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -223,6 +253,7 @@ class RagasRunnerTest(unittest.TestCase):
                 ]
             },
             warnings=["faithfulness produced no finite scores across 2 eligible rows."],
+            input_preparation={"max_context_count": 6, "rows_with_context_count_capped": 1},
         )
 
         self.assertEqual(summary["metrics"], ["context_precision", "context_recall"])
@@ -233,6 +264,45 @@ class RagasRunnerTest(unittest.TestCase):
         self.assertEqual(summary["metric_row_stats"]["faithfulness"]["recovered_row_count"], 0)
         self.assertEqual(summary["metric_row_diagnostics"]["faithfulness"][0]["sample_id"], "sample_1")
         self.assertIn("faithfulness produced no finite scores", summary["warnings"][0])
+        self.assertEqual(summary["input_preparation"]["max_context_count"], 6)
+
+    def test_prepare_ragas_rows_normalizes_markdown_and_applies_limits(self) -> None:
+        rows = [
+            {
+                "sample_id": "sample_1",
+                "question": "  What is the answer?  ",
+                "answer": "## 标题\n- 第一条。\n- 第二条！\n```python\nprint('hello')\n```",
+                "ground_truth": "| 列1 | 列2 |\n| --- | --- |\n真值。",
+                "contexts": [
+                    "# 文档\n| A | B |\n| --- | --- |\n内容一。",
+                    "第二段内容。第二段内容。第二段内容。",
+                ],
+            }
+        ]
+
+        with patch.dict(
+            os.environ,
+            {
+                "RAGAS_MAX_CONTEXT_COUNT": "1",
+                "RAGAS_MAX_CONTEXT_CHARS": "50",
+                "RAGAS_MAX_ANSWER_CHARS": "18",
+                "RAGAS_NORMALIZE_MARKDOWN": "true",
+                "RAGAS_NORMALIZE_CJK_SENTENCE_PUNCTUATION": "true",
+            },
+            clear=True,
+        ):
+            prepared_rows, preparation = prepare_ragas_rows(rows)
+
+        self.assertEqual(prepared_rows[0]["question"], "What is the answer?")
+        self.assertEqual(prepared_rows[0]["contexts"], ["文档\nA ; B\n内容一。"])
+        self.assertNotIn("##", prepared_rows[0]["answer"])
+        self.assertNotIn("```", prepared_rows[0]["answer"])
+        self.assertIn("第一条.", prepared_rows[0]["answer"])
+        self.assertTrue(prepared_rows[0]["answer"].endswith("..."))
+        self.assertEqual(preparation["rows_with_modified_answers"], 1)
+        self.assertEqual(preparation["rows_with_truncated_answers"], 1)
+        self.assertEqual(preparation["rows_with_context_count_capped"], 1)
+        self.assertEqual(preparation["rows_with_modified_contexts"], 1)
 
     def test_is_context_metric_eligible_row_requires_ground_truth_and_non_empty_contexts(self) -> None:
         self.assertFalse(
@@ -292,6 +362,7 @@ class RagasRunnerTest(unittest.TestCase):
             ragas_llm=object(),
             row_diagnostics_enabled=True,
             row_diagnostics_limit=20,
+            timeout_seconds=5,
         )
 
         self.assertEqual(result.values_by_sample_id["sample_1"], 0.7)
@@ -327,6 +398,7 @@ class RagasRunnerTest(unittest.TestCase):
             ragas_llm=object(),
             row_diagnostics_enabled=True,
             row_diagnostics_limit=20,
+            timeout_seconds=5,
         )
 
         self.assertEqual(result.scored_row_count, 0)
@@ -335,6 +407,227 @@ class RagasRunnerTest(unittest.TestCase):
         self.assertEqual(result.diagnostics[0]["initial_status"], "empty_metric_value")
         self.assertEqual(result.diagnostics[0]["status"], "row_evaluation_error")
         self.assertIn("No statements were generated from the answer.", result.diagnostics[0]["message"])
+
+    def test_score_metric_rows_provides_event_loop_to_metric_execution(self) -> None:
+        rows = [
+            {
+                "sample_id": "sample_1",
+                "question": "What is the answer?",
+                "answer": "predicted answer",
+                "ground_truth": "gold answer",
+                "contexts": ["ctx"],
+            }
+        ]
+
+        def fake_evaluate(dataset, metrics, llm):
+            loop = asyncio.get_event_loop()
+            self.assertFalse(loop.is_closed())
+            return FakeEvaluateResult([{"sample_id": "sample_1", "faithfulness": 0.8}])
+
+        result = score_metric_rows(
+            evaluate=fake_evaluate,
+            dataset_factory=lambda items: list(items),
+            metric_name="faithfulness",
+            metric=object(),
+            rows=rows,
+            ragas_llm=object(),
+            row_diagnostics_enabled=True,
+            row_diagnostics_limit=20,
+            timeout_seconds=5,
+        )
+
+        self.assertEqual(result.scored_row_count, 1)
+        self.assertEqual(result.values_by_sample_id["sample_1"], 0.8)
+
+    def test_score_metric_rows_marks_timeout_as_failure(self) -> None:
+        rows = [
+            {
+                "sample_id": "sample_1",
+                "question": "What is the answer?",
+                "answer": "predicted answer",
+                "ground_truth": "gold answer",
+                "contexts": ["ctx"],
+            }
+        ]
+
+        def fake_evaluate(dataset, metrics, llm):
+            time.sleep(0.2)
+            return FakeEvaluateResult([{"sample_id": "sample_1", "faithfulness": 0.9}])
+
+        result = score_metric_rows(
+            evaluate=fake_evaluate,
+            dataset_factory=lambda items: list(items),
+            metric_name="faithfulness",
+            metric=object(),
+            rows=rows,
+            ragas_llm=object(),
+            row_diagnostics_enabled=False,
+            row_diagnostics_limit=0,
+            timeout_seconds=0.05,
+        )
+
+        self.assertEqual(result.scored_row_count, 0)
+        self.assertIn("timed out", result.failure_message)
+        self.assertEqual(result.diagnostics[0]["initial_status"], "batch_evaluation_error")
+
+    def test_score_metric_rows_skips_row_recheck_after_batch_error(self) -> None:
+        rows = [
+            {
+                "sample_id": "sample_1",
+                "question": "What is the answer?",
+                "answer": "predicted answer",
+                "ground_truth": "gold answer",
+                "contexts": ["ctx"],
+            }
+        ]
+        call_count = {"value": 0}
+
+        def fake_evaluate(dataset, metrics, llm):
+            call_count["value"] += 1
+            raise RuntimeError("batch failed")
+
+        result = score_metric_rows(
+            evaluate=fake_evaluate,
+            dataset_factory=lambda items: list(items),
+            metric_name="faithfulness",
+            metric=object(),
+            rows=rows,
+            ragas_llm=object(),
+            row_diagnostics_enabled=True,
+            row_diagnostics_limit=20,
+            timeout_seconds=5,
+        )
+
+        self.assertEqual(call_count["value"], 1)
+        self.assertEqual(result.scored_row_count, 0)
+        self.assertEqual(result.diagnostics[0]["initial_status"], "batch_evaluation_error")
+        self.assertIn("batch failed", result.failure_message)
+
+    def test_score_metric_rows_uses_direct_metric_scoring_for_real_ragas_evaluate(self) -> None:
+        rows = [
+            {
+                "sample_id": "sample_1",
+                "question": "What is the answer?",
+                "answer": "predicted answer",
+                "ground_truth": "gold answer",
+                "contexts": ["ctx"],
+            }
+        ]
+
+        async def fake_ascore(row, callbacks=None, timeout=None):
+            self.assertIsNotNone(timeout)
+            self.assertGreater(float(timeout), 0)
+            self.assertLessEqual(float(timeout), 7)
+            return 0.8
+
+        metric = FakeAsyncMetric(fake_ascore)
+
+        def fake_ragas_evaluate(*args, **kwargs):
+            raise AssertionError("Direct metric scoring should bypass ragas.evaluate")
+
+        fake_ragas_evaluate.__module__ = "ragas.evaluation"
+
+        result = score_metric_rows(
+            evaluate=fake_ragas_evaluate,
+            dataset_factory=lambda items: list(items),
+            metric_name="faithfulness",
+            metric=metric,
+            rows=rows,
+            ragas_llm=object(),
+            row_diagnostics_enabled=True,
+            row_diagnostics_limit=20,
+            timeout_seconds=7,
+            row_timeout_seconds=7,
+            max_concurrency=1,
+        )
+
+        self.assertEqual(result.scored_row_count, 1)
+        self.assertEqual(result.values_by_sample_id["sample_1"], 0.8)
+        self.assertEqual(metric.call_count, 1)
+
+    def test_score_metric_rows_direct_recovers_missing_scores_via_single_row_retry(self) -> None:
+        rows = [
+            {
+                "sample_id": "sample_1",
+                "question": "What is the answer?",
+                "answer": "predicted answer",
+                "ground_truth": "gold answer",
+                "contexts": ["ctx"],
+            }
+        ]
+        call_count = {"value": 0}
+
+        async def fake_ascore(row, callbacks=None, timeout=None):
+            call_count["value"] += 1
+            if call_count["value"] == 1:
+                return None
+            return 0.7
+
+        metric = FakeAsyncMetric(fake_ascore)
+
+        def fake_ragas_evaluate(*args, **kwargs):
+            raise AssertionError("Direct metric scoring should bypass ragas.evaluate")
+
+        fake_ragas_evaluate.__module__ = "ragas.evaluation"
+
+        result = score_metric_rows(
+            evaluate=fake_ragas_evaluate,
+            dataset_factory=lambda items: list(items),
+            metric_name="faithfulness",
+            metric=metric,
+            rows=rows,
+            ragas_llm=object(),
+            row_diagnostics_enabled=True,
+            row_diagnostics_limit=20,
+            timeout_seconds=7,
+            row_timeout_seconds=7,
+            max_concurrency=1,
+        )
+
+        self.assertEqual(result.scored_row_count, 1)
+        self.assertEqual(result.recovered_row_count, 1)
+        self.assertEqual(result.values_by_sample_id["sample_1"], 0.7)
+        self.assertEqual(metric.call_count, 2)
+
+    def test_score_metric_rows_direct_records_row_error_message(self) -> None:
+        rows = [
+            {
+                "sample_id": "sample_1",
+                "question": "What is the answer?",
+                "answer": "predicted answer",
+                "ground_truth": "gold answer",
+                "contexts": ["ctx"],
+            }
+        ]
+
+        async def fake_ascore(row, callbacks=None, timeout=None):
+            raise RuntimeError("row failed")
+
+        metric = FakeAsyncMetric(fake_ascore)
+
+        def fake_ragas_evaluate(*args, **kwargs):
+            raise AssertionError("Direct metric scoring should bypass ragas.evaluate")
+
+        fake_ragas_evaluate.__module__ = "ragas.evaluation"
+
+        result = score_metric_rows(
+            evaluate=fake_ragas_evaluate,
+            dataset_factory=lambda items: list(items),
+            metric_name="faithfulness",
+            metric=metric,
+            rows=rows,
+            ragas_llm=object(),
+            row_diagnostics_enabled=False,
+            row_diagnostics_limit=0,
+            timeout_seconds=7,
+            row_timeout_seconds=7,
+            max_concurrency=1,
+        )
+
+        self.assertEqual(result.scored_row_count, 0)
+        self.assertIn("row failed", result.failure_message)
+        self.assertEqual(result.diagnostics[0]["status"], "row_evaluation_error")
+        self.assertIn("row failed", result.diagnostics[0]["message"])
 
     def _build_report(self, root: Path) -> RunBenchmarkReport:
         request = RunBenchmarkRequest(
@@ -392,6 +685,16 @@ class FakeDataFrame:
         if orient != "records":
             raise AssertionError(f"Unexpected orient: {orient}")
         return list(self._rows)
+
+
+class FakeAsyncMetric:
+    def __init__(self, fn):
+        self._fn = fn
+        self.call_count = 0
+
+    async def ascore(self, row, callbacks=None, timeout=None):
+        self.call_count += 1
+        return await self._fn(row, callbacks=callbacks, timeout=timeout)
 
 
 if __name__ == "__main__":

@@ -238,6 +238,33 @@ export DEEPSEEK_MODEL="deepseek-chat"
 `python -m agentic_rag_benchmark.cli ...` 和 `python -m agentic_rag_benchmark.console_server`
 会自动向上查找最近的 `.env` 并补齐缺失配置；已经显式导出的非空环境变量不会被覆盖。
 
+当前环境实际安装的是 `ragas==0.1.22`。你在新版 docs 里看到的 `aevaluate()` /
+`evaluate(..., allow_nest_asyncio=False)` 不属于这个版本的公开 API，所以 runner 这边为了稳定性会优先走
+`ragas Metric.ascore()` 这条公共打分路径，评分公式和 prompt 仍然来自 ragas 本身。
+
+为了降低中文 Markdown 长答案和高 context 数量带来的超时，runner 额外支持以下 RAGAS 输入控制项：
+
+- `RAGAS_NORMALIZE_MARKDOWN`
+  默认 `true`。把标题、列表、表格分隔线、代码 fence 等 Markdown 外壳去掉，再交给 ragas judge。
+- `RAGAS_NORMALIZE_CJK_SENTENCE_PUNCTUATION`
+  默认 `true`。把 `。！？；` 归一成 `.`，减轻 `faithfulness` 在旧版本英文分句逻辑上的 statement 拆分不稳定。
+- `RAGAS_MAX_CONTEXT_COUNT`
+  默认 `6`。只把 `stage=context_output` 的前 N 个 context 送给 ragas。
+- `RAGAS_MAX_CONTEXT_CHARS`
+  默认 `1200`。单个 context 的最大字符数，超出时截断。
+- `RAGAS_MAX_ANSWER_CHARS`
+  默认 `1200`。送给 ragas 的 answer 最大字符数，超出时截断。
+- `RAGAS_MAX_GROUND_TRUTH_CHARS`
+  默认 `0`，表示不截断 ground truth。
+- `RAGAS_FAITHFULNESS_VARIANT`
+  默认 `default`。可选 `hhem`，会尝试使用 ragas 自带的 `FaithulnesswithHHEM` 变体。
+- `RAGAS_HHEM_DEVICE`
+  仅在 `RAGAS_FAITHFULNESS_VARIANT=hhem` 时生效，默认 `cpu`。
+- `RAGAS_HHEM_BATCH_SIZE`
+  仅在 `RAGAS_FAITHFULNESS_VARIANT=hhem` 时生效，默认 `10`。
+
+每次跑完后，这些输入处理信息会写入 `ragas_summary.json` 的 `input_preparation` 字段，方便区分“原始 benchmark 结果”和“传给 ragas judge 的标准化输入”。
+
 ## 真实闭环真源
 
 新 runner 不再依赖：

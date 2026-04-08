@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import json
 import math
 import os
+import queue
+import re
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,8 +31,29 @@ DEFAULT_JUDGE_TIMEOUT_SECONDS = 60
 DEFAULT_JUDGE_MAX_RETRIES = 1
 DEFAULT_ROW_DIAGNOSTICS_ENABLED = True
 DEFAULT_ROW_DIAGNOSTICS_LIMIT = 5
+DEFAULT_METRIC_TIMEOUT_SECONDS = 180
+DEFAULT_ROW_TIMEOUT_SECONDS = 60
+DEFAULT_METRIC_MAX_CONCURRENCY = 2
+DEFAULT_RAGAS_MAX_CONTEXT_COUNT = 6
+DEFAULT_RAGAS_MAX_CONTEXT_CHARS = 1200
+DEFAULT_RAGAS_MAX_ANSWER_CHARS = 1200
+DEFAULT_RAGAS_MAX_GROUND_TRUTH_CHARS = 0
+DEFAULT_RAGAS_NORMALIZE_MARKDOWN = True
+DEFAULT_RAGAS_NORMALIZE_CJK_SENTENCE_PUNCTUATION = True
+DEFAULT_RAGAS_FAITHFULNESS_VARIANT = "default"
+DEFAULT_RAGAS_HHEM_DEVICE = "cpu"
+DEFAULT_RAGAS_HHEM_BATCH_SIZE = 10
 DEFAULT_JUDGE_BASE_URL = "https://api.deepseek.com/v1"
 DEFAULT_JUDGE_MODEL = "deepseek-chat"
+
+
+MARKDOWN_HEADING_PATTERN = re.compile(r"^\s{0,3}#{1,6}\s*")
+MARKDOWN_LIST_PATTERN = re.compile(r"^\s*(?:[-*+]\s+|\d+\.\s+)")
+MARKDOWN_BLOCKQUOTE_PATTERN = re.compile(r"^\s*>\s*")
+MARKDOWN_TABLE_SEPARATOR_PATTERN = re.compile(r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*$")
+MARKDOWN_FENCE_PATTERN = re.compile(r"^\s*```")
+MULTISPACE_PATTERN = re.compile(r"[ \t]{2,}")
+MULTINEWLINE_PATTERN = re.compile(r"\n{3,}")
 
 
 @dataclass(frozen=True)
@@ -54,6 +80,9 @@ def evaluate_ragas_for_report(
     per_sample_csv_path = output_dir / "ragas_scores_per_sample.csv"
     error_path = output_dir / "ragas_error.json"
     evaluator = evaluator or run_ragas_evaluation
+    remove_file_if_exists(summary_path)
+    remove_file_if_exists(per_sample_csv_path)
+    remove_file_if_exists(error_path)
 
     try:
         emit_progress(
@@ -147,9 +176,6 @@ def run_ragas_evaluation(
         from langchain_openai import ChatOpenAI
         from ragas import evaluate
         from ragas.llms import LangchainLLMWrapper
-        from ragas.metrics import context_precision
-        from ragas.metrics import context_recall
-        from ragas.metrics import faithfulness
     except ImportError as exc:
         raise RuntimeError("RAGAS dependencies missing. Install benchmark requirements first.") from exc
 
@@ -171,6 +197,19 @@ def run_ragas_evaluation(
     judge_max_retries = read_non_negative_int_env("RAGAS_JUDGE_MAX_RETRIES", DEFAULT_JUDGE_MAX_RETRIES)
     row_diagnostics_enabled = read_bool_env("RAGAS_ROW_DIAGNOSTICS_ENABLED", DEFAULT_ROW_DIAGNOSTICS_ENABLED)
     row_diagnostics_limit = read_non_negative_int_env("RAGAS_ROW_DIAGNOSTICS_LIMIT", DEFAULT_ROW_DIAGNOSTICS_LIMIT)
+    metric_timeout_seconds = read_non_negative_int_env(
+        "RAGAS_METRIC_TIMEOUT_SECONDS",
+        DEFAULT_METRIC_TIMEOUT_SECONDS,
+    )
+    row_timeout_seconds = read_non_negative_int_env(
+        "RAGAS_ROW_TIMEOUT_SECONDS",
+        DEFAULT_ROW_TIMEOUT_SECONDS,
+    )
+    max_concurrency = read_positive_int_env(
+        "RAGAS_METRIC_MAX_CONCURRENCY",
+        DEFAULT_METRIC_MAX_CONCURRENCY,
+    )
+    prepared_rows, input_preparation = prepare_ragas_rows(rows)
     if not judge_api_key:
         raise RuntimeError(
             "RAGAS judge API key is empty. Set RAGAS_JUDGE_API_KEY, DEEPSEEK_API_KEY, or MINIMAX_API_KEY."
@@ -186,22 +225,15 @@ def run_ragas_evaluation(
     )
     ragas_llm = LangchainLLMWrapper(judge_llm)
 
-    metric_specs = [
-        MetricSpec(name="faithfulness", metric=faithfulness, row_filter=lambda row: True),
-    ]
-    if any(bool(str(row.get("ground_truth") or "").strip()) for row in rows):
-        metric_specs.extend(
-            [
-                MetricSpec(name="context_precision", metric=context_precision, row_filter=is_context_metric_eligible_row),
-                MetricSpec(name="context_recall", metric=context_recall, row_filter=is_context_metric_eligible_row),
-            ]
-        )
+    metric_specs, metric_warnings = build_metric_specs(prepared_rows, ragas_llm)
+    warnings: List[str] = []
+    warnings.extend(build_ragas_input_preparation_warnings(input_preparation))
+    warnings.extend(metric_warnings)
 
-    per_sample_rows = [dict(row) for row in rows]
+    per_sample_rows = [dict(row) for row in prepared_rows]
     metrics_requested = [spec.name for spec in metric_specs]
     metrics_completed: List[str] = []
     metrics_failed: List[Dict[str, str]] = []
-    warnings: List[str] = []
     metric_row_stats: Dict[str, Dict[str, int]] = {}
     metric_row_diagnostics: Dict[str, List[Dict[str, str]]] = {}
 
@@ -222,7 +254,7 @@ def run_ragas_evaluation(
             message=f"Evaluating metric {spec.name}",
             details={"metric": spec.name},
         )
-        eligible_rows = [dict(row) for row in rows if spec.row_filter(row)]
+        eligible_rows = [dict(row) for row in prepared_rows if spec.row_filter(row)]
         eligible_count = len(eligible_rows)
         if not eligible_rows:
             metrics_failed.append({"metric": spec.name, "message": "No eligible rows available for evaluation."})
@@ -248,6 +280,11 @@ def run_ragas_evaluation(
             ragas_llm=ragas_llm,
             row_diagnostics_enabled=row_diagnostics_enabled,
             row_diagnostics_limit=row_diagnostics_limit,
+            timeout_seconds=metric_timeout_seconds,
+            row_timeout_seconds=row_timeout_seconds,
+            max_concurrency=max_concurrency,
+            judge_timeout_seconds=judge_timeout_seconds,
+            judge_max_retries=judge_max_retries,
         )
 
         metric_row_diagnostics[spec.name] = evaluation.diagnostics
@@ -299,6 +336,7 @@ def run_ragas_evaluation(
         metric_row_stats=metric_row_stats,
         metric_row_diagnostics=metric_row_diagnostics,
         warnings=warnings,
+        input_preparation=input_preparation,
     )
     return summary, per_sample_rows
 
@@ -328,6 +366,63 @@ class MetricRowGap:
     initial_message: str
 
 
+def build_metric_specs(rows: List[Dict[str, Any]], ragas_llm: Any) -> Tuple[List[MetricSpec], List[str]]:
+    from ragas.metrics import ContextPrecision
+    from ragas.metrics import ContextRecall
+
+    warnings: List[str] = []
+    metric_specs: List[MetricSpec] = []
+    if any(bool(str(row.get("ground_truth") or "").strip()) for row in rows):
+        metric_specs.extend(
+            [
+                MetricSpec(
+                    name="context_precision",
+                    metric=ContextPrecision(llm=ragas_llm),
+                    row_filter=is_context_metric_eligible_row,
+                ),
+                MetricSpec(
+                    name="context_recall",
+                    metric=ContextRecall(llm=ragas_llm),
+                    row_filter=is_context_metric_eligible_row,
+                ),
+            ]
+        )
+
+    faithfulness_metric, faithfulness_warnings = build_faithfulness_metric(ragas_llm)
+    warnings.extend(faithfulness_warnings)
+    metric_specs.append(MetricSpec(name="faithfulness", metric=faithfulness_metric, row_filter=lambda row: True))
+    return metric_specs, warnings
+
+
+def build_faithfulness_metric(ragas_llm: Any) -> Tuple[Any, List[str]]:
+    from ragas.metrics import Faithfulness
+
+    variant = read_first_non_empty_env(
+        "RAGAS_FAITHFULNESS_VARIANT",
+        default=DEFAULT_RAGAS_FAITHFULNESS_VARIANT,
+    ).strip().lower()
+    if variant in {"", "default", "llm"}:
+        return Faithfulness(llm=ragas_llm), []
+
+    if variant == "hhem":
+        device = read_first_non_empty_env("RAGAS_HHEM_DEVICE", default=DEFAULT_RAGAS_HHEM_DEVICE)
+        batch_size = read_positive_int_env("RAGAS_HHEM_BATCH_SIZE", DEFAULT_RAGAS_HHEM_BATCH_SIZE)
+        try:
+            from ragas.metrics import FaithulnesswithHHEM
+
+            return FaithulnesswithHHEM(llm=ragas_llm, device=device, batch_size=batch_size), [
+                f"faithfulness metric variant: hhem (device={device}, batch_size={batch_size})"
+            ]
+        except Exception as exc:
+            return Faithfulness(llm=ragas_llm), [
+                f"faithfulness metric variant hhem unavailable, fell back to default ragas faithfulness: {exc}"
+            ]
+
+    return Faithfulness(llm=ragas_llm), [
+        f"Unsupported RAGAS_FAITHFULNESS_VARIANT={variant!r}; fell back to default ragas faithfulness."
+    ]
+
+
 def build_ragas_summary(
     per_sample_rows: List[Dict[str, Any]],
     judge_model: str,
@@ -338,6 +433,7 @@ def build_ragas_summary(
     metric_row_stats: Dict[str, Dict[str, int]] | None = None,
     metric_row_diagnostics: Dict[str, List[Dict[str, str]]] | None = None,
     warnings: List[str] | None = None,
+    input_preparation: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     score_keys = collect_numeric_score_keys(per_sample_rows, metrics_completed or metrics_requested)
     scores: Dict[str, float] = {}
@@ -372,7 +468,216 @@ def build_ragas_summary(
         "judge_provider": "openai_compatible",
         "judge_model": judge_model,
         "judge_base_url": judge_base_url,
+        "input_preparation": dict(input_preparation or {}),
     }
+
+
+def prepare_ragas_rows(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    config = read_ragas_input_config()
+    prepared_rows: List[Dict[str, Any]] = []
+    stats = {
+        "rows_with_modified_fields": 0,
+        "rows_with_modified_answers": 0,
+        "rows_with_truncated_answers": 0,
+        "rows_with_modified_ground_truths": 0,
+        "rows_with_truncated_ground_truths": 0,
+        "rows_with_modified_contexts": 0,
+        "rows_with_truncated_contexts": 0,
+        "rows_with_context_count_capped": 0,
+    }
+
+    for row in rows:
+        prepared_row, row_stats = prepare_ragas_row(row, config)
+        prepared_rows.append(prepared_row)
+        for key, value in row_stats.items():
+            if value:
+                stats[key] += 1
+
+    return prepared_rows, {
+        "row_count": len(prepared_rows),
+        "normalize_markdown": config["normalize_markdown"],
+        "normalize_cjk_sentence_punctuation": config["normalize_cjk_sentence_punctuation"],
+        "max_context_count": config["max_context_count"],
+        "max_context_chars": config["max_context_chars"],
+        "max_answer_chars": config["max_answer_chars"],
+        "max_ground_truth_chars": config["max_ground_truth_chars"],
+        **stats,
+    }
+
+
+def read_ragas_input_config() -> Dict[str, Any]:
+    return {
+        "normalize_markdown": read_bool_env("RAGAS_NORMALIZE_MARKDOWN", DEFAULT_RAGAS_NORMALIZE_MARKDOWN),
+        "normalize_cjk_sentence_punctuation": read_bool_env(
+            "RAGAS_NORMALIZE_CJK_SENTENCE_PUNCTUATION",
+            DEFAULT_RAGAS_NORMALIZE_CJK_SENTENCE_PUNCTUATION,
+        ),
+        "max_context_count": read_non_negative_int_env("RAGAS_MAX_CONTEXT_COUNT", DEFAULT_RAGAS_MAX_CONTEXT_COUNT),
+        "max_context_chars": read_non_negative_int_env("RAGAS_MAX_CONTEXT_CHARS", DEFAULT_RAGAS_MAX_CONTEXT_CHARS),
+        "max_answer_chars": read_non_negative_int_env("RAGAS_MAX_ANSWER_CHARS", DEFAULT_RAGAS_MAX_ANSWER_CHARS),
+        "max_ground_truth_chars": read_non_negative_int_env(
+            "RAGAS_MAX_GROUND_TRUTH_CHARS",
+            DEFAULT_RAGAS_MAX_GROUND_TRUTH_CHARS,
+        ),
+    }
+
+
+def prepare_ragas_row(row: Dict[str, Any], config: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, bool]]:
+    prepared_row = dict(row)
+    original_answer = str(row.get("answer") or "")
+    prepared_answer = normalize_ragas_text(
+        original_answer,
+        normalize_markdown=config["normalize_markdown"],
+        normalize_cjk_sentence_punctuation=config["normalize_cjk_sentence_punctuation"],
+    )
+    prepared_answer, answer_truncated = truncate_ragas_text(prepared_answer, config["max_answer_chars"])
+    prepared_row["answer"] = prepared_answer
+
+    original_ground_truth = str(row.get("ground_truth") or "")
+    prepared_ground_truth = normalize_ragas_text(
+        original_ground_truth,
+        normalize_markdown=config["normalize_markdown"],
+        normalize_cjk_sentence_punctuation=config["normalize_cjk_sentence_punctuation"],
+    )
+    prepared_ground_truth, ground_truth_truncated = truncate_ragas_text(
+        prepared_ground_truth,
+        config["max_ground_truth_chars"],
+    )
+    prepared_row["ground_truth"] = prepared_ground_truth
+
+    original_contexts = [str(item or "") for item in (row.get("contexts") or []) if str(item or "").strip()]
+    prepared_contexts: List[str] = []
+    context_truncated = False
+    for context in original_contexts:
+        normalized_context = normalize_ragas_text(
+            context,
+            normalize_markdown=config["normalize_markdown"],
+            normalize_cjk_sentence_punctuation=False,
+        )
+        normalized_context, truncated = truncate_ragas_text(normalized_context, config["max_context_chars"])
+        context_truncated = context_truncated or truncated
+        if normalized_context.strip():
+            prepared_contexts.append(normalized_context)
+
+    context_count_capped = False
+    max_context_count = config["max_context_count"]
+    if max_context_count > 0 and len(prepared_contexts) > max_context_count:
+        prepared_contexts = prepared_contexts[:max_context_count]
+        context_count_capped = True
+
+    prepared_row["contexts"] = prepared_contexts or [""]
+    prepared_row["question"] = normalize_ragas_whitespace(str(row.get("question") or ""))
+
+    normalized_original_contexts = [normalize_ragas_whitespace(item) for item in original_contexts]
+    row_stats = {
+        "rows_with_modified_fields": (
+            normalize_ragas_whitespace(original_answer) != prepared_answer
+            or normalize_ragas_whitespace(original_ground_truth) != prepared_ground_truth
+            or normalized_original_contexts != prepared_contexts
+        ),
+        "rows_with_modified_answers": normalize_ragas_whitespace(original_answer) != prepared_answer,
+        "rows_with_truncated_answers": answer_truncated,
+        "rows_with_modified_ground_truths": normalize_ragas_whitespace(original_ground_truth) != prepared_ground_truth,
+        "rows_with_truncated_ground_truths": ground_truth_truncated,
+        "rows_with_modified_contexts": normalized_original_contexts != prepared_contexts,
+        "rows_with_truncated_contexts": context_truncated,
+        "rows_with_context_count_capped": context_count_capped,
+    }
+    return prepared_row, row_stats
+
+
+def build_ragas_input_preparation_warnings(input_preparation: Dict[str, Any]) -> List[str]:
+    warnings: List[str] = []
+    modified_row_count = int(input_preparation.get("rows_with_modified_fields") or 0)
+    if modified_row_count > 0:
+        warnings.append(
+            "RAGAS input normalization modified "
+            f"{modified_row_count}/{int(input_preparation.get('row_count') or 0)} rows "
+            "(markdown flattened / whitespace normalized / Chinese sentence punctuation normalized)."
+        )
+
+    context_cap_count = int(input_preparation.get("rows_with_context_count_capped") or 0)
+    if context_cap_count > 0:
+        warnings.append(
+            f"RAGAS input capped context count for {context_cap_count} rows at "
+            f"{int(input_preparation.get('max_context_count') or 0)} contexts."
+        )
+
+    answer_truncation_count = int(input_preparation.get("rows_with_truncated_answers") or 0)
+    if answer_truncation_count > 0:
+        warnings.append(
+            f"RAGAS input truncated answers for {answer_truncation_count} rows at "
+            f"{int(input_preparation.get('max_answer_chars') or 0)} characters."
+        )
+
+    context_truncation_count = int(input_preparation.get("rows_with_truncated_contexts") or 0)
+    if context_truncation_count > 0:
+        warnings.append(
+            f"RAGAS input truncated contexts for {context_truncation_count} rows at "
+            f"{int(input_preparation.get('max_context_chars') or 0)} characters."
+        )
+    return warnings
+
+
+def normalize_ragas_text(
+    value: str,
+    *,
+    normalize_markdown: bool,
+    normalize_cjk_sentence_punctuation: bool,
+) -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return ""
+
+    if normalize_markdown:
+        lines: List[str] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if MARKDOWN_TABLE_SEPARATOR_PATTERN.match(line):
+                continue
+            if MARKDOWN_FENCE_PATTERN.match(line):
+                continue
+            line = MARKDOWN_HEADING_PATTERN.sub("", line)
+            line = MARKDOWN_LIST_PATTERN.sub("", line)
+            line = MARKDOWN_BLOCKQUOTE_PATTERN.sub("", line)
+            line = line.replace("`", "")
+            line = line.replace("|", " ; ")
+            line = line.replace("---", " ")
+            line = normalize_ragas_whitespace(line)
+            line = line.strip(" ;")
+            if line:
+                lines.append(line)
+        text = "\n".join(lines)
+
+    if normalize_cjk_sentence_punctuation:
+        text = (
+            text.replace("。", ". ")
+            .replace("！", ". ")
+            .replace("？", ". ")
+            .replace("；", ". ")
+        )
+
+    text = normalize_ragas_whitespace(text)
+    text = MULTINEWLINE_PATTERN.sub("\n\n", text)
+    return text.strip()
+
+
+def normalize_ragas_whitespace(value: str) -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    collapsed_lines = [MULTISPACE_PATTERN.sub(" ", line).strip() for line in text.splitlines()]
+    return "\n".join(line for line in collapsed_lines if line).strip()
+
+
+def truncate_ragas_text(value: str, max_chars: int) -> Tuple[str, bool]:
+    text = str(value or "").strip()
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text, False
+    truncated = text[:max_chars].rstrip()
+    if not truncated:
+        return "", True
+    return f"{truncated} ...", True
 
 
 def collect_numeric_score_keys(per_sample_rows: List[Dict[str, Any]], preferred_keys: List[str] | None = None) -> List[str]:
@@ -440,7 +745,27 @@ def score_metric_rows(
     ragas_llm: Any,
     row_diagnostics_enabled: bool,
     row_diagnostics_limit: int,
+    timeout_seconds: int,
+    row_timeout_seconds: int | None = None,
+    max_concurrency: int | None = None,
+    judge_timeout_seconds: int | None = None,
+    judge_max_retries: int | None = None,
 ) -> MetricEvaluationResult:
+    if should_use_direct_metric_scoring(evaluate):
+        return score_metric_rows_direct(
+            metric_name=metric_name,
+            metric=metric,
+            rows=rows,
+            ragas_llm=ragas_llm,
+            row_diagnostics_enabled=row_diagnostics_enabled,
+            row_diagnostics_limit=row_diagnostics_limit,
+            timeout_seconds=timeout_seconds,
+            row_timeout_seconds=row_timeout_seconds,
+            max_concurrency=max_concurrency,
+            judge_timeout_seconds=judge_timeout_seconds,
+            judge_max_retries=judge_max_retries,
+        )
+
     values_by_sample_id: Dict[str, float | None] = {}
     diagnostics: List[Dict[str, str]] = []
     recovered_row_count = 0
@@ -454,6 +779,7 @@ def score_metric_rows(
             metric=metric,
             rows=rows,
             ragas_llm=ragas_llm,
+            timeout_seconds=timeout_seconds,
         )
         values_by_sample_id = map_metric_values(metric_rows, metric_name)
         row_gaps = collect_metric_row_gaps(rows, values_by_sample_id, phase_label="Batch")
@@ -480,7 +806,7 @@ def score_metric_rows(
             failure_message=failure_message,
         )
 
-    if not row_diagnostics_enabled:
+    if failure_message is not None or not row_diagnostics_enabled:
         diagnostics = [build_metric_row_diagnostic(gap, gap.initial_status, gap.initial_message) for gap in row_gaps]
     else:
         recovered_row_count, diagnostics = diagnose_metric_row_gaps(
@@ -492,6 +818,7 @@ def score_metric_rows(
             ragas_llm=ragas_llm,
             values_by_sample_id=values_by_sample_id,
             row_diagnostics_limit=row_diagnostics_limit,
+            timeout_seconds=timeout_seconds,
         )
 
     scored_row_count = sum(1 for row in rows if is_finite_number(values_by_sample_id.get(normalize_sample_id(row))))
@@ -505,6 +832,288 @@ def score_metric_rows(
         diagnostics=diagnostics,
         failure_message=failure_message,
     )
+
+
+def should_use_direct_metric_scoring(evaluate: Callable[..., Any]) -> bool:
+    module_name = str(getattr(evaluate, "__module__", "") or "")
+    qualname = str(getattr(evaluate, "__qualname__", "") or getattr(evaluate, "__name__", "") or "")
+    return module_name.startswith("ragas.") and "evaluate" in qualname
+
+
+@dataclass(frozen=True)
+class DirectMetricRowResult:
+    sample_id: str
+    question: str
+    value: float | None
+    error_message: str | None = None
+
+
+def score_metric_rows_direct(
+    metric_name: str,
+    metric: Any,
+    rows: List[Dict[str, Any]],
+    ragas_llm: Any,
+    row_diagnostics_enabled: bool,
+    row_diagnostics_limit: int,
+    timeout_seconds: int,
+    row_timeout_seconds: int | None,
+    max_concurrency: int | None,
+    judge_timeout_seconds: int | None,
+    judge_max_retries: int | None,
+) -> MetricEvaluationResult:
+    effective_row_timeout = row_timeout_seconds if row_timeout_seconds and row_timeout_seconds > 0 else timeout_seconds
+    effective_concurrency = max(max_concurrency or DEFAULT_METRIC_MAX_CONCURRENCY, 1)
+    prepare_metric_for_direct_scoring(
+        metric=metric,
+        ragas_llm=ragas_llm,
+        timeout_seconds=judge_timeout_seconds or effective_row_timeout,
+        max_concurrency=effective_concurrency,
+        max_retries=judge_max_retries or DEFAULT_JUDGE_MAX_RETRIES,
+    )
+    row_results = run_direct_metric_row_scores(
+        metric_name=metric_name,
+        metric=metric,
+        rows=rows,
+        row_timeout_seconds=effective_row_timeout,
+        max_concurrency=effective_concurrency,
+        timeout_seconds=timeout_seconds,
+    )
+
+    values_by_sample_id: Dict[str, float | None] = {
+        item.sample_id: item.value
+        for item in row_results
+        if item.sample_id
+    }
+    recovered_row_count = 0
+    diagnostics: List[Dict[str, str]] = []
+    row_results_by_sample_id = {item.sample_id: item for item in row_results if item.sample_id}
+    row_gaps = collect_metric_row_gaps(rows, values_by_sample_id, phase_label="Batch")
+    failed_sample_ids = {item.sample_id for item in row_results if item.error_message}
+
+    if not row_gaps:
+        scored_row_count = sum(1 for row in rows if is_finite_number(values_by_sample_id.get(normalize_sample_id(row))))
+        return MetricEvaluationResult(
+            values_by_sample_id=values_by_sample_id,
+            scored_row_count=scored_row_count,
+            recovered_row_count=0,
+            diagnostics=[],
+            failure_message=None,
+        )
+
+    if not row_diagnostics_enabled:
+        diagnostics = build_direct_metric_row_diagnostics(row_gaps, row_results_by_sample_id)
+    else:
+        for index, gap in enumerate(row_gaps):
+            if row_diagnostics_limit >= 0 and index >= row_diagnostics_limit:
+                diagnostics.append(
+                    build_metric_row_diagnostic(
+                        gap,
+                        status="diagnostic_skipped",
+                        message=f"Single-row re-evaluation skipped because limit {row_diagnostics_limit} was reached.",
+                    )
+                )
+                continue
+
+            rerun = run_direct_metric_row_score(
+                metric_name=metric_name,
+                metric=metric,
+                row=gap.row,
+                row_timeout_seconds=effective_row_timeout,
+                timeout_seconds=min(effective_row_timeout, timeout_seconds),
+            )
+            if is_finite_number(rerun.value):
+                values_by_sample_id[gap.sample_id] = rerun.value
+                recovered_row_count += 1
+                continue
+            diagnostics.append(
+                build_direct_metric_row_diagnostic(
+                    gap=gap,
+                    initial_result=row_results_by_sample_id.get(gap.sample_id),
+                    rerun_result=rerun,
+                )
+            )
+
+    scored_row_count = sum(1 for row in rows if is_finite_number(values_by_sample_id.get(normalize_sample_id(row))))
+    failure_message = None
+    if scored_row_count <= 0:
+        failure_messages = sorted(
+            {
+                (row_results_by_sample_id.get(sample_id).error_message or "").strip()
+                for sample_id in failed_sample_ids
+                if row_results_by_sample_id.get(sample_id) is not None
+                and str(row_results_by_sample_id.get(sample_id).error_message or "").strip()
+            }
+        )
+        if failure_messages:
+            failure_message = "; ".join(failure_messages)
+        else:
+            failure_message = "Metric produced no finite scores."
+
+    return MetricEvaluationResult(
+        values_by_sample_id=values_by_sample_id,
+        scored_row_count=scored_row_count,
+        recovered_row_count=recovered_row_count,
+        diagnostics=diagnostics,
+        failure_message=failure_message,
+    )
+
+
+def build_direct_metric_row_diagnostics(
+    row_gaps: List[MetricRowGap],
+    row_results_by_sample_id: Dict[str, "DirectMetricRowResult"],
+) -> List[Dict[str, str]]:
+    diagnostics: List[Dict[str, str]] = []
+    for gap in row_gaps:
+        diagnostics.append(
+            build_direct_metric_row_diagnostic(
+                gap=gap,
+                initial_result=row_results_by_sample_id.get(gap.sample_id),
+                rerun_result=None,
+            )
+        )
+    return diagnostics
+
+
+def build_direct_metric_row_diagnostic(
+    gap: MetricRowGap,
+    initial_result: "DirectMetricRowResult | None",
+    rerun_result: "DirectMetricRowResult | None",
+) -> Dict[str, str]:
+    if rerun_result is not None and str(rerun_result.error_message or "").strip():
+        return build_metric_row_diagnostic(
+            gap,
+            status="row_evaluation_error",
+            message=rerun_result.error_message,
+        )
+    if initial_result is not None and str(initial_result.error_message or "").strip():
+        return build_metric_row_diagnostic(
+            gap,
+            status="row_evaluation_error",
+            message=initial_result.error_message,
+        )
+    return build_metric_row_diagnostic(gap, status=gap.initial_status, message=gap.initial_message)
+
+
+def prepare_metric_for_direct_scoring(
+    metric: Any,
+    ragas_llm: Any,
+    timeout_seconds: int,
+    max_concurrency: int,
+    max_retries: int,
+) -> None:
+    try:
+        from ragas.run_config import RunConfig
+    except ImportError:
+        return
+
+    if hasattr(metric, "llm"):
+        metric.llm = ragas_llm
+
+    init = getattr(metric, "init", None)
+    if not callable(init):
+        return
+
+    init(
+        RunConfig(
+            timeout=max(timeout_seconds, 1),
+            max_retries=max(max_retries, 1),
+            max_wait=min(max(timeout_seconds, 1), 10),
+            max_workers=max(max_concurrency, 1),
+        )
+    )
+
+
+def run_direct_metric_row_scores(
+    metric_name: str,
+    metric: Any,
+    rows: List[Dict[str, Any]],
+    row_timeout_seconds: int,
+    max_concurrency: int,
+    timeout_seconds: int,
+) -> List["DirectMetricRowResult"]:
+    deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+    results: List["DirectMetricRowResult"] = []
+    for row in rows:
+        remaining_seconds = row_timeout_seconds
+        if deadline is not None:
+            remaining_seconds = min(row_timeout_seconds, max(int(deadline - time.monotonic()), 0))
+        sample_id = normalize_sample_id(row)
+        question = str(row.get("question") or "").strip()
+        if remaining_seconds <= 0:
+            results.append(
+                DirectMetricRowResult(
+                    sample_id=sample_id,
+                    question=question,
+                    value=None,
+                    error_message=f"RAGAS metric {metric_name} timed out after {timeout_seconds} seconds.",
+                )
+            )
+            continue
+
+        results.append(
+            run_direct_metric_row_score(
+                metric_name=metric_name,
+                metric=metric,
+                row=dict(row),
+                row_timeout_seconds=remaining_seconds,
+                timeout_seconds=remaining_seconds,
+            )
+        )
+    return results
+
+
+def run_direct_metric_row_score(
+    metric_name: str,
+    metric: Any,
+    row: Dict[str, Any],
+    row_timeout_seconds: int,
+    timeout_seconds: int,
+) -> "DirectMetricRowResult":
+    def run_once() -> "DirectMetricRowResult":
+        loop = asyncio.get_event_loop()
+        return loop.run_until_complete(
+            score_direct_metric_row_async(
+                metric_name=metric_name,
+                metric=metric,
+                row=dict(row),
+                row_timeout_seconds=row_timeout_seconds,
+            )
+        )
+
+    return run_with_isolated_event_loop(
+        operation_name=f"RAGAS row {metric_name}",
+        fn=run_once,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+async def score_direct_metric_row_async(
+    metric_name: str,
+    metric: Any,
+    row: Dict[str, Any],
+    row_timeout_seconds: int,
+) -> "DirectMetricRowResult":
+    sample_id = normalize_sample_id(row)
+    question = str(row.get("question") or "").strip()
+    try:
+        score = await metric.ascore(
+            dict(row),
+            callbacks=[],
+            timeout=row_timeout_seconds if row_timeout_seconds > 0 else None,
+        )
+        return DirectMetricRowResult(
+            sample_id=sample_id,
+            question=question,
+            value=coerce_float(score),
+            error_message=None,
+        )
+    except Exception as exc:
+        return DirectMetricRowResult(
+            sample_id=sample_id,
+            question=question,
+            value=None,
+            error_message=str(exc),
+        )
 
 
 def collect_metric_row_gaps(
@@ -539,6 +1148,7 @@ def diagnose_metric_row_gaps(
     ragas_llm: Any,
     values_by_sample_id: Dict[str, float | None],
     row_diagnostics_limit: int,
+    timeout_seconds: int,
 ) -> Tuple[int, List[Dict[str, str]]]:
     recovered_row_count = 0
     diagnostics: List[Dict[str, str]] = []
@@ -562,6 +1172,7 @@ def diagnose_metric_row_gaps(
                 metric=metric,
                 rows=[dict(gap.row)],
                 ragas_llm=ragas_llm,
+                timeout_seconds=timeout_seconds,
             )
             single_value_by_sample_id = map_metric_values(metric_rows, metric_name)
             if gap.sample_id in single_value_by_sample_id:
@@ -622,14 +1233,58 @@ def evaluate_metric_rows(
     metric: Any,
     rows: List[Dict[str, Any]],
     ragas_llm: Any,
+    timeout_seconds: int,
 ) -> List[Dict[str, Any]]:
-    dataset = dataset_factory(rows)
-    result = evaluate(dataset, metrics=[metric], llm=ragas_llm)
-    dataframe = result.to_pandas()
-    metric_rows = dataframe.to_dict(orient="records")
-    if not metric_rows:
-        raise RuntimeError(f"{metric_name} returned no rows.")
-    return metric_rows
+    def run_once() -> List[Dict[str, Any]]:
+        dataset = dataset_factory(rows)
+        result = evaluate(dataset, metrics=[metric], llm=ragas_llm)
+        dataframe = result.to_pandas()
+        metric_rows = dataframe.to_dict(orient="records")
+        if not metric_rows:
+            raise RuntimeError(f"{metric_name} returned no rows.")
+        return metric_rows
+
+    return run_with_isolated_event_loop(
+        operation_name=f"RAGAS metric {metric_name}",
+        fn=run_once,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def run_with_isolated_event_loop(
+    operation_name: str,
+    fn: Callable[[], Any],
+    timeout_seconds: int,
+) -> Any:
+    result_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
+
+    def worker() -> None:
+        loop: asyncio.AbstractEventLoop | None = None
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result_queue.put(("ok", fn()))
+        except BaseException as exc:  # pragma: no cover - exercised via callers
+            result_queue.put(("err", exc))
+        finally:
+            if loop is not None and not loop.is_closed():
+                loop.close()
+            asyncio.set_event_loop(None)
+
+    thread = threading.Thread(target=worker, name=f"ragas-{operation_name}", daemon=True)
+    thread.start()
+    thread.join(timeout_seconds if timeout_seconds > 0 else None)
+    if thread.is_alive():
+        raise TimeoutError(f"{operation_name} timed out after {timeout_seconds} seconds.")
+
+    try:
+        status, payload = result_queue.get_nowait()
+    except queue.Empty as exc:  # pragma: no cover - defensive
+        raise RuntimeError(f"{operation_name} finished without returning a result.") from exc
+
+    if status == "err":
+        raise payload
+    return payload
 
 
 def map_metric_values(metric_rows: List[Dict[str, Any]], metric_name: str) -> Dict[str, float | None]:
@@ -733,6 +1388,11 @@ def read_non_negative_int_env(name: str, default: int) -> int:
 
 def write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def remove_file_if_exists(path: Path) -> None:
+    if path.exists():
+        path.unlink()
 
 
 def write_csv_rows(path: Path, rows: List[Dict[str, Any]]) -> None:
