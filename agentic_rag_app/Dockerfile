@@ -4,10 +4,10 @@ WORKDIR /workspace
 COPY pom.xml mvnw ./
 COPY .mvn .mvn
 RUN chmod +x mvnw
-RUN ./mvnw -q -DskipTests dependency:go-offline
+RUN ./mvnw -DskipTests dependency:go-offline
 
 COPY src src
-RUN ./mvnw -q -DskipTests package
+RUN ./mvnw -DskipTests package
 
 FROM eclipse-temurin:17-jre
 WORKDIR /app
