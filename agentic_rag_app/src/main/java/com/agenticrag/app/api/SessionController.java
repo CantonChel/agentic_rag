@@ -130,8 +130,9 @@ public class SessionController {
 		}
 
 		timeline.sort(
-			Comparator.comparingLong(ReplayTimelineItem::getSortTs)
+			Comparator.comparingLong(ReplayTimelineItem::getSortBucket)
 				.thenComparingInt(ReplayTimelineItem::getKindOrder)
+				.thenComparingLong(ReplayTimelineItem::getSortTs)
 				.thenComparing(ReplayTimelineItem::getSequenceId, Comparator.nullsLast(Long::compareTo))
 		);
 		return timeline.stream()
@@ -421,16 +422,24 @@ public class SessionController {
 	}
 
 	private static class ReplayTimelineItem {
+		private static final long SORT_BUCKET_WINDOW_MS = 5000L;
+
+		private final long sortBucket;
 		private final long sortTs;
 		private final int kindOrder;
 		private final Long sequenceId;
 		private final ReplayEntryView view;
 
 		private ReplayTimelineItem(long sortTs, int kindOrder, Long sequenceId, ReplayEntryView view) {
+			this.sortBucket = sortTs / SORT_BUCKET_WINDOW_MS;
 			this.sortTs = sortTs;
 			this.kindOrder = kindOrder;
 			this.sequenceId = sequenceId;
 			this.view = view;
+		}
+
+		public long getSortBucket() {
+			return sortBucket;
 		}
 
 		public long getSortTs() {

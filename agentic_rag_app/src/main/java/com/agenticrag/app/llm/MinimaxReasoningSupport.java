@@ -88,6 +88,10 @@ public final class MinimaxReasoningSupport {
 		}
 	}
 
+	private static final java.util.Set<String> REASONING_SKIP_FIELDS = java.util.Collections.unmodifiableSet(
+		new java.util.HashSet<>(java.util.Arrays.asList("type", "index", "id", "name", "key", "label", "tag"))
+	);
+
 	private static String flattenReasoningNode(JsonNode node) {
 		if (node == null || node.isNull()) {
 			return null;
@@ -117,6 +121,10 @@ public final class MinimaxReasoningSupport {
 			}
 			StringBuilder sb = new StringBuilder();
 			node.fields().forEachRemaining(entry -> {
+				String fieldName = entry.getKey();
+				if (REASONING_SKIP_FIELDS.contains(fieldName)) {
+					return;
+				}
 				String text = flattenReasoningNode(entry.getValue());
 				if (text != null && !text.isEmpty()) {
 					sb.append(text);

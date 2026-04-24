@@ -617,13 +617,25 @@ public class AgentStreamingService {
 													if (shouldForceFinalResponse) {
 														return;
 													}
+													if (thinkingVisible) {
+														emit.accept(LlmStreamEvent.thinking(
+															answerPart,
+															"assistant_content",
+															originModelRef.get(),
+															iterationFinal,
+															turnId,
+															nextSequence.getAsLong(),
+															System.currentTimeMillis()
+														));
+													} else {
 														emit.accept(LlmStreamEvent.delta(
 															answerPart,
 															turnId,
 															nextSequence.getAsLong(),
 															System.currentTimeMillis(),
 															iterationFinal
-													));
+														));
+													}
 												},
 												thinkPart -> {
 													inlineThinkBuffer.append(thinkPart);
