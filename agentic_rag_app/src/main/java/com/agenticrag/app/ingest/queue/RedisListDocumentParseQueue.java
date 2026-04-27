@@ -6,10 +6,12 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnProperty(name = "ingest.redis-queue.enabled", havingValue = "true", matchIfMissing = true)
 public class RedisListDocumentParseQueue implements DocumentParseQueue {
 	private final StringRedisTemplate redisTemplate;
 	private final RedisQueueProperties properties;
